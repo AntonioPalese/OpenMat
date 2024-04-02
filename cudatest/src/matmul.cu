@@ -1,4 +1,28 @@
 #include "matmul.h"
+#include "stdio.h"
+
+
+/////// kernels //////////////
+
+__global__ void _add(float** A, float **B, float **C, int r, int c)
+{
+    int x = threadIdx.x+blockDim.x*blockIdx.x;
+    int y = threadIdx.y+blockDim.y*blockIdx.y;
+    C[y][x] = A[y][x]+B[y][x];
+}
+__global__ void _print(float** mat, int r, int c)
+{
+    for(int i = 0; i < r; i++)
+    {
+        for(int j = 0; j < c; j++)
+        {
+            printf("%f ", mat[i][j]);
+        }
+        printf("\n");
+    }
+}
+
+////////////////////////////////
 
 float** make_matrix(int r, int c)
 {
@@ -34,23 +58,56 @@ float** set(float**mat, float val, int r, int c)
 }
 
 __host__
-float ** to_device(float** mat, int r, int c)
+void to_device(float **dst, float** src, int r, int c)
 {
-    float** gpu_mat;
-    cudaMalloc((void***)&gpu_mat, r*sizeof(float*));
+    cudaMalloc((void***)&dst, r*sizeof(float*));
     for(int i = 0; i < r; i++)
     {
         float* row;
         cudaMalloc((void**)&row, c*sizeof(float));
-        cudaMemcpy(gpu_mat+i, row, sizeof(float*), cudaMemcpyHostToDevice);
+        cudaMemcpy(dst+i, row, sizeof(float*), cudaMemcpyHostToDevice);
     }
 
     for(int i = 0; i < r; i++)
     {
-        cudaMemcpy(gpu_mat+i, mat[i], c*sizeof(float), cudaMemcpyHostToDevice);        
+        cudaMemcpy(dst+i, src[i], c*sizeof(float), cudaMemcpyHostToDevice);        
     }
+}
 
-    return gpu_mat;
+void add(float** A, float **B, float **C, int r, int c)
+{    
+    dim3 blkDim(1);
+    dim3 thDim(c,r); // x, y, z
+    _add<<<blkDim, thDim>>>(A, B, C, r, c);
+}
+
+void cuda_print(float** mat, int r, int c)
+{
+    _print<<<1, 1>>>(mat, r, c);
+}
+
+void print(float** mat, int r, int c)
+{
+    for(int i = 0; i < r; i++)
+    {
+        for(int j = 0; j < c; j++)
+        {
+            printf("%f ", mat[i][j]);
+        }
+        printf("\n");
+    }
+}
+
+void to_host(float **dst, float **src, int r, int c)
+{
+    dst = (float**) malloc(r*sizeof(float*));
+    for(int i = 0; i < r; i++)
+    {
+        for(int j = 0; j < c; j++)
+        {
+            dst[i] = (float*)malloc(c*sizeof(float));
+        }
+    }
 }
 
 // int main(void)
