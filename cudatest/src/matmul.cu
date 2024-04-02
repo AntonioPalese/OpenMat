@@ -1,56 +1,87 @@
 #include "matmul.h"
+#include "stdio.h"
 
-float** make_matrix(int r, int c)
+
+///////////// Kernels /////////////////////////
+
+__global__ void _add(float* A, float *B, float *C, int r, int c)
 {
-    float** mat = (float**) malloc(r*sizeof(float*));
-    for(int i = 0; i < r; i++)
-    {
-        mat[i] = (float*) malloc(c*sizeof(float));
-    }
-    return mat;
+    int x = threadIdx.x + blockDim.x*blockIdx.x;
+    int y = threadIdx.y + blockDim.y*blockIdx.y;
+
+    C[x+c*y] = A[x+c*y] + B[x+c*y];
 }
 
-void delete_matrix(float** mat, int r, int c)
-{
-    for(int i = 0; i < r; i++)
-    {
-        free(mat[i]);
-    }
-
-    free(mat);
-}
-
-float** set(float**mat, float val, int r, int c)
+__global__ void _print(float* A, int r, int c)
 {
     for(int i = 0; i < r; i++)
     {
         for(int j = 0; j < c; j++)
         {
-            mat[i][j] = val;
+            printf("%f ", A[j+i*c]);
         }
+        printf("\n");
     }
+}
 
+///////////////////////////////////////////////
+
+float* make_matrix(int r, int c)
+{
+    float* mat = (float*) malloc(r*c*sizeof(float));
     return mat;
 }
 
-__host__
-float ** to_device(float** mat, int r, int c)
+void delete_matrix(float* mat)
 {
-    float** gpu_mat;
-    cudaMalloc((void***)&gpu_mat, r*sizeof(float*));
+    free(mat);
+}
+
+void set(float*mat, float val, int r, int c)
+{
+    for(int i = 0; i < r*c; i++)
+    {
+        mat[i] = val;
+    }    
+}
+
+float* to_device(float* src, int r, int c)
+{
+    float* dst;
+    cudaMalloc((void**)&dst, r*c*sizeof(float));
+    cudaMemcpy(dst, src, r*c*sizeof(float), cudaMemcpyHostToDevice);
+    return dst;
+}
+
+void add(float* A, float *B, float *C, int r, int c)
+{    
+    dim3 blkDim(1);
+    dim3 thDim(c,r); // x, y, z
+    _add<<<blkDim, thDim>>>(A, B, C, r, c);
+}
+
+void cuda_print(float* mat, int r, int c)
+{
+    _print<<<1, 1>>>(mat, r, c);
+}
+
+void print(float* mat, int r, int c)
+{
     for(int i = 0; i < r; i++)
     {
-        float* row;
-        cudaMalloc((void**)&row, c*sizeof(float));
-        cudaMemcpy(gpu_mat+i, row, sizeof(float*), cudaMemcpyHostToDevice);
+        for(int j = 0; j < c; j++)
+        {
+            printf("%f ", mat[j+c*i]);
+        }
+        printf("\n");
     }
+}
 
-    for(int i = 0; i < r; i++)
-    {
-        cudaMemcpy(gpu_mat+i, mat[i], c*sizeof(float), cudaMemcpyHostToDevice);        
-    }
-
-    return gpu_mat;
+float* to_host(float *src, int r, int c)
+{
+    float* dst = (float*) malloc(r*c*sizeof(float));
+    cudaMemcpy(dst, src, r*c*sizeof(float), cudaMemcpyDeviceToHost);
+    return dst;
 }
 
 // int main(void)
