@@ -1,18 +1,34 @@
 #include "matmul.h"
 #include "stdio.h"
-
+#include "cuda.h"
 
 ///////////// Kernels /////////////////////////
 
-__global__ void _add(float* A, float *B, float *C, int r, int c)
+__global__ void _add(float* A, float *B, float *C, size_t r, size_t c)
 {
+    //printf("kernel _add\n");
     int x = threadIdx.x + blockDim.x*blockIdx.x;
     int y = threadIdx.y + blockDim.y*blockIdx.y;
 
     C[x+c*y] = A[x+c*y] + B[x+c*y];
 }
 
-__global__ void _print(float* A, int r, int c)
+__global__ void _mul(float* A, float *B, float *C, size_t r, size_t c)
+{
+    //printf("kernel _mul\n");
+    int x = threadIdx.x + blockDim.x*blockIdx.x;
+    int y = threadIdx.y + blockDim.y*blockIdx.y;
+
+   
+    float value = 0;
+    for(int i = 0; i < c; i++)
+    {        
+        value += A[i+c*y] * B[x+c*i];
+    }
+    C[x+c*y] = value;    
+}
+
+__global__ void _print(float* A, size_t r, size_t c)
 {
     for(int i = 0; i < r; i++)
     {
@@ -26,7 +42,13 @@ __global__ void _print(float* A, int r, int c)
 
 ///////////////////////////////////////////////
 
-float* make_matrix(int r, int c)
+void print_cuda_err(cudaError_t err, const char* tag)
+{
+    if(err != cudaSuccess)
+        printf("[CUDA ERROR (%s)] :  %s\n", tag, cudaGetErrorString(err));
+}
+
+float* make_matrix(size_t r, size_t c)
 {
     float* mat = (float*) malloc(r*c*sizeof(float));
     return mat;
@@ -34,10 +56,11 @@ float* make_matrix(int r, int c)
 
 void delete_matrix(float* mat)
 {
-    free(mat);
+    cudaError_t err = cudaFree(mat);
+    print_cuda_err(err, "cudaFree");
 }
 
-void set(float*mat, float val, int r, int c)
+void set(float*mat, float val, size_t r, size_t c)
 {
     for(int i = 0; i < r*c; i++)
     {
@@ -45,27 +68,61 @@ void set(float*mat, float val, int r, int c)
     }    
 }
 
-float* to_device(float* src, int r, int c)
+float* to_device(float* src, size_t r, size_t c)
 {
     float* dst;
-    cudaMalloc((void**)&dst, r*c*sizeof(float));
-    cudaMemcpy(dst, src, r*c*sizeof(float), cudaMemcpyHostToDevice);
+    cudaDeviceSynchronize();
+    cudaError_t err =  cudaMalloc((void**)&dst, r*c*sizeof(float));
+    print_cuda_err(err, "cudaMalloc");
+    err = cudaMemcpy(dst, src, r*c*sizeof(float), cudaMemcpyHostToDevice);
+    print_cuda_err(err, "cudaMemcpy");
     return dst;
 }
 
-void add(float* A, float *B, float *C, int r, int c)
+void add(float* A, float *B, float *C, size_t r, size_t c)
 {    
-    dim3 blkDim(1);
     dim3 thDim(c,r); // x, y, z
-    _add<<<blkDim, thDim>>>(A, B, C, r, c);
+    _add<<<1, thDim>>>(A, B, C, r, c);
+    cudaError_t err = cudaGetLastError();
+    print_cuda_err(err, "_add kernel");
+    err = cudaDeviceSynchronize();
+    print_cuda_err(err, "cudaDeviceSynchronize");
+    
 }
 
-void cuda_print(float* mat, int r, int c)
+void mul(float* A, float *B, float *C, size_t r, size_t c)
+{
+    dim3 dimBlock(16, 16);
+    dim3 dimGrid(c / dimBlock.x, r / dimBlock.y); // x, y, z
+    _mul<<<dimGrid, dimBlock>>>(A, B, C, r, c);
+    cudaError_t err = cudaGetLastError();
+    print_cuda_err(err, "_mul kernel");
+    err = cudaDeviceSynchronize();
+    print_cuda_err(err, "cudaDeviceSynchronize");
+}
+
+void sequencial_mul(float* A, float *B, float *C, size_t r, size_t c)
+{    
+    for(int i = 0; i < r; i++)
+    {        
+        for(int j = 0; j < c; j++)
+        {
+            float acc = 0;
+            for(int k = 0; k < r; k++)
+            {
+                acc += A[k+i*c] * B[j+k*c];
+            }
+            C[j+i*c] = acc;
+        }
+    }    
+}
+
+void cuda_print(float* mat, size_t r, size_t c)
 {
     _print<<<1, 1>>>(mat, r, c);
 }
 
-void print(float* mat, int r, int c)
+void print(float* mat, size_t r, size_t c)
 {
     for(int i = 0; i < r; i++)
     {
@@ -77,19 +134,13 @@ void print(float* mat, int r, int c)
     }
 }
 
-float* to_host(float *src, int r, int c)
+float* to_host(float *src, size_t r, size_t c)
 {
     float* dst = (float*) malloc(r*c*sizeof(float));
-    cudaMemcpy(dst, src, r*c*sizeof(float), cudaMemcpyDeviceToHost);
+    cudaError_t err = cudaMemcpy(dst, src, r*c*sizeof(float), cudaMemcpyDeviceToHost);
+    print_cuda_err(err, "cudaMemcpy");
+    err = cudaDeviceSynchronize();
+    print_cuda_err(err, "cudaDeviceSynchronize");
     return dst;
 }
 
-// int main(void)
-// {
-//     constexpr const int N = 1024;
-//     float** matA = set(make_matrix(N/2, N/2), 0.0f, N/2, N/2);
-//     float** matB = set(make_matrix(N/2, N/2), 0.0f, N/2, N/2);
-//     float** matC = set(make_matrix(N/2, N/2), 0.0f, N/2, N/2);
-
-//     float** gpu_matA = to_device(matA, N/2, N/2);
-// }
