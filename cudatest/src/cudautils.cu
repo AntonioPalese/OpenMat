@@ -43,7 +43,7 @@ void to_device(Matrix* dst, const Matrix* src)
     dst->cuda = true;
     dst->stride = src->stride;
 
-    cudaDeviceSynchronize();
+    //cudaDeviceSynchronize();
     size_t size = src->rows*src->cols*sizeof(float);
     cudaError_t err = cudaMalloc((void**)&dst->data, size);
     print_cuda_err(err, "cudaMalloc");
@@ -53,7 +53,7 @@ void to_device(Matrix* dst, const Matrix* src)
 
 void to_host(Matrix* dst, const Matrix* src)
 {
-    cudaDeviceSynchronize();
+    //cudaDeviceSynchronize();
     size_t size = src->rows*src->cols*sizeof(float);
     cudaError_t err = cudaMemcpy(dst->data, src->data, size, cudaMemcpyDeviceToHost);
     print_cuda_err(err, "cudaMemcpy");

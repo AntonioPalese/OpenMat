@@ -1,14 +1,12 @@
 cmake_minimum_required(VERSION 3.8 FATAL_ERROR)
 project(cudatest LANGUAGES CXX CUDA)
 
-set(SRC 
-    "src/matmul.cu" 
+set(SRC
     "src/mat.cpp" 
     "src/matops.cu"
     "src/cudautils.cu"
     )
-set(HEADERS 
-    "headers/matmul.h" 
+set(HEADERS
     "headers/mat.h" 
     "headers/matops.h"
     "headers/cudautils.h"
@@ -23,4 +21,3 @@ target_include_directories(${PROJECT_NAME} PUBLIC headers/)
 add_executable(${PROJECT_NAME}_app src/main.cpp)
 
 target_link_libraries(${PROJECT_NAME}_app ${PROJECT_NAME})
-
