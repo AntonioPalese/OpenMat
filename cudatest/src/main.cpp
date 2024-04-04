@@ -3,15 +3,18 @@
 #include <math.h>
 #include <stdio.h>
 #include <chrono>
+#include <initializer_list>
 
-#define N 32
+#define N 4096
 #define FLOPS  N*N*2*N
+//#define FLOPS  2*N*N
 #define GFLOPS (double)FLOPS*1.0e-9
 
-void timer_ns( void( *func )( float*, float*, float*, size_t, size_t ), float* A, float* B, float* C, size_t r, size_t c )
+template<typename Func>
+void timer_ns(Func& f, Matrix A, Matrix B, Matrix C)
 {
     auto start = std::chrono::high_resolution_clock::now();
-    ( *func )( A, B, C, r, c );
+    std::forward<Func>(f)(A, B, C);
     auto end = std::chrono::high_resolution_clock::now();
 
     double elapsed_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
@@ -21,67 +24,69 @@ void timer_ns( void( *func )( float*, float*, float*, size_t, size_t ), float* A
     printf( "gflops/s : %f\n", GFLOPS / elapsed_s < 0 ? -( GFLOPS / elapsed_s ) : GFLOPS / elapsed_s );
 }
 
-void parallel_mul()
+void parallel_add()
 {
-    int dim = N;
-
-    Matrix matA = make_matrix(dim, dim, 2.0f, true);    
-    Matrix matB = make_matrix(dim, dim, 1.0f, true);    
-    Matrix matC = make_matrix(dim, dim, true);   
+    Matrix matA = make_matrix(N, N, 2.0f, true);    
+    Matrix matB = make_matrix(N, N, 1.0f, true);    
+    Matrix matC = make_matrix(N, N, true);   
 
     add(matA, matB, matC);
     
-    print(matC);
+    //print(matC);
 
     delete_matrix(matA);
     delete_matrix(matB);
     delete_matrix(matC);
-
-
-
-    // //add(matA_gpu, matB_gpu, matC_gpu, dim, dim);  
-    // //timer_ns(&mul, matA_gpu, matB_gpu, matC_gpu, dim, dim);
-
-    // timer_ns(&mul, matA_gpu, matB_gpu, matC_gpu, dim, dim);
-
-    // //cuda_print(matC_gpu, dim, dim);
-    
-    // float* tmpC = to_host(matC_gpu, dim, dim);
-    // //print(tmpC, dim, dim);
-
-    // delete_matrix(matA_gpu);
-    // delete_matrix(matB_gpu);
-    // delete_matrix(matC_gpu);
-
-    // free(matA);
-    // free(matB);
-    // free(matC);
 }
 
-// void sequencial_mul()
-// {
-//     size_t dim = (size_t)N;
+void sequencial_add()
+{
+    Matrix matA = make_matrix(N, N, 2.0f, false);    
+    Matrix matB = make_matrix(N, N, 1.0f, false);    
+    Matrix matC = make_matrix(N, N, false);   
 
-//     float* matA = make_matrix(dim, dim);    
-//     set(matA, 2.0f, dim, dim);
+    add(matA, matB, matC);
+    
+    //print(matC);
 
-//     float* matB = make_matrix(dim, dim);    
-//     set(matB, 1.0f, dim, dim);
+    delete_matrix(matA);
+    delete_matrix(matB);
+    delete_matrix(matC);
+}
 
-//     float* matC = make_matrix(dim, dim);    
-//     set(matC, 0.0f, dim, dim);   
+void parallel_mul()
+{
+    Matrix matA = make_matrix(N, N, 2.0f, true);    
+    Matrix matB = make_matrix(N, N, 1.0f, true);    
+    Matrix matC = make_matrix(N, N, true);   
 
-//     timer_ns(&sequencial_mul, matA, matB, matC, dim, dim);
+    timer_ns(mul, matA, matB, matC);
+    
+    //print(matC);
 
-//     //print(matC, dim, dim);
+    delete_matrix(matA);
+    delete_matrix(matB);
+    delete_matrix(matC);
+}
 
-//     free(matA);
-//     free(matB);
-//     free(matC);
-// }
+void sequencial_mul()
+{
+    Matrix matA = make_matrix(N, N, 2.0f, false);    
+    Matrix matB = make_matrix(N, N, 1.0f, false);    
+    Matrix matC = make_matrix(N, N, false);
+
+    timer_ns(mul, matA, matB, matC);
+
+    //print(matC);
+    delete_matrix(matA);
+    delete_matrix(matB);
+    delete_matrix(matC);
+}
 
 int main(void)
 {
+    printf("################## device ##################\n");
     parallel_mul();
-    //sequencial_mul();
+    printf("##################  host  ##################\n");
+    sequencial_mul();
 }
