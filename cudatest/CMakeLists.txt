@@ -1,8 +1,18 @@
 cmake_minimum_required(VERSION 3.8 FATAL_ERROR)
 project(cudatest LANGUAGES CXX CUDA)
 
-set(SRC "src/matmul.cu")
-set(HEADERS "headers/matmul.h")
+set(SRC 
+    "src/matmul.cu" 
+    "src/mat.cpp" 
+    "src/matops.cu"
+    "src/cudautils.cu"
+    )
+set(HEADERS 
+    "headers/matmul.h" 
+    "headers/mat.h" 
+    "headers/matops.h"
+    "headers/cudautils.h"
+    )
 
 find_package(CUDA 9.0 REQUIRED)
 
