@@ -46,13 +46,13 @@ __global__ void kernel(Matrix M)
     Matrix subM = subMat(M, blockRow, blockCol);
 
     __shared__ float sM[BLOCK_SIZE][BLOCK_SIZE];
-    //sM[threadIdx.y][threadIdx.x] = blockIdx.x + blockIdx.y * gridDim.x;
+    sM[threadIdx.y][threadIdx.x] = blockIdx.x + blockIdx.y * gridDim.x;
     //printf("(%d, %d)\n", blockIdx.x, blockIdx.y);
     //printf("(%d)\n", blockIdx.x + blockIdx.y * gridDim.x);
 
     __syncthreads();
 
-    *at(&subM, threadIdx.y, threadIdx.x) = blockIdx.x + blockIdx.y * gridDim.x;
+    *at(&subM, threadIdx.y, threadIdx.x) = sM[threadIdx.y][threadIdx.x];
 }
 
 void print(const Matrix m)
