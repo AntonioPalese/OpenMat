@@ -120,11 +120,11 @@ void cuda_mul(Matrix A, Matrix B, Matrix C)
     to_device(&gpuC, &C);
 
     dim3 blockDim(BLOCK_SIZE, BLOCK_SIZE); // x, y, z
-    dim3 gridDim(A.cols/BLOCK_SIZE, A.rows/BLOCK_SIZE);
-    //_mul<<<gridDim, blockDim>>>(gpuA, gpuB, gpuC);
+    dim3 gridDim(A.cols/BLOCK_SIZE, A.rows/BLOCK_SIZE);    
 
     auto st = get_ns();
     _shared_memory_mul<<<gridDim, blockDim>>>(gpuA, gpuB, gpuC);
+    //_mul<<<gridDim, blockDim>>>(gpuA, gpuB, gpuC);
     cudaError_t err = cudaDeviceSynchronize();
     print_cuda_err(err, "cudaDeviceSynchronize");
     auto et = get_ns();
@@ -137,7 +137,7 @@ void cuda_mul(Matrix A, Matrix B, Matrix C)
 
     double elapsed_s = elapsed_ns * 1e-9;
     printf( "elapsed : %f s\n",  elapsed_s);
-    printf( "gflops/s : %f\n", gflops / elapsed_s < 0 ? -( gflops / elapsed_s ) : gflops / elapsed_s );
+    //printf( "gflops/s : %f\n", gflops / elapsed_s < 0 ? -( gflops / elapsed_s ) : gflops / elapsed_s );
 
     err = cudaGetLastError();
     print_cuda_err(err, "_add kernel");
