@@ -24,7 +24,7 @@ __global__ void kernelTest()
 
 int main(void)
 {
-    size_t n = pow(2, 28);
+    size_t n = pow(2, 20);
     size_t size = n*sizeof(float);
 
     float* h_a, * h_b;
