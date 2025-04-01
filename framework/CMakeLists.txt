@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.8 FATAL_ERROR)
+cmake_minimum_required(VERSION 4.0 FATAL_ERROR)
 project(OpenMat LANGUAGES CXX CUDA)
 
 if(NOT CMAKE_BUILD_TYPE)
@@ -17,8 +17,6 @@ file(GLOB HEADERS "headers/*.h" "headers/*.cuh" "headers/*.inl")
 
 file(GLOB SRC "src/*.cpp" "src/*.cu")
 list(REMOVE_ITEM SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
-
-find_package(CUDA 11.5 REQUIRED)
 
 # ----------------------------------------
 # Shared library target

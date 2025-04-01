@@ -6,8 +6,8 @@
 #include <vector>
 
 namespace utils {
-
     void replace_first_placeholder(std::string& out, const std::string& value);
+
     template<typename T>
     std::string to_string(const T& val) {
         std::ostringstream oss;
@@ -27,18 +27,8 @@ namespace utils {
         return result;
     }
 
-    std::vector<std::string> split(const std::string& str, char delimiter) {
-        std::vector<std::string> tokens;
-        std::stringstream ss(str);
-        std::string token;
-    
-        while (std::getline(ss, token, delimiter)) {
-            tokens.push_back(token);
-        }
-    
-        return tokens;
-    }
+    std::vector<std::string> split(const std::string& str, char delimiter);
 
-    int str_to_int(const std::string& str){return std::stoi(str);}
-    int char_to_int(char c){return c - '0';}
+    int str_to_int(const std::string& str);
+    int char_to_int(char c);
 }
