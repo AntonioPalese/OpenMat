@@ -3,6 +3,7 @@
 #include <string>
 #include <sstream>
 #include <stdexcept>
+#include <vector>
 
 namespace utils {
 
@@ -25,4 +26,19 @@ namespace utils {
 
         return result;
     }
+
+    std::vector<std::string> split(const std::string& str, char delimiter) {
+        std::vector<std::string> tokens;
+        std::stringstream ss(str);
+        std::string token;
+    
+        while (std::getline(ss, token, delimiter)) {
+            tokens.push_back(token);
+        }
+    
+        return tokens;
+    }
+
+    int str_to_int(const std::string& str){return std::stoi(str);}
+    int char_to_int(char c){return c - '0';}
 }

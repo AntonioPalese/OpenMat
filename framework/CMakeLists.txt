@@ -5,21 +5,18 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Choose the type of build." FORCE)
 endif()
 
+cmake_policy(SET CMP0104 NEW)
+set(CMAKE_CUDA_ARCHITECTURES 86)
+
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
 
-set(HEADERS
-    "headers/mat_utils.h" 
-    "headers/mat.cuh" 
-    "headers/utils.h" 
-    "headers/mat.inl" 
-    )
+file(GLOB HEADERS "headers/*.h" "headers/*.cuh" "headers/*.inl")
 
-set(SRC
-    "src/mat_utils.cpp" 
-    "src/utils.cpp" 
-    )
+file(GLOB SRC "src/*.cpp" "src/*.cu")
+list(REMOVE_ITEM SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
 
 find_package(CUDA 11.5 REQUIRED)
 

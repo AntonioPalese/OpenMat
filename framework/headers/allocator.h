@@ -34,7 +34,8 @@ namespace om
     template<typename T>
     class AllocatorFactory
     {
-        static std::unique_ptr<Allocator<T>> make(DEVICE_TYPE devType)
+    public:
+        static std::unique_ptr<Allocator<T>> create(DEVICE_TYPE devType)
         {
             switch (devType)
             {
@@ -45,3 +46,5 @@ namespace om
         }
     };
 }
+
+#include "allocator.inl"
