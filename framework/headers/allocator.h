@@ -1,0 +1,47 @@
+#pragma once
+
+#include <cstdlib>
+#include <stdexcept>
+
+namespace om
+{
+    template<typename T>
+    class Allocator
+    {
+    public:
+        virtual T* allocate(size_t count) = 0;
+        virtual void deallocate(T* ptr) = 0;
+        virtual ~Allocator() = default;
+    };
+
+    // cpu allocator ////////////////////////////////// 
+    template<typename T>
+    class CpuAllocator : public Allocator<T>
+    {
+    public:
+        virtual T* allocate(size_t count) override;
+        virtual void deallocate(T* ptr) override;
+    };
+
+    template<typename T>
+    class GpuAllocator : public Allocator<T>
+    {
+    public:
+        virtual T* allocate(size_t count) override;
+        virtual void deallocate(T* ptr) override;
+    };
+
+    template<typename T>
+    class AllocatorFactory
+    {
+        static std::unique_ptr<Allocator<T>> make(DEVICE_TYPE devType)
+        {
+            switch (devType)
+            {
+            case DEVICE_TYPE::CPU : return std::make_unique<CpuAllocator<T>>();           
+            default:
+                throw std::invalid_argument("Unknown AllocatorType");
+            }
+        }
+    };
+}
