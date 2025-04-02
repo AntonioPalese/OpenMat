@@ -1,5 +1,6 @@
 #pragma once
 #include "allocator.h"
+#include "cuda_defines.cuh"
 
 namespace om
 {
@@ -23,9 +24,7 @@ namespace om
     template <typename T>
     inline void CpuAllocator<T>::copyFromCurrentLoc(T *dst, const T *src, std::size_t count) const
     {
-        cudaError_t err = cudaMemcpy(dst, src, sizeof(T) * count, cudaMemcpyHostToDevice);
-        if (err != cudaSuccess)
-            throw std::runtime_error(std::string("cudaMemcpy (from host) failed: ") + cudaGetErrorString(err));
+        CUDA_CALL(cudaMemcpy(dst, src, sizeof(T) * count, cudaMemcpyHostToDevice));
     }
     //////////////////////////////////
 
@@ -37,25 +36,19 @@ namespace om
             return nullptr;
 
         T* ptr = nullptr;
-        cudaError_t err = cudaMalloc(&ptr, sizeof(T) * count);
-        if (err != cudaSuccess)
-            throw std::runtime_error(cudaGetErrorString(err));
+        CUDA_CALL(cudaMalloc((void**)&ptr, sizeof(T) * count));
         return ptr;
     }
 
     template <typename T>
     inline void GpuAllocator<T>::deallocate(T *ptr)
     {
-        cudaError_t err = cudaFree(ptr);
-        if (err != cudaSuccess)
-            throw std::runtime_error(cudaGetErrorString(err));
+        CUDA_CALL(cudaFree(ptr));
     }
     template <typename T>
     inline void GpuAllocator<T>::copyFromCurrentLoc(T *dst, const T *src, std::size_t count) const
     {
-        cudaError_t err = cudaMemcpy(dst, src, sizeof(T) * count, cudaMemcpyDeviceToHost);
-        if (err != cudaSuccess)
-            throw std::runtime_error(std::string("cudaMemcpy (to host) failed: ") + cudaGetErrorString(err));
+       CUDA_CALL(cudaMemcpy(dst, src, sizeof(T) * count, cudaMemcpyDeviceToHost));
     }
     //////////////////////////////////
 }

@@ -73,6 +73,11 @@
         "__node_handle": "cpp",
         "__memory": "cpp",
         "locale": "cpp",
-        "ios": "cpp"
+        "ios": "cpp",
+        "charconv": "cpp",
+        "iomanip": "cpp",
+        "span": "cpp",
+        "variant": "cpp",
+        "format": "cpp"
     }
 }

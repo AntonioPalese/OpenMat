@@ -2,8 +2,8 @@
 
 int main()
 {
-    om::Mat<float> m(2, 2, "cuda:0");
-    m.fill(3.14f);
+    om::Mat<float> m(100, 100, "cuda:0");
+    m.fill(0.4f);
 
     om::print(m);
 }

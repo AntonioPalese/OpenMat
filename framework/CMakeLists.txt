@@ -1,12 +1,20 @@
 cmake_minimum_required(VERSION 3.22.1 FATAL_ERROR)
 project(OpenMat LANGUAGES CXX CUDA)
 
+# Load dynamic CUDA arch detection
+include("${CMAKE_SOURCE_DIR}/cmake/detect_cuda_arch.cmake")
+
+cmake_policy(SET CMP0104 NEW)
+#set(CMAKE_CUDA_ARCHITECTURES 50 CACHE STRING "Default fallback arch" FORCE)
+
+message(STATUS "Using CUDA architecture: ${CMAKE_CUDA_ARCHITECTURES}")
+
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Choose the type of build." FORCE)
 endif()
 
-cmake_policy(SET CMP0104 NEW)
-set(CMAKE_CUDA_ARCHITECTURES 86)
+#set(CMAKE_CUDA_ARCHITECTURES 86)
+#set(CMAKE_CUDA_ARCHITECTURES 50)  # For MX130 (Compute Capability 5.0)
 
 
 set(CMAKE_CXX_STANDARD 17)
@@ -29,8 +37,6 @@ list(APPEND HEADERS ${CUDA_HEADERS})
 
 file(GLOB CUDA_SRC "src/ops/kernels/*.cu")
 list(APPEND SRC ${CUDA_SRC})
-
-
 
 set_source_files_properties(${CUDA_SRC} PROPERTIES LANGUAGE CUDA)
 
