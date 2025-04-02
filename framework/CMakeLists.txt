@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 4.0 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.22.1 FATAL_ERROR)
 project(OpenMat LANGUAGES CXX CUDA)
 
 if(NOT CMAKE_BUILD_TYPE)
