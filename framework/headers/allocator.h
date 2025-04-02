@@ -39,7 +39,8 @@ namespace om
         {
             switch (devType)
             {
-            case DEVICE_TYPE::CPU : return std::make_unique<CpuAllocator<T>>();           
+                case DEVICE_TYPE::CPU : return std::make_unique<CpuAllocator<T>>();           
+                case DEVICE_TYPE::CUDA : return std::make_unique<GpuAllocator<T>>();           
             default:
                 throw std::invalid_argument("Unknown AllocatorType");
             }

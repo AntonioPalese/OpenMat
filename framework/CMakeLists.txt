@@ -15,8 +15,13 @@ set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
 
 file(GLOB HEADERS "headers/*.h" "headers/*.cuh" "headers/*.inl")
 
-file(GLOB SRC "src/*.cpp" "src/*.cu")
+file(GLOB SRC "src/*.cpp")
 list(REMOVE_ITEM SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
+
+file(GLOB CUDA_SRC "src/*.cu")
+list(APPEND SRC ${CUDA_SRC})
+
+set_source_files_properties(${CUDA_SRC} PROPERTIES LANGUAGE CUDA)
 
 # ----------------------------------------
 # Shared library target
@@ -38,4 +43,6 @@ add_executable(${PROJECT_NAME}_app src/main.cpp)
 
 target_link_libraries(${PROJECT_NAME}_app 
             ${PROJECT_NAME}
+            cuda
+            cudart
     )
