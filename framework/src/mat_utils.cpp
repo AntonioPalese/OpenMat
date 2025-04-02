@@ -13,6 +13,17 @@ om::Device::Device(int id, om::DEVICE_TYPE dt) : m_Id(id), m_Dt(dt)
     }
 }
 
+om::Device::Device(const char *str) : m_Str(str)
+{
+    std::regex pattern("^\\w+:\\d+$");
+    if (!std::regex_match(m_Str, pattern))
+        throw std::runtime_error(utils::format("Invalid device : '{}'", m_Str));
+
+    const auto splitted = utils::split(m_Str, ':');
+    m_Id = utils::str_to_int(splitted.back());
+    m_Dt = str_to_enum(splitted.front());
+}
+
 om::DEVICE_TYPE om::str_to_enum(const std::string &src)
 {
     if(src == "cpu") return DEVICE_TYPE::CPU;

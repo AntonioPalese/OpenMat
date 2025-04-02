@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 4.0 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.22.1 FATAL_ERROR)
 project(OpenMat LANGUAGES CXX CUDA)
 
 if(NOT CMAKE_BUILD_TYPE)
@@ -13,13 +13,24 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
 
-file(GLOB HEADERS "headers/*.h" "headers/*.cuh" "headers/*.inl")
+# ----------------------------------------
+# CPU files
+# ----------------------------------------
+file(GLOB HEADERS "headers/*.h" "headers/*.cuh" "headers/*.inl" "headers/ops/cpu/*.h")
 
-file(GLOB SRC "src/*.cpp")
+file(GLOB SRC "src/*.cpp" "src/ops/cpu/*.cpp")
 list(REMOVE_ITEM SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
 
-file(GLOB CUDA_SRC "src/*.cu")
+# ----------------------------------------
+# CUDA files
+# ----------------------------------------
+file(GLOB CUDA_HEADERS "headers/ops/kernels/*.cuh")
+list(APPEND HEADERS ${CUDA_HEADERS})
+
+file(GLOB CUDA_SRC "src/ops/kernels/*.cu")
 list(APPEND SRC ${CUDA_SRC})
+
+
 
 set_source_files_properties(${CUDA_SRC} PROPERTIES LANGUAGE CUDA)
 

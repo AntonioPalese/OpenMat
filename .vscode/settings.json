@@ -64,6 +64,15 @@
         "__split_buffer": "cpp",
         "cinttypes": "cpp",
         "__tree": "cpp",
-        "map": "cpp"
+        "map": "cpp",
+        "__config": "cpp",
+        "stack": "cpp",
+        "regex": "cpp",
+        "__bit_reference": "cpp",
+        "__functional_base": "cpp",
+        "__node_handle": "cpp",
+        "__memory": "cpp",
+        "locale": "cpp",
+        "ios": "cpp"
     }
 }

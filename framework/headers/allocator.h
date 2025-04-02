@@ -12,6 +12,8 @@ namespace om
         virtual T* allocate(size_t count) = 0;
         virtual void deallocate(T* ptr) = 0;
         virtual ~Allocator() = default;
+
+        virtual void copyFromCurrentLoc(T* dst, const T* src, std::size_t count) const = 0;
     };
 
     // cpu allocator ////////////////////////////////// 
@@ -21,6 +23,8 @@ namespace om
     public:
         virtual T* allocate(size_t count) override;
         virtual void deallocate(T* ptr) override;
+
+        virtual void copyFromCurrentLoc(T* dst, const T* src, std::size_t count) const override;
     };
 
     template<typename T>
@@ -29,6 +33,8 @@ namespace om
     public:
         virtual T* allocate(size_t count) override;
         virtual void deallocate(T* ptr) override;
+
+        virtual void copyFromCurrentLoc(T* dst, const T* src, std::size_t count) const override;
     };
 
     template<typename T>

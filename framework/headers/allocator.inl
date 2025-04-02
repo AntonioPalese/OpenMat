@@ -19,6 +19,14 @@ namespace om
     void CpuAllocator<T>::deallocate(T* ptr) {
         std::free(ptr);
     }
+
+    template <typename T>
+    inline void CpuAllocator<T>::copyFromCurrentLoc(T *dst, const T *src, std::size_t count) const
+    {
+        cudaError_t err = cudaMemcpy(dst, src, sizeof(T) * count, cudaMemcpyHostToDevice);
+        if (err != cudaSuccess)
+            throw std::runtime_error(std::string("cudaMemcpy (from host) failed: ") + cudaGetErrorString(err));
+    }
     //////////////////////////////////
 
     // gpu allocator //////////////////////////////////
@@ -41,6 +49,13 @@ namespace om
         cudaError_t err = cudaFree(ptr);
         if (err != cudaSuccess)
             throw std::runtime_error(cudaGetErrorString(err));
+    }
+    template <typename T>
+    inline void GpuAllocator<T>::copyFromCurrentLoc(T *dst, const T *src, std::size_t count) const
+    {
+        cudaError_t err = cudaMemcpy(dst, src, sizeof(T) * count, cudaMemcpyDeviceToHost);
+        if (err != cudaSuccess)
+            throw std::runtime_error(std::string("cudaMemcpy (to host) failed: ") + cudaGetErrorString(err));
     }
     //////////////////////////////////
 }
