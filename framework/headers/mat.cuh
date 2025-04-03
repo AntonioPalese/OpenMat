@@ -48,8 +48,25 @@ namespace om
 
         void fill(const value_type& value)
         {
-            _fill(this->view(), value, m_Device.m_Dt);
+            _fill(this->view(), value, this->device_type());
         }
+
+        Mat<value_type> add(Mat<value_type>& rhs) 
+        {
+            if (this->rows() != rhs.rows() || this->cols() != rhs.cols()) {
+                throw std::runtime_error("add: dimension mismatch");
+            }
+            if (this->device_type() != rhs.device_type()) {
+                throw std::runtime_error("add: device mismatch");
+            }
+        
+            Mat<value_type> out(this->rows(), this->cols(), this->device());
+        
+            _add(this->view(), rhs.view(), out.view(), this->device_type());
+        
+            return out;
+        }
+        
 
         void copyToHost(value_type* dest) const;
         void copyToDevice(value_type* dest) const;        
