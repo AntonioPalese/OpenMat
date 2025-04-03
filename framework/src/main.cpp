@@ -5,11 +5,11 @@ int main()
 {
     om::Device dv("cuda:0");
     om::Mat<float> m1(4, 4, dv);
-    m1.fill(0.5f);
+    m1.fill(5.0f);
 
     om::Mat<float> m2(4, 4, dv);
-    m2.fill(0.0f);
+    m2.fill(2.0f);
 
-    om::Mat res = m1.add(m2);
+    om::Mat res = m1.mul(m2);
     om::print(res);
 }

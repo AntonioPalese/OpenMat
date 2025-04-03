@@ -13,6 +13,24 @@ namespace om
 
 namespace om
 {
+    template<typename T>
+    std::string dtype();
+
+    template<>
+    inline std::string dtype<float>() { return "float32"; }
+
+    template<>
+    inline std::string dtype<double>() { return "float64"; }
+
+    template<>
+    inline std::string dtype<int>() { return "int32"; }
+
+    template<>
+    inline std::string dtype<char>() { return "int8"; }
+}
+
+namespace om
+{
     enum class DEVICE_TYPE
     {
         CUDA,

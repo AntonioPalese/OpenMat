@@ -4,11 +4,11 @@
 #include "ops/kernels/fill_gpu.cuh"
 #include "ops/kernels/binary_op_macros.cuh"
 #include "ops/cpu/fill_cpu.h"
-#include "ops/cpu/add_cpu.h"
+#include "ops/cpu/binary_op_macros.h"
 
 #define DEFINE_DEVICE_DISPATCH_BINARY_INL(OP_NAME)                                                                                                                                                                                                               \
         template<typename T>                                                                  \
-        inline void _##OP_NAME(MatView<T> lhs, MatView<T> rhs, MatView<T> dst, DEVICE_TYPE dev) { \
+        inline void _##OP_NAME(MatView<const T> lhs, MatView<const T> rhs, MatView<T> dst, DEVICE_TYPE dev) { \
             switch (dev) {                                                                    \
                 case DEVICE_TYPE::CPU:  OP_NAME##_dispatch<DEVICE_TYPE::CPU, T>::exec(lhs, rhs, dst); break; \
                 case DEVICE_TYPE::CUDA: OP_NAME##_dispatch<DEVICE_TYPE::CUDA, T>::exec(lhs, rhs, dst); break; \
@@ -21,14 +21,14 @@
                                                                                               \
         template<typename T>                                                                  \
         struct OP_NAME##_dispatch<DEVICE_TYPE::CPU, T> {                                      \
-            static void exec(MatView<T> lhs, MatView<T> rhs, MatView<T> dst) {                \
+            static void exec(MatView<const T> lhs, MatView<const T> rhs, MatView<T> dst) {                \
                 CPU_FUNC(lhs, rhs, dst);                                                      \
             }                                                                                 \
         };                                                                                    \
                                                                                               \
         template<typename T>                                                                  \
         struct OP_NAME##_dispatch<DEVICE_TYPE::CUDA, T> {                                     \
-            static void exec(MatView<T> lhs, MatView<T> rhs, MatView<T> dst) {                \
+            static void exec(MatView<const T> lhs, MatView<const T> rhs, MatView<T> dst) {                \
                 CUDA_FUNC(lhs, rhs, dst);                                                     \
             }                                                                                 \
         };                                                                                    

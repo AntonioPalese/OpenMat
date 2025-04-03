@@ -51,22 +51,15 @@ namespace om
             _fill(this->view(), value, this->device_type());
         }
 
-        Mat<value_type> add(Mat<value_type>& rhs) 
-        {
-            if (this->rows() != rhs.rows() || this->cols() != rhs.cols()) {
-                throw std::runtime_error("add: dimension mismatch");
-            }
-            if (this->device_type() != rhs.device_type()) {
-                throw std::runtime_error("add: device mismatch");
-            }
-        
-            Mat<value_type> out(this->rows(), this->cols(), this->device());
-        
-            _add(this->view(), rhs.view(), out.view(), this->device_type());
-        
-            return out;
-        }
-        
+
+        Mat<value_type> add(const Mat<value_type>& rhs) const;   
+        Mat<value_type> operator+(const Mat<value_type>& rhs) const;             
+        Mat<value_type> sub(const Mat<value_type>& rhs) const;  
+        Mat<value_type> operator-(const Mat<value_type>& rhs) const;
+        Mat<value_type> mul(const Mat<value_type>& rhs) const;    
+        Mat<value_type> operator*(const Mat<value_type>& rhs) const;
+        Mat<value_type> div(const Mat<value_type>& rhs) const;      
+        Mat<value_type> operator/(const Mat<value_type>& rhs) const;
 
         void copyToHost(value_type* dest) const;
         void copyToDevice(value_type* dest) const;        
@@ -75,6 +68,7 @@ namespace om
         int rows() const {return m_Rows;}
         int cols() const {return m_Cols;}
         DEVICE_TYPE device_type() const {return m_Device.m_Dt;}
+        std::string dtype(){return om::dtype<value_type>();}
 
     private:
         int m_Rows;
