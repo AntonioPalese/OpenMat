@@ -4,12 +4,13 @@
 int main()
 {
     om::Device dv("cuda:0");
-    om::Mat<float> m1(4, 4, dv);
-    m1.fill(5.0f);
+    om::Mat<float> m1(10, 10, dv);
+    m1.fill(10.0f);
 
-    om::Mat<float> m2(4, 4, dv);
+    om::Mat<float> m2(10, 10, dv);
     m2.fill(2.0f);
 
-    om::Mat res = m1.mul(m2);
+    om::Mat res = m1/m2;
+    std::cout << "matrix element type : " << res.dtype() << "\n";
     om::print(res);
 }
