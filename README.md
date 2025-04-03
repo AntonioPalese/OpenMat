@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="framework/images/logo.png" alt="OpenMat Logo" width="200"/>
+  <img src="framework/images/logo.png" alt="OpenMat Logo" width="300"/>
 </p>
 
 # OpenMat
