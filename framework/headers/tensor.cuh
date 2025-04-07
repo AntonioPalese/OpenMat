@@ -22,20 +22,11 @@ namespace om
         using value_type = _Ty;
 
         Tensor(const std::vector<size_t>& shape, const Device& dv = Device(0, DEVICE_TYPE::CPU));
-        Mat(const Mat& rhs); // copy
-        Mat(Mat&& rhs); // move
-        ~Mat();
+        Tensor(const Tensor& rhs); // copy
+        Tensor(Tensor&& rhs); // move
+        ~Tensor();        
 
-        void compute_strides() 
-        {
-            strides_.resize(shape_.size());
-            strides_.back() = 1;
-            for (int i = shape_.size() - 2; i >= 0; --i) {
-                strides_[i] = strides_[i + 1] * shape_[i + 1];
-            }
-        }
-        
-
+        /*
         inline const value_type& operator()(int r, int c) const
         {
             if (r < 0 || r >= m_Rows || c < 0 || c >= m_Cols)
@@ -80,9 +71,20 @@ namespace om
         int cols() const {return m_Cols;}
         DEVICE_TYPE device_type() const {return m_Device.m_Dt;}
         std::string dtype(){return om::dtype<value_type>();}
-
+        */
     private:
+
+        void _compute_strides() 
+        {
+            m_Stride.resize(m_Shape.size());
+            m_Stride.back() = 1;
+            for (int i = m_Shape.size() - 2; i >= 0; --i) {
+                m_Stride[i] = m_Stride[i + 1] * m_Shape[i + 1];
+            }
+        }
+
         std::vector<int> m_Shape;
+        std::vector<int> m_Stride;
         _Ty* m_Data;
         Device m_Device;
 

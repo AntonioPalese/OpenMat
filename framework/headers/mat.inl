@@ -10,22 +10,22 @@ om::Mat<value_type>::Mat(int r, int c, const Device& dt): m_Rows(r), m_Cols(c), 
 }
 
 template <typename value_type>
-om::Mat<value_type>::Mat(const Mat& rhs) : m_Rows(rhs.m_Rows), m_Cols(rhs.m_Cols), m_Allocator(AllocatorFactory<value_type>::create(rhs.device().m_Dt))
+om::Mat<value_type>::Mat(const Mat& rhs) : m_Rows(rhs.m_Rows), m_Cols(rhs.m_Cols), m_Device(rhs.m_Device), m_Allocator(AllocatorFactory<value_type>::create(rhs.device().m_Dt))
 {
     m_Data = m_Allocator->allocate(m_Rows*m_Cols);
     // ?
-    std::memcpy(m_Data, rhs.m_Data, m_Rows*m_Cols);
+    std::memcpy(m_Data, rhs.m_Data, m_Rows*m_Cols*sizeof(value_type));
 }
 
 template <typename value_type>
-om::Mat<value_type>::Mat(Mat &&rhs)
+om::Mat<value_type>::Mat(Mat &&rhs) : m_Rows(rhs.m_Rows), m_Cols(rhs.m_Cols), m_Device(rhs.device)
 {
     if(rhs.m_Data)
     {
         m_Allocator = std::move(rhs.m_Allocator);
         m_Data = m_Allocator->allocate(m_Rows*m_Cols);
         // ?
-        std::memcpy(m_Data, rhs.m_Data, m_Rows*m_Cols);
+        std::memcpy(m_Data, rhs.m_Data, m_Rows*m_Cols*sizeof(value_type));
 
         rhs.m_Allocator->deallocate(rhs.m_Data);
         rhs.m_Data = nullptr;
