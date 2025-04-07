@@ -22,7 +22,15 @@ namespace om
     }
 
     template <typename T>
-    inline void CpuAllocator<T>::copyFromCurrentLoc(T *dst, const T *src, std::size_t count) const
+    void CpuAllocator<T>::copy(T *dst, const T *src, size_t count)
+    {
+        T* res = std::memcpy(dst, src, count*sizeof(T));
+        if(!res)
+            throw std::bad_alloc();
+    }
+
+    template <typename T>
+    void CpuAllocator<T>::copyFromCurrentLoc(T *dst, const T *src, std::size_t count) const
     {
         CUDA_CALL(cudaMemcpy(dst, src, sizeof(T) * count, cudaMemcpyHostToDevice));
     }
@@ -30,7 +38,7 @@ namespace om
 
     // gpu allocator //////////////////////////////////
     template <typename T>
-    inline T *GpuAllocator<T>::allocate(size_t count)
+    T *GpuAllocator<T>::allocate(size_t count)
     {
         if (count == 0)
             return nullptr;
@@ -41,12 +49,19 @@ namespace om
     }
 
     template <typename T>
-    inline void GpuAllocator<T>::deallocate(T *ptr)
+    void GpuAllocator<T>::deallocate(T *ptr)
     {
         CUDA_CALL(cudaFree(ptr));
     }
+    
     template <typename T>
-    inline void GpuAllocator<T>::copyFromCurrentLoc(T *dst, const T *src, std::size_t count) const
+    void GpuAllocator<T>::copy(T *dst, const T *src, size_t count)
+    {
+       CUDA_CALL(cudaMemcpy(dst, src, sizeof(T) * count, cudaMemcpyDeviceToDevice));
+    }
+    
+    template <typename T>
+    void GpuAllocator<T>::copyFromCurrentLoc(T *dst, const T *src, std::size_t count) const
     {
        CUDA_CALL(cudaMemcpy(dst, src, sizeof(T) * count, cudaMemcpyDeviceToHost));
     }

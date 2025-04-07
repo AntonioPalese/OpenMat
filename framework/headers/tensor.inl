@@ -14,8 +14,7 @@ om::Tensor<value_type>::Tensor(const Tensor& rhs) : m_Shape(rhs.m_Shape), m_Stri
 {
     size_t total_size_ = std::accumulate(m_Shape.begin(), m_Shape.end(), 1, std::multiplies<>());
     m_Data = m_Allocator->allocate(total_size_);
-        // ?
-    std::memcpy(m_Data, rhs.m_Data, total_size_*sizeof(value_type));
+    m_Allocator->copy(m_Data, rhs.m_Data, total_size_);
 }
 
 template <typename value_type>
@@ -26,9 +25,16 @@ om::Tensor<value_type>::Tensor(Tensor &&rhs) : m_Shape(rhs.m_Shape), m_Stride(rh
         m_Allocator = std::move(rhs.m_Allocator);
         size_t total_size_ = std::accumulate(m_Shape.begin(), m_Shape.end(), 1, std::multiplies<>());
         m_Data = m_Allocator->allocate(total_size_);
-        // ?
-        std::memcpy(m_Data, rhs.m_Data, total_size_*sizeof(value_type));
+        m_Allocator->copy(m_Data, rhs.m_Data, total_size_);
+
         rhs.m_Allocator->deallocate(rhs.m_Data);
         rhs.m_Data = nullptr;
     }
+}
+
+template <typename value_type>
+om::Tensor<value_type>::~Tensor()
+{
+    if(m_Data)
+        m_Allocator->deallocate(m_Data);
 }

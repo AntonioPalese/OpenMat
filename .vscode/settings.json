@@ -78,6 +78,9 @@
         "iomanip": "cpp",
         "span": "cpp",
         "variant": "cpp",
-        "format": "cpp"
+        "format": "cpp",
+        "__string": "cpp",
+        "version": "cpp",
+        "__locale": "cpp"
     }
 }
