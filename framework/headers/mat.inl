@@ -18,7 +18,7 @@ om::Mat<value_type>::Mat(const Mat& rhs) : m_Rows(rhs.m_Rows), m_Cols(rhs.m_Cols
 }
 
 template <typename value_type>
-om::Mat<value_type>::Mat(Mat &&rhs) : m_Rows(rhs.m_Rows), m_Cols(rhs.m_Cols), m_Device(rhs.device)
+om::Mat<value_type>::Mat(Mat &&rhs) : m_Rows(rhs.m_Rows), m_Cols(rhs.m_Cols), m_Device(rhs.device())
 {
     if(rhs.m_Data)
     {

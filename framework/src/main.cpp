@@ -1,4 +1,5 @@
 #include "mat.cuh"
+#include "tensor.cuh"
 #include "mat_utils.h"
 
 int main()
@@ -13,4 +14,6 @@ int main()
     om::Mat res = m1/m2;
     std::cout << "matrix element type : " << res.dtype() << "\n";
     om::print(res);
+
+    om::Tensor<float> tf({2, 2}, dv);
 }

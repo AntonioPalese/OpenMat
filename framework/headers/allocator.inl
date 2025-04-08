@@ -24,11 +24,11 @@ namespace om
     template <typename T>
     void CpuAllocator<T>::copy(T *dst, const T *src, size_t count)
     {
-        T* res = std::memcpy(dst, src, count*sizeof(T));
+        void* res = std::memcpy((void*)dst, (const void*)src, count*sizeof(T));
         if(!res)
             throw std::bad_alloc();
     }
-
+    
     template <typename T>
     void CpuAllocator<T>::copyFromCurrentLoc(T *dst, const T *src, std::size_t count) const
     {

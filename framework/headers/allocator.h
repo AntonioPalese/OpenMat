@@ -27,7 +27,7 @@ namespace om
         virtual T* allocate(size_t count) override;
         virtual void deallocate(T* ptr) override;
 
-        virtual void copy(T*dst, const T* src, size_t count) override
+        virtual void copy(T*dst, const T* src, size_t count) override;
 
         virtual void copyFromCurrentLoc(T* dst, const T* src, std::size_t count) const override;
     };
