@@ -77,7 +77,10 @@ namespace om {
         __host__ __device__
         size_t size() const
         {
-            return std::accumulate(shape, shape+rank, 1, std::multiplies<>());
+            size_t acc = 1;
+            for(int i = 0; i < rank; ++i)
+                acc *= shape[i];
+            return acc;
         }
     };
 }
