@@ -6,24 +6,22 @@
 
 #define DEFINE_BINARY_OPS_CPU(OP_NAME, OP_EXPR)\
     template<typename T>\
-    void OP_NAME##_cpu(MatView<const T> lhs, MatView<const T> rhs, MatView<T> dst) {\
+    void OP_NAME##_cpu(TensorView<const T> lhs, TensorView<const T> rhs, TensorView<T> dst) {\
         static_assert(std::is_arithmetic_v<T>, "add_cpu requires an arithmetic type");\
 \
-        if (lhs.rows != rhs.rows || lhs.cols != rhs.cols) {\
-            throw std::runtime_error("Matrix dimensions must match for arithmetic OP");\
+        if (!lhs.match(rhs)) {\
+            throw std::runtime_error("Tensor dimensions must match for arithmetic operations");\
         }\
 \
-        for (int r = 0; r < lhs.rows; ++r) {\
-            for (int c = 0; c < lhs.cols; ++c) {\
-                dst(r, c) = OP_EXPR;\
-            }\
-        }\
+        size_t _total = lhs.size();\
+        for(size_t idx = 0; idx < _total; ++idx)\
+            dst[idx] = OP_EXPR;\
     }
 
 namespace om 
 {
-    DEFINE_BINARY_OPS_CPU(add, lhs(r, c) + rhs(r, c))
-    DEFINE_BINARY_OPS_CPU(sub, lhs(r, c) - rhs(r, c))
-    DEFINE_BINARY_OPS_CPU(mul, lhs(r, c) * rhs(r, c))
-    DEFINE_BINARY_OPS_CPU(div, ( static_cast<double>(rhs(r, c)) != 0.0 ? lhs(r, c) / rhs(r, c) : std::numeric_limits<T>::infinity())) 
+    DEFINE_BINARY_OPS_CPU(add, lhs[idx] + rhs[idx])
+    DEFINE_BINARY_OPS_CPU(sub, lhs[idx] - rhs[idx])
+    DEFINE_BINARY_OPS_CPU(mul, lhs[idx] * rhs[idx])
+    DEFINE_BINARY_OPS_CPU(div, ( static_cast<double>(rhs[idx]) != 0.0 ? lhs[idx] / rhs[idx] : std::numeric_limits<T>::infinity()))
 }

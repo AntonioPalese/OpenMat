@@ -1,15 +1,13 @@
 #pragma once
-#include "mat_view.cuh"
+#include "tensor_view.cuh"
 
-namespace om {
-
+namespace om 
+{
     template<typename T>
-    void fill_cpu(MatView<T> mat, T value) {
-        for (int r = 0; r < mat.rows; ++r) {
-            for (int c = 0; c < mat.cols; ++c) {
-                mat(r, c) = value;
-            }
-        }
-    }
-
+    void fill_cpu(TensorView<T> tensor, T value) 
+    {
+        size_t _total = tensor.size();
+        for(size_t idx = 0; idx < _total; ++idx)
+            tensor[idx] = value;
+    };
 }
