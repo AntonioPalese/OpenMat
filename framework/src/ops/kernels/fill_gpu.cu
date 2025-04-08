@@ -7,9 +7,9 @@ namespace om {
     
     template<typename T>
     __global__ void fill_kernel_rank1(TensorView<T> tensor, T value) {
-        size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-        if(idx < tensor.shape[0])
-            tensor(idx) = value;
+        size_t x = blockIdx.x * blockDim.x + threadIdx.x;
+        if(x < tensor.shape[0])
+            tensor(x) = value;
     }
     
     template<typename T>
@@ -27,8 +27,8 @@ namespace om {
         size_t y = blockIdx.y * blockDim.y + threadIdx.y;
         size_t z = blockIdx.z * blockDim.z + threadIdx.z;
         
-        if(y < tensor.shape[0] && x < tensor.shape[1] && z < tensor.shape[2])
-            tensor(y, x, z) = value;
+        if(z < tensor.shape[0] && y < tensor.shape[1] && x < tensor.shape[2])
+            tensor(z, y, x) = value;
     }
 
     template<typename T>
