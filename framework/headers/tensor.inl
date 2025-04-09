@@ -7,7 +7,7 @@ om::Tensor<value_type>::Tensor(const std::vector<size_t>& shape, const Device & 
 {
     _compute_strides();
     size_t total_size_ = std::accumulate(shape.begin(), shape.end(), 1, std::multiplies<>());
-    m_Allocator->allocate(total_size_);
+    m_Data = m_Allocator->allocate(total_size_);
 }
 
 template<typename value_type>

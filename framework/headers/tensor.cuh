@@ -9,8 +9,8 @@
 
 #include "mat_utils.h"
 #include "allocator.h"
-#include "mat_view.cuh"
 #include "tensor_view.cuh"
+#include "device_tensor_view.cuh"
 #include "kernel_launcher.h"
 
 
@@ -26,7 +26,6 @@ namespace om
         Tensor(const Tensor& rhs); // copy
         Tensor(Tensor&& rhs); // move
         ~Tensor();        
-
         
         const value_type& operator()(std::initializer_list<size_t> indices) const
         {
@@ -37,31 +36,68 @@ namespace om
             return m_Data[_compute_flat_index(indices)];
         }
         
-        __host__ TensorView<value_type> view() {
-            return TensorView<value_type>{
-                m_Data,
-                m_Shape.data(),
-                m_Stride.data(),
-                m_Shape.size()
-            };
-        }
-        
-        __host__ TensorView<const value_type> view() const {
-            return TensorView<const value_type>{
-                m_Data,
-                m_Shape.data(),
-                m_Stride.data(),
-                m_Shape.size()
-            };
-        }
-        
-        /*
-        void fill(const value_type& value)
+        __host__ TensorView<value_type> view() 
         {
-            _fill(this->view(), value, this->device_type());
+            switch (this->device_type())
+            {
+                case DEVICE_TYPE::CPU:
+                {
+                    return TensorView<value_type>(
+                        m_Data,
+                        m_Shape.data(),
+                        m_Stride.data(),
+                        m_Shape.size()
+                    );
+                }
+                case DEVICE_TYPE::CUDA:
+                {
+                    return TensorView<value_type>(
+                        m_Data,
+                        m_Shape.data(),
+                        m_Stride.data(),
+                        m_Shape.size()
+                    );
+                }
+            default:
+                throw std::runtime_error("Unavailable device type!");
+            }
+        }
+        
+        __host__ TensorView<const value_type> view() const 
+        {
+            switch (this->device_type())
+            {
+                case DEVICE_TYPE::CPU:
+                {
+                    return TensorView<const value_type>{
+                        m_Data,
+                        m_Shape.data(),
+                        m_Stride.data(),
+                        m_Shape.size()
+                    };
+                }
+                case DEVICE_TYPE::CUDA:
+                {
+                    return TensorView<const value_type>(
+                        m_Data,
+                        m_Shape.data(),
+                        m_Stride.data(),
+                        m_Shape.size()
+                    );
+                }
+            default:
+                throw std::runtime_error("Unavailable device type!");
+            }
         }
         
 
+        void fill(const value_type& value)
+        {
+            TensorView<value_type> tv = this->view();
+            _fill(tv, value, this->device_type());
+        }
+        
+        /*
         Mat<value_type> add(const Mat<value_type>& rhs) const;   
         Mat<value_type> operator+(const Mat<value_type>& rhs) const;             
         Mat<value_type> sub(const Mat<value_type>& rhs) const;  
@@ -82,7 +118,9 @@ namespace om
         const size_t* stride_p() const {return m_Stride.data();}
 
         DEVICE_TYPE device_type() const {return m_Device.m_Dt;}
-        std::string dtype(){return om::dtype<value_type>();}
+        std::string dtype() const {return om::dtype<value_type>();}
+        size_t size() const {return std::accumulate(m_Shape.begin(), m_Shape.end(), 1, std::multiplies<>());}
+        size_t rank() const {return m_Shape.size();}
     private:
 
         void _compute_strides();
