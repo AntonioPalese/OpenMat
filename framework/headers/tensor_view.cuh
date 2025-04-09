@@ -1,9 +1,11 @@
 #pragma once
-#include "cuda_defines.cuh"
 #include <vector>
 #include <assert.h>
 #include <type_traits>
 #include <numeric>
+
+#include "cuda_defines.cuh"
+#include "device_tensor_view.cuh"
 
 namespace om {
     template<typename T>
@@ -110,6 +112,28 @@ namespace om {
             cudaFree(stride);
             shape = tmp_shape;
             stride = tmp_stride;
+        }
+
+        __host__
+        DeviceTensorView<const T> as_device_tw() const
+        {
+            return DeviceTensorView<const T>(
+                data, 
+                shape,
+                stride,
+                rank
+            );
+        }
+
+        __host__
+        DeviceTensorView<T> as_device_tw()
+        {
+            return DeviceTensorView<T>(
+                data, 
+                shape,
+                stride,
+                rank
+            );
         }
     };
 }

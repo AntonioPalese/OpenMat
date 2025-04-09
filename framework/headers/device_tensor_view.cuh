@@ -1,69 +1,112 @@
-// #pragma once
-// #include "tensor_view.cuh"
-// #include "tensor.cuh"
-// #include "cuda_defines.cuh"
-// #include <vector>
-// #include <cstring>
+#pragma once
+#include "cuda_defines.cuh"
+#include <vector>
+#include <cstring>
 
-// namespace om {
+namespace om {
 
-// template<typename T>
-// class DeviceTensorView {
-// public:
-//     DeviceTensorView(const T* data, const size_t* h_shape, const size_t* h_stride, size_t rank)
-//         : m_Data(const_cast<T*>(data)), m_Rank(rank)
-//     {
-//         // Allocate and copy shape
-//         CUDA_CALL(cudaMalloc(&m_Shape, sizeof(size_t) * rank));
-//         CUDA_CALL(cudaMemcpy(m_Shape, h_shape, sizeof(size_t) * rank, cudaMemcpyHostToDevice));
+template<typename T>
+struct DeviceTensorView {
 
-//         // Allocate and copy stride
-//         CUDA_CALL(cudaMalloc(&m_Stride, sizeof(size_t) * rank));
-//         CUDA_CALL(cudaMemcpy(m_Stride, h_stride, sizeof(size_t) * rank, cudaMemcpyHostToDevice));
-//     }
+    DeviceTensorView(T* _data, const size_t* h_shape, const size_t* h_stride, size_t _rank)
+        : data(_data), rank(_rank)
+    {
+        // Allocate and copy shape
+        CUDA_CALL(cudaMalloc(&shape, sizeof(size_t) * rank));
+        CUDA_CALL(cudaMemcpy(shape, h_shape, sizeof(size_t) * rank, cudaMemcpyHostToDevice));
 
-//     // No copy constructor
-//     DeviceTensorView(const DeviceTensorView&) = delete;
-//     DeviceTensorView& operator=(const DeviceTensorView&) = delete;
+        // Allocate and copy stride
+        CUDA_CALL(cudaMalloc(&stride, sizeof(size_t) * rank));
+        CUDA_CALL(cudaMemcpy(stride, h_stride, sizeof(size_t) * rank, cudaMemcpyHostToDevice));
+    }
 
-//     // Move constructor
-//     DeviceTensorView(DeviceTensorView&& other) noexcept {
-//         *this = std::move(other);
-//     }
+    // No copy constructor
+    DeviceTensorView(const DeviceTensorView&) = delete;
+    // No copy assignement
+    DeviceTensorView& operator=(const DeviceTensorView&) = delete;
 
-//     DeviceTensorView& operator=(DeviceTensorView&& other) noexcept {
-//         if (this != &other) {
-//             free_device_metadata();
-//             m_Data   = other.m_Data;
-//             m_Shape  = other.m_Shape;
-//             m_Stride = other.m_Stride;
-//             m_Rank   = other.m_Rank;
-//             other.m_Shape = nullptr;
-//             other.m_Stride = nullptr;
-//         }
-//         return *this;
-//     }
+    // Move constructor
+    DeviceTensorView(DeviceTensorView&& other) noexcept {
+        *this = std::move(other);
+    }
+    // Move assignement
+    DeviceTensorView& operator=(DeviceTensorView&& other) noexcept {
+        if (this != &other) {
+            free_device_metadata();
+            data   = other.data;
+            shape  = other.shape;
+            stride = other.stride;
+            rank   = other.rank;
+            other.shape = nullptr;
+            other.stride = nullptr;
+        }
+        return *this;
+    }
 
-//     ~DeviceTensorView() {
-//         free_device_metadata();
-//     }
+    ~DeviceTensorView() {
+        free_device_metadata();
+    }
 
-//     // Get raw device-compatible view
-//     __host__ __device__
-//     TensorView<T> view() const {
-//         return TensorView<T>{m_Data, m_Shape, m_Stride, m_Rank};
-//     }
+    template <typename... Indices>
+    __host__ __device__
+    T& at(Indices... indices) {
+        static_assert(sizeof...(Indices) > 0, "Must provide at least one index.");
 
-// private:
-//     T* m_Data = nullptr;
-//     size_t* m_Shape = nullptr;
-//     size_t* m_Stride = nullptr;
-//     size_t m_Rank = 0;
+        constexpr size_t num_indices = sizeof...(Indices);
+        assert(num_indices == rank && "Incorrect number of indices for tensor access.");
 
-//     void free_device_metadata() {
-//         if (m_Shape) cudaFree(m_Shape);
-//         if (m_Stride) cudaFree(m_Stride);
-//     }
-// };
+        size_t idx_array[] = { static_cast<size_t>(indices)... };
+        return data[compute_flat_index(idx_array)];
+    }        
+    template <typename... Indices>
+    __host__ __device__
+    const T& at(Indices... indices) const {
+        static_assert(sizeof...(Indices) > 0, "Must provide at least one index.");
 
-// } // namespace om
+        constexpr size_t num_indices = sizeof...(Indices);
+        assert(num_indices == rank && "Incorrect number of indices for tensor access.");
+
+        size_t idx_array[] = { static_cast<size_t>(indices)... };
+        return data[compute_flat_index(idx_array)];
+    }
+
+    __host__ __device__
+    T& operator[](size_t flat_index) {
+        return data[flat_index];
+    }
+
+    __host__ __device__
+    const T& operator[](size_t flat_index) const {
+        return data[flat_index];
+    }
+
+    __host__ __device__
+    size_t size() const
+    {
+        size_t acc = 1;
+        for(int i = 0; i < rank; ++i)
+            acc *= shape[i];
+        return acc;
+    }
+
+    __host__ __device__
+    size_t compute_flat_index(const size_t* indices) const {
+        size_t flat = 0;
+        for (size_t i = 0; i < rank; ++i) {
+            flat += indices[i] * stride[i];
+        }
+        return flat;
+    }
+
+    T* data = nullptr;
+    size_t* shape = nullptr;
+    size_t* stride = nullptr;
+    size_t rank = 0;
+
+    void free_device_metadata() {
+        if (shape) cudaFree(shape);
+        if (stride) cudaFree(stride);
+    }
+};
+
+} // namespace om

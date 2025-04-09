@@ -6,14 +6,14 @@ namespace om {
 
     
     template<typename T>
-    __global__ void fill_kernel_rank1(TensorView<T> tensor, T value) {
+    __global__ void fill_kernel_rank1(DeviceTensorView<T> tensor, T value) {
         size_t x = blockIdx.x * blockDim.x + threadIdx.x;
         if(x < tensor.shape[0])
             tensor.at(x) = value;
     }
     
     template<typename T>
-    __global__ void fill_kernel_rank2(TensorView<T> tensor, T value) {
+    __global__ void fill_kernel_rank2(DeviceTensorView<T> tensor, T value) {
         size_t x = blockIdx.x * blockDim.x + threadIdx.x;
         size_t y = blockIdx.y * blockDim.y + threadIdx.y;
         
@@ -22,7 +22,7 @@ namespace om {
     }
     
     template<typename T>
-    __global__ void fill_kernel_rank3(TensorView<T> tensor, T value) {
+    __global__ void fill_kernel_rank3(DeviceTensorView<T> tensor, T value) {
         size_t x = blockIdx.x * blockDim.x + threadIdx.x;
         size_t y = blockIdx.y * blockDim.y + threadIdx.y;
         size_t z = blockIdx.z * blockDim.z + threadIdx.z;
@@ -32,7 +32,7 @@ namespace om {
     }
 
     template<typename T>
-    __global__ void fill_kernel_rank4(TensorView<T> tensor, T value) {
+    __global__ void fill_kernel_rank4(DeviceTensorView<T> tensor, T value) {
         size_t w = threadIdx.x + blockIdx.x * blockDim.x;
         size_t h = threadIdx.y + blockIdx.y * blockDim.y;
         size_t n = blockIdx.z; // N dimension
@@ -48,7 +48,7 @@ namespace om {
     }
     
     template<typename T>
-    __global__ void fill_kernel_nd(TensorView<T> tensor, T value) {
+    __global__ void fill_kernel_nd(DeviceTensorView<T> tensor, T value) {
         size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
         size_t total_elements = tensor.size();
     
@@ -68,42 +68,27 @@ namespace om {
     template<typename T>
     void launch_fill(TensorView<T> tensor, T value)
     {
-        size_t* tmp_shape = nullptr;
-        size_t* tmp_stride = nullptr;
-
         switch (tensor.rank)
         {
         case 1:
             {
                 dim3 threads(16);
                 dim3 blocks((tensor.shape[0] + 15) / 16);
-                size_t** res = tensor.to_device_metadata();
-                tmp_shape = res[0];
-                tmp_stride = res[1];
-                delete[] res;
-                fill_kernel_rank1<<<blocks, threads>>>(tensor, value);
+                fill_kernel_rank1<<<blocks, threads>>>(tensor.as_device_tw(), value);
             }
             break;
         case 2:
             {
                 dim3 threads(16, 16);
                 dim3 blocks((tensor.shape[1] + 15) / 16, (tensor.shape[0] + 15) / 16);
-                size_t** res = tensor.to_device_metadata();
-                tmp_shape = res[0];
-                tmp_stride = res[1];
-                delete[] res;
-                fill_kernel_rank2<<<blocks, threads>>>(tensor, value);
+                fill_kernel_rank2<<<blocks, threads>>>(tensor.as_device_tw(), value);
             }
             break;        
         case 3:
             {
                 dim3 threads(8, 8, 8); // solo 512 thread per blocco
                 dim3 blocks((tensor.shape[2] + 7) / 8, (tensor.shape[1] + 7) / 8, (tensor.shape[0] + 7) / 8);
-                size_t** res = tensor.to_device_metadata();
-                tmp_shape = res[0];
-                tmp_stride = res[1];
-                delete[] res;
-                fill_kernel_rank3<<<blocks, threads>>>(tensor, value);
+                fill_kernel_rank3<<<blocks, threads>>>(tensor.as_device_tw(), value);
             }
             break;  
         case 4:
@@ -114,11 +99,7 @@ namespace om {
                     (tensor.shape[2] + threads.y - 1) / threads.y,
                     tensor.shape[0]
                 );                             
-                size_t** res = tensor.to_device_metadata();
-                tmp_shape = res[0];
-                tmp_stride = res[1];
-                delete[] res;
-                fill_kernel_rank4<<<blocks, threads>>>(tensor, value);
+                fill_kernel_rank4<<<blocks, threads>>>(tensor.as_device_tw(), value);
             }
             break;            
         default:
@@ -126,17 +107,12 @@ namespace om {
                 size_t total_elements = tensor.size();
                 dim3 threads(256);
                 dim3 blocks((total_elements + threads.x - 1) / threads.x);
-                size_t** res = tensor.to_device_metadata();
-                tmp_shape = res[0];
-                tmp_stride = res[1];
-                delete[] res;
-                fill_kernel_nd<<<blocks, threads>>>(tensor, value);
+                fill_kernel_nd<<<blocks, threads>>>(tensor.as_device_tw(), value);
             }
             break;
         }
         CUDA_CHECK;
         cudaDeviceSynchronize();
-        tensor.to_host_metadata(tmp_shape, tmp_stride);
     }
 
     // Explicit instantiations
