@@ -40,14 +40,14 @@ namespace om
 
     template<typename T>
     struct fill_dispatch<DEVICE_TYPE::CPU, T> {
-        static void exec(TensorView<T>& tensor, T value) {
+        static void exec(TensorView<T> tensor, T value) {
             fill_cpu(tensor, value);
         }
     };
 
     template<typename T>
     struct fill_dispatch<DEVICE_TYPE::CUDA, T> {
-        static void exec(TensorView<T>& tensor, T value) {
+        static void exec(TensorView<T> tensor, T value) {
             launch_fill(tensor, value);
         }
     };

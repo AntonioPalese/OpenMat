@@ -38,63 +38,28 @@ namespace om
         
         __host__ TensorView<value_type> view() 
         {
-            switch (this->device_type())
-            {
-                case DEVICE_TYPE::CPU:
-                {
-                    return TensorView<value_type>(
-                        m_Data,
-                        m_Shape.data(),
-                        m_Stride.data(),
-                        m_Shape.size()
-                    );
-                }
-                case DEVICE_TYPE::CUDA:
-                {
-                    return TensorView<value_type>(
-                        m_Data,
-                        m_Shape.data(),
-                        m_Stride.data(),
-                        m_Shape.size()
-                    );
-                }
-            default:
-                throw std::runtime_error("Unavailable device type!");
-            }
+            return TensorView<value_type>{
+                m_Data,
+                m_Shape.data(),
+                m_Stride.data(),
+                m_Shape.size()
+            };
         }
         
         __host__ TensorView<const value_type> view() const 
         {
-            switch (this->device_type())
-            {
-                case DEVICE_TYPE::CPU:
-                {
-                    return TensorView<const value_type>{
-                        m_Data,
-                        m_Shape.data(),
-                        m_Stride.data(),
-                        m_Shape.size()
-                    };
-                }
-                case DEVICE_TYPE::CUDA:
-                {
-                    return TensorView<const value_type>(
-                        m_Data,
-                        m_Shape.data(),
-                        m_Stride.data(),
-                        m_Shape.size()
-                    );
-                }
-            default:
-                throw std::runtime_error("Unavailable device type!");
-            }
+            return TensorView<const value_type>{
+                m_Data,
+                m_Shape.data(),
+                m_Stride.data(),
+                m_Shape.size()
+            };
         }
         
 
         void fill(const value_type& value)
         {
-            TensorView<value_type> tv = this->view();
-            _fill(tv, value, this->device_type());
+            _fill(this->view(), value, this->device_type());
         }
         
         /*
