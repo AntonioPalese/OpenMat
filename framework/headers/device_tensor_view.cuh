@@ -48,8 +48,8 @@ struct DeviceTensorView {
     }
 
     template <typename... Indices>
-    __host__ __device__
-    T& at(Indices... indices) {
+    __device__
+    T& operator()(Indices... indices) {
         static_assert(sizeof...(Indices) > 0, "Must provide at least one index.");
 
         constexpr size_t num_indices = sizeof...(Indices);
@@ -59,8 +59,8 @@ struct DeviceTensorView {
         return data[compute_flat_index(idx_array)];
     }        
     template <typename... Indices>
-    __host__ __device__
-    const T& at(Indices... indices) const {
+    __device__
+    const T& operator()(Indices... indices) const {
         static_assert(sizeof...(Indices) > 0, "Must provide at least one index.");
 
         constexpr size_t num_indices = sizeof...(Indices);
@@ -70,17 +70,17 @@ struct DeviceTensorView {
         return data[compute_flat_index(idx_array)];
     }
 
-    __host__ __device__
+    __device__
     T& operator[](size_t flat_index) {
         return data[flat_index];
     }
 
-    __host__ __device__
+    __device__
     const T& operator[](size_t flat_index) const {
         return data[flat_index];
     }
 
-    __host__ __device__
+    __device__
     size_t size() const
     {
         size_t acc = 1;
@@ -89,7 +89,7 @@ struct DeviceTensorView {
         return acc;
     }
 
-    __host__ __device__
+    __device__
     size_t compute_flat_index(const size_t* indices) const {
         size_t flat = 0;
         for (size_t i = 0; i < rank; ++i) {

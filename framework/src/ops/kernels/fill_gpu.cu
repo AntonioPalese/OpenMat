@@ -9,7 +9,7 @@ namespace om {
     __global__ void fill_kernel_rank1(DeviceTensorView<T> tensor, T value) {
         size_t x = blockIdx.x * blockDim.x + threadIdx.x;
         if(x < tensor.shape[0])
-            tensor.at(x) = value;
+            tensor(x) = value;
     }
     
     template<typename T>
@@ -18,7 +18,7 @@ namespace om {
         size_t y = blockIdx.y * blockDim.y + threadIdx.y;
         
         if(y < tensor.shape[0] && x < tensor.shape[1])
-            tensor.at(y, x) = value;
+            tensor(y, x) = value;
     }
     
     template<typename T>
@@ -28,7 +28,7 @@ namespace om {
         size_t z = blockIdx.z * blockDim.z + threadIdx.z;
         
         if(z < tensor.shape[0] && y < tensor.shape[1] && x < tensor.shape[2])
-            tensor.at(z, y, x) = value;
+            tensor(z, y, x) = value;
     }
 
     template<typename T>
@@ -42,7 +42,7 @@ namespace om {
                 c < tensor.shape[1] &&
                 h < tensor.shape[2] &&
                 w < tensor.shape[3]) {
-                    tensor.at(n, c, h, w) = value;
+                    tensor(n, c, h, w) = value;
             }
         }
     }

@@ -27,8 +27,8 @@ namespace om {
         }
     
         template <typename... Indices>
-        __host__ __device__
-        T& at(Indices... indices) {
+        __host__
+        T& operator()(Indices... indices) {
             static_assert(sizeof...(Indices) > 0, "Must provide at least one index.");
 
             constexpr size_t num_indices = sizeof...(Indices);
@@ -38,8 +38,8 @@ namespace om {
             return data[compute_flat_index(idx_array)];
         }        
         template <typename... Indices>
-        __host__ __device__
-        const T& at(Indices... indices) const {
+        __host__
+        const T& operator()(Indices... indices) const {
             static_assert(sizeof...(Indices) > 0, "Must provide at least one index.");
 
             constexpr size_t num_indices = sizeof...(Indices);
@@ -49,17 +49,17 @@ namespace om {
             return data[compute_flat_index(idx_array)];
         }
 
-        __host__ __device__
+        __host__
         T& operator[](size_t flat_index) {
             return data[flat_index];
         }
 
-        __host__ __device__
+        __host__
         const T& operator[](size_t flat_index) const {
             return data[flat_index];
         }
 
-        __host__ __device__
+        __host__
         size_t compute_flat_index(const size_t* indices) const {
             size_t flat = 0;
             for (size_t i = 0; i < rank; ++i) {
@@ -68,7 +68,7 @@ namespace om {
             return flat;
         }
 
-        __host__ __device__
+        __host__
         void compute_multi_index(size_t flat_index, size_t* indices_out) const {
             for (size_t i = 0; i < rank; ++i) {
                 indices_out[i] = flat_index / stride[i];
@@ -76,42 +76,13 @@ namespace om {
             }
         }
         
-        __host__ __device__
+        __host__
         size_t size() const
         {
             size_t acc = 1;
             for(int i = 0; i < rank; ++i)
                 acc *= shape[i];
             return acc;
-        }
-        
-        __host__
-        size_t** to_device_metadata()
-        {
-            // Allocate and copy shape
-            size_t* tmp_shape = shape;
-            CUDA_CALL(cudaMalloc(&shape, sizeof(size_t) * rank));
-            CUDA_CALL(cudaMemcpy(shape, tmp_shape, sizeof(size_t) * rank, cudaMemcpyHostToDevice));
-
-            // Allocate and copy stride
-            size_t* tmp_stride = stride;
-            CUDA_CALL(cudaMalloc(&stride, sizeof(size_t) * rank));
-            CUDA_CALL(cudaMemcpy(stride, tmp_stride, sizeof(size_t) * rank, cudaMemcpyHostToDevice));
-
-            auto res = new size_t*[2];
-            res[0] = tmp_shape;
-            res[1] = tmp_stride;            
-            return res;
-        }
-
-        __host__
-        void to_host_metadata(size_t* tmp_shape, size_t* tmp_stride)
-        {
-            // Allocate and copy shape
-            cudaFree(shape);
-            cudaFree(stride);
-            shape = tmp_shape;
-            stride = tmp_stride;
         }
 
         __host__
