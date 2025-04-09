@@ -11,12 +11,12 @@ namespace om {
     template<typename T>
     struct TensorView {
         T* data;
-        size_t* shape;
-        size_t* stride;        
+        const size_t* shape;
+        const size_t* stride;        
         size_t rank;
 
         __host__
-        bool match(TensorView<T> other) const 
+        bool match(TensorView<T> other) const
         {
             if(rank != other.rank) return false;
             for(size_t i = 0; i < rank; i++)
@@ -47,6 +47,13 @@ namespace om {
 
             size_t idx_array[] = { static_cast<size_t>(indices)... };
             return data[compute_flat_index(idx_array)];
+        }
+
+        template<typename U = T,
+        typename = std::enable_if_t<!std::is_const<U>::value>>
+        __host__
+        operator TensorView<const T>() const {
+            return TensorView<const T>{data, shape, stride, rank};
         }
 
         __host__

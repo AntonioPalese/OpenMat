@@ -62,9 +62,10 @@ namespace om
             _fill(this->view(), value, this->device_type());
         }
         
-        /*
-        Mat<value_type> add(const Mat<value_type>& rhs) const;   
-        Mat<value_type> operator+(const Mat<value_type>& rhs) const;             
+        
+        Tensor<value_type> add(const Tensor<value_type>& rhs) const;   
+        Tensor<value_type> operator+(const Tensor<value_type>& rhs) const;  
+        /*           
         Mat<value_type> sub(const Mat<value_type>& rhs) const;  
         Mat<value_type> operator-(const Mat<value_type>& rhs) const;
         Mat<value_type> mul(const Mat<value_type>& rhs) const;    

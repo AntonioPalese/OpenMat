@@ -41,6 +41,22 @@ om::Tensor<value_type>::~Tensor()
 }
 
 template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::add(const Tensor<value_type> &rhs) const
+{
+    Tensor<value_type> out(this->shape(), this->device());
+
+    _add(this->view(), rhs.view(), out.view(), this->device_type());
+
+    return out;
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::operator+(const Tensor<value_type> &rhs) const
+{
+    return Tensor<value_type>();
+}
+
+template <typename value_type>
 void om::Tensor<value_type>::copyToHost(value_type *dest) const
 {            
     size_t total_size_ = std::accumulate(m_Shape.begin(), m_Shape.end(), 1, std::multiplies<>());
