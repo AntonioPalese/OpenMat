@@ -9,7 +9,7 @@
 
 #define DEFINE_BINARY_OP_LAUNCH(OP_NAME)\
     template<typename T>\
-    void launch_##OP_NAME(TensorView<const T> lhs, TensorView<const T> rhs, TensorView<T> dst)\
+    void launch_##OP_NAME(const TensorView<const T> lhs, const TensorView<const T> rhs, TensorView<T> dst)\
     {\
         if ( !lhs.match(dst) || !rhs.match(dst) || !lhs.match(rhs) )\
         {\
@@ -64,7 +64,7 @@
 
 #define DEFINE_BINARY_OP_KERNEL_K1(OP_NAME, OP_EXPR)\
     template<typename T>\
-    __global__ void OP_NAME##_kernel_rank1(DeviceTensorView<const T> lhs, DeviceTensorView<const T> rhs, DeviceTensorView<T> dst) {\
+    __global__ void OP_NAME##_kernel_rank1(const DeviceTensorView<const T> lhs, const DeviceTensorView<const T> rhs, DeviceTensorView<T> dst) {\
         size_t x = blockIdx.x * blockDim.x + threadIdx.x;\
 \
         if (x < lhs.shape[0] && x < rhs.shape[0])\
@@ -73,7 +73,7 @@
 
 #define DEFINE_BINARY_OP_KERNEL_K2(OP_NAME, OP_EXPR)\
     template<typename T>\
-    __global__ void OP_NAME##_kernel_rank2(DeviceTensorView<const T> lhs, DeviceTensorView<const T> rhs, DeviceTensorView<T> dst) {\
+    __global__ void OP_NAME##_kernel_rank2(const DeviceTensorView<const T> lhs, const DeviceTensorView<const T> rhs, DeviceTensorView<T> dst) {\
         size_t x = blockIdx.x * blockDim.x + threadIdx.x;\
         size_t y = blockIdx.y * blockDim.y + threadIdx.y;\
 \
@@ -83,7 +83,7 @@
 
 #define DEFINE_BINARY_OP_KERNEL_K3(OP_NAME, OP_EXPR)\
     template<typename T>\
-    __global__ void OP_NAME##_kernel_rank3(DeviceTensorView<const T> lhs, DeviceTensorView<const T> rhs, DeviceTensorView<T> dst) {\
+    __global__ void OP_NAME##_kernel_rank3(const DeviceTensorView<const T> lhs, const DeviceTensorView<const T> rhs, DeviceTensorView<T> dst) {\
         size_t x = blockIdx.x * blockDim.x + threadIdx.x;\
         size_t y = blockIdx.y * blockDim.y + threadIdx.y;\
         size_t z = blockIdx.z * blockDim.z + threadIdx.z;\
@@ -94,7 +94,7 @@
 
 #define DEFINE_BINARY_OP_KERNEL_K4(OP_NAME, OP_EXPR)\
     template<typename T>\
-    __global__ void OP_NAME##_kernel_rank4(DeviceTensorView<const T> lhs, DeviceTensorView<const T> rhs, DeviceTensorView<T> dst) {\
+    __global__ void OP_NAME##_kernel_rank4(const DeviceTensorView<const T> lhs, const DeviceTensorView<const T> rhs, DeviceTensorView<T> dst) {\
         size_t w = threadIdx.x + blockIdx.x * blockDim.x;\
         size_t h = threadIdx.y + blockIdx.y * blockDim.y;\
         size_t n = blockIdx.z;\
@@ -111,7 +111,7 @@
 
 #define DEFINE_BINARY_OP_KERNEL_ND(OP_NAME, OP_EXPR)\
     template<typename T>\
-    __global__ void OP_NAME##_kernel_nd(DeviceTensorView<const T> lhs, DeviceTensorView<const T> rhs, DeviceTensorView<T> dst) {\
+    __global__ void OP_NAME##_kernel_nd(const DeviceTensorView<const T> lhs, const DeviceTensorView<const T> rhs, DeviceTensorView<T> dst) {\
         size_t idx = blockIdx.x * blockDim.x + threadIdx.x;\
         size_t total_elements = lhs.size();\
 \
@@ -135,19 +135,19 @@
 
 #define DEFINE_BINARY_OP_KERNEL_H(OP_NAME)\
     template<typename T>\
-    __global__ void OP_NAME##_kernel_rank1(DeviceTensorView<const T> lhs, DeviceTensorView<const T> rhs, DeviceTensorView<T> dst);\
+    __global__ void OP_NAME##_kernel_rank1(const DeviceTensorView<const T> lhs, const DeviceTensorView<const T> rhs, DeviceTensorView<T> dst);\
     template<typename T>\
-    __global__ void OP_NAME##_kernel_rank2(DeviceTensorView<const T> lhs, DeviceTensorView<const T> rhs, DeviceTensorView<T> dst);\
+    __global__ void OP_NAME##_kernel_rank2(const DeviceTensorView<const T> lhs, const DeviceTensorView<const T> rhs, DeviceTensorView<T> dst);\
     template<typename T>\
-    __global__ void OP_NAME##_kernel_rank3(DeviceTensorView<const T> lhs, DeviceTensorView<const T> rhs, DeviceTensorView<T> dst);\
+    __global__ void OP_NAME##_kernel_rank3(const DeviceTensorView<const T> lhs, const DeviceTensorView<const T> rhs, DeviceTensorView<T> dst);\
     template<typename T>\
-    __global__ void OP_NAME##_kernel_rank4(DeviceTensorView<const T> lhs, DeviceTensorView<const T> rhs, DeviceTensorView<T> dst);\
+    __global__ void OP_NAME##_kernel_rank4(const DeviceTensorView<const T> lhs, const DeviceTensorView<const T> rhs, DeviceTensorView<T> dst);\
     template<typename T>\
-    __global__ void OP_NAME##_kernel_nd(DeviceTensorView<const T> lhs, DeviceTensorView<const T> rhs, DeviceTensorView<T> dst);
+    __global__ void OP_NAME##_kernel_nd(const DeviceTensorView<const T> lhs, const DeviceTensorView<const T> rhs, DeviceTensorView<T> dst);
 
 #define DEFINE_BINARY_OP_LAUNCH_H(OP_NAME)\
     template<typename T>\
-    void launch_##OP_NAME(TensorView<const T> lhs, TensorView<const T> rhs, TensorView<T> dst);                        
+    void launch_##OP_NAME(const TensorView<const T> lhs, const TensorView<const T> rhs, TensorView<T> dst);                        
 
 namespace om 
 {

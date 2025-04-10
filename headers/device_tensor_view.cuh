@@ -60,14 +60,14 @@ struct DeviceTensorView {
     }        
     template <typename... Indices>
     __device__
-    const T& operator()(Indices... indices) const {
+    T operator()(Indices... indices) const {
         static_assert(sizeof...(Indices) > 0, "Must provide at least one index.");
 
         constexpr size_t num_indices = sizeof...(Indices);
         assert(num_indices == rank && "Incorrect number of indices for tensor access.");
 
         size_t idx_array[] = { static_cast<size_t>(indices)... };
-        return data[compute_flat_index(idx_array)];
+        return __ldg(&data[compute_flat_index(idx_array)]);
     }
 
     __device__
@@ -98,7 +98,7 @@ struct DeviceTensorView {
         return flat;
     }
 
-    T* data = nullptr;
+    T* __restrict__ data = nullptr;
     size_t* shape = nullptr;
     size_t* stride = nullptr;
     size_t rank = 0;

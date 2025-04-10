@@ -8,7 +8,7 @@
 
 #define DEFINE_DEVICE_DISPATCH_BINARY_INL(OP_NAME)\
         template<typename T>\
-        inline void _##OP_NAME(TensorView<const T> lhs, TensorView<const T> rhs, TensorView<T> dst, DEVICE_TYPE dev) {\
+        inline void _##OP_NAME(const TensorView<const T> lhs, const TensorView<const T> rhs, TensorView<T> dst, DEVICE_TYPE dev) {\
             switch (dev) {\
                 case DEVICE_TYPE::CPU:  OP_NAME##_dispatch<DEVICE_TYPE::CPU, T>::exec(lhs, rhs, dst); break;\
                 case DEVICE_TYPE::CUDA: OP_NAME##_dispatch<DEVICE_TYPE::CUDA, T>::exec(lhs, rhs, dst); break;\
@@ -21,14 +21,14 @@
 \
         template<typename T>\
         struct OP_NAME##_dispatch<DEVICE_TYPE::CPU, T> {\
-            static void exec(TensorView<const T> lhs, TensorView<const T> rhs, TensorView<T> dst) {\
+            static void exec(const TensorView<const T> lhs, const TensorView<const T> rhs, TensorView<T> dst) {\
                 CPU_FUNC(lhs, rhs, dst);\
             }\
         };\
 \
         template<typename T>\
         struct OP_NAME##_dispatch<DEVICE_TYPE::CUDA, T> {\
-            static void exec(TensorView<const T> lhs, TensorView<const T> rhs, TensorView<T> dst) {\
+            static void exec(const TensorView<const T> lhs, const TensorView<const T> rhs, TensorView<T> dst) {\
                 CUDA_FUNC(lhs, rhs, dst);\
             }\
         };                                                                                    

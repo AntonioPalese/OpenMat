@@ -8,7 +8,7 @@
         "name": "CUDA C++: Launch",
         "type": "cuda-gdb",
         "request": "launch",
-        "program": "${workspaceFolder}/framework/build/OpenMat_app"
+        "program": "${workspaceFolder}/build/OpenMat_app"
     }
     ]
 }

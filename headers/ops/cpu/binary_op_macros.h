@@ -6,7 +6,7 @@
 
 #define DEFINE_BINARY_OPS_CPU(OP_NAME, OP_EXPR)\
     template<typename T>\
-    void OP_NAME##_cpu(TensorView<const T> lhs, TensorView<const T> rhs, TensorView<T> dst) {\
+    void OP_NAME##_cpu(const TensorView<const T> lhs, const TensorView<const T> rhs, TensorView<T> dst) {\
         static_assert(std::is_arithmetic_v<T>, "add_cpu requires an arithmetic type");\
 \
         if (!lhs.match(rhs)) {\

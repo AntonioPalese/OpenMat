@@ -11,6 +11,6 @@ int main()
     om::Tensor<float> tf2({10, 10}, dv);
     tf2.fill(10.5f);
 
-    om::Tensor<float> res = tf1 - tf2;
+    om::Tensor<float> res = tf1 * tf2;
     om::print(res);
 }
