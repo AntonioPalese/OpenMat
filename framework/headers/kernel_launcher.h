@@ -53,9 +53,9 @@ namespace om
     };
 
     DEFINE_DEVICE_DISPATCH_BINARY_H(add, add_cpu, launch_add)
-    // DEFINE_DEVICE_DISPATCH_BINARY_H(sub, sub_cpu, launch_sub)
-    // DEFINE_DEVICE_DISPATCH_BINARY_H(mul, mul_cpu, launch_mul)
-    // DEFINE_DEVICE_DISPATCH_BINARY_H(div, div_cpu, launch_div)
+    DEFINE_DEVICE_DISPATCH_BINARY_H(sub, sub_cpu, launch_sub)
+    DEFINE_DEVICE_DISPATCH_BINARY_H(mul, mul_cpu, launch_mul)
+    DEFINE_DEVICE_DISPATCH_BINARY_H(div, div_cpu, launch_div)
 }
 
 #include "kernel_launcher.inl"

@@ -53,7 +53,55 @@ om::Tensor<value_type> om::Tensor<value_type>::add(const Tensor<value_type> &rhs
 template <typename value_type>
 om::Tensor<value_type> om::Tensor<value_type>::operator+(const Tensor<value_type> &rhs) const
 {
-    return Tensor<value_type>();
+    return this->add(rhs);
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::sub(const Tensor<value_type> &rhs) const
+{
+    Tensor<value_type> out(this->shape(), this->device());
+
+    _sub(this->view(), rhs.view(), out.view(), this->device_type());
+
+    return out;
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::operator-(const Tensor<value_type> &rhs) const
+{
+    return this->sub(rhs);
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::mul(const Tensor<value_type> &rhs) const
+{
+    Tensor<value_type> out(this->shape(), this->device());
+
+    _mul(this->view(), rhs.view(), out.view(), this->device_type());
+
+    return out;
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::operator*(const Tensor<value_type> &rhs) const
+{
+    return this->mul(rhs);
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::div(const Tensor<value_type> &rhs) const
+{
+    Tensor<value_type> out(this->shape(), this->device());
+
+    _div(this->view(), rhs.view(), out.view(), this->device_type());
+
+    return out;
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::operator/(const Tensor<value_type> &rhs) const
+{
+    return this->div(rhs);
 }
 
 template <typename value_type>

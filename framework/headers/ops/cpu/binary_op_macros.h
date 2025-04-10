@@ -21,7 +21,7 @@
 namespace om 
 {
     DEFINE_BINARY_OPS_CPU(add, lhs[idx] + rhs[idx])
-    // DEFINE_BINARY_OPS_CPU(sub, lhs[idx] - rhs[idx])
-    // DEFINE_BINARY_OPS_CPU(mul, lhs[idx] * rhs[idx])
-    // DEFINE_BINARY_OPS_CPU(div, ( static_cast<double>(rhs[idx]) != 0.0 ? lhs[idx] / rhs[idx] : std::numeric_limits<T>::infinity()))
+    DEFINE_BINARY_OPS_CPU(sub, lhs[idx] - rhs[idx])
+    DEFINE_BINARY_OPS_CPU(mul, lhs[idx] * rhs[idx])
+    DEFINE_BINARY_OPS_CPU(div, ( static_cast<double>(rhs[idx]) != 0.0 ? lhs[idx] / rhs[idx] : std::numeric_limits<T>::infinity()))
 }
