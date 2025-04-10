@@ -9,9 +9,12 @@ namespace om
     class Allocator
     {
     public:
+        virtual ~Allocator() = default;
+
         virtual T* allocate(size_t count) = 0;
         virtual void deallocate(T* ptr) = 0;
-        virtual ~Allocator() = default;
+
+        virtual void copy(T*dst, const T* src, size_t count) = 0;
 
         virtual void copyFromCurrentLoc(T* dst, const T* src, std::size_t count) const = 0;
     };
@@ -24,6 +27,8 @@ namespace om
         virtual T* allocate(size_t count) override;
         virtual void deallocate(T* ptr) override;
 
+        virtual void copy(T*dst, const T* src, size_t count) override;
+
         virtual void copyFromCurrentLoc(T* dst, const T* src, std::size_t count) const override;
     };
 
@@ -33,6 +38,8 @@ namespace om
     public:
         virtual T* allocate(size_t count) override;
         virtual void deallocate(T* ptr) override;
+
+        virtual void copy(T*dst, const T* src, size_t count) override;
 
         virtual void copyFromCurrentLoc(T* dst, const T* src, std::size_t count) const override;
     };

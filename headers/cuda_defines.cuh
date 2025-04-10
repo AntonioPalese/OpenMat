@@ -3,24 +3,28 @@
 #include <stdexcept>
 #include <string>
 
-#define CUDA_CHECK                                         \
-    do {                                                   \
-        cudaError_t err = cudaGetLastError();              \
-        if (err != cudaSuccess)                            \
-            throw std::runtime_error(                      \
-                std::string("[CUDA ERROR] : ") +           \
-                cudaGetErrorString(err));                  \
-    } while (0)                                           
-
-
-#define CUDA_CALL(expr)                                    \
-    do {                                                   \
-        cudaError_t err = (expr);                          \
-        if (err != cudaSuccess)                            \
-            throw std::runtime_error(                      \
-                std::string("[CUDA ERROR] : ") +           \
-                cudaGetErrorString(err));                  \
+#define CUDA_CHECK                                                          \
+    do {                                                                    \
+        cudaError_t err = cudaGetLastError();                               \
+        if (err != cudaSuccess) {                                           \
+            throw std::runtime_error(                                       \
+                std::string("[CUDA ERROR CHECK] at ") +                     \
+                __FILE__ + ":" + std::to_string(__LINE__) + " → " +        \
+                cudaGetErrorString(err));                                   \
+        }                                                                   \
     } while (0)
+
+#define CUDA_CALL(expr)                                                     \
+    do {                                                                    \
+        cudaError_t err = (expr);                                           \
+        if (err != cudaSuccess) {                                           \
+            throw std::runtime_error(                                       \
+                std::string("[CUDA ERROR CALL] '") + #expr + "' at " +     \
+                __FILE__ + ":" + std::to_string(__LINE__) + " → " +        \
+                cudaGetErrorString(err));                                   \
+        }                                                                   \
+    } while (0)
+
     
 
 inline bool is_device_pointer(const void* ptr) {
