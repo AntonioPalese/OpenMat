@@ -40,7 +40,7 @@ __host__ __device__ inline
 float16_t operator+(const float16_t &lhs, const float16_t &rhs)
 {
     #if __CUDA_ARCH__ >= 530
-            return float16_t(__hadd(lhs, rhs));
+            return float16_t(__hadd(lhs.value, rhs.value));
     #else
             return float(lhs) + float(rhs);
     #endif
@@ -50,7 +50,7 @@ __host__ __device__ inline
 float16_t operator-(const float16_t &lhs, const float16_t &rhs)
 {
     #if __CUDA_ARCH__ >= 530
-            return float16_t(__hsub(lhs, rhs));
+            return float16_t(__hsub(lhs.value, rhs.value));
     #else
             return float(lhs) - float(rhs);
     #endif
@@ -60,7 +60,7 @@ __host__ __device__ inline
 float16_t operator*(const float16_t &lhs, const float16_t &rhs)
 {
     #if __CUDA_ARCH__ >= 530
-            return float16_t(__hmul(lhs, rhs));
+            return float16_t(__hmul(lhs.value, rhs.value));
     #else
             return float(lhs) * float(rhs);
     #endif
@@ -70,7 +70,7 @@ __host__ __device__ inline
 float16_t operator/(const float16_t &lhs, const float16_t &rhs)
 {
     #if __CUDA_ARCH__ >= 530
-            return float16_t(__hdiv(lhs, rhs));
+            return float16_t(__hdiv(lhs.value, rhs.value));
     #else
             return float(lhs) / float(rhs);
     #endif
