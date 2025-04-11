@@ -72,6 +72,16 @@ namespace om
         Tensor<value_type> div(const Tensor<value_type>& rhs) const;      
         Tensor<value_type> operator/(const Tensor<value_type>& rhs) const;
 
+        Tensor<value_type> add(const value_type& scalar) const;   
+        Tensor<value_type> operator+(const value_type& scalar) const;  
+        Tensor<value_type> sub(const value_type& scalar) const;  
+        Tensor<value_type> operator-(const value_type& scalar) const;
+        Tensor<value_type> mul(const value_type& scalar) const;    
+        Tensor<value_type> operator*(const value_type& scalar) const;
+        Tensor<value_type> div(const value_type& scalar) const;      
+        Tensor<value_type> operator/(const value_type& scalar) const;
+
+
         void copyToHost(value_type* dest) const;
         void copyToDevice(value_type* dest) const;        
 

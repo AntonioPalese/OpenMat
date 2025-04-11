@@ -1,6 +1,7 @@
 #pragma once
 #include <vector>
 #include <cstring>
+#include <cassert>
 
 #include "cuda_defines.cuh"
 #include "type_traits/types.cuh"

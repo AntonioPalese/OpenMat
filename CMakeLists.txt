@@ -7,14 +7,14 @@ project(OpenMat LANGUAGES CXX CUDA)
 cmake_policy(SET CMP0104 NEW)
 #set(CMAKE_CUDA_ARCHITECTURES 50 CACHE STRING "Default fallback arch" FORCE)
 
+#set(CMAKE_CUDA_ARCHITECTURES 86)  # For MX550 ?
+set(CMAKE_CUDA_ARCHITECTURES 50)  # For MX130 (Compute Capability 5.0)
+
 message(STATUS "Using CUDA architecture: ${CMAKE_CUDA_ARCHITECTURES}")
 
 if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Debug CACHE STRING "Choose the type of build." FORCE)
+set(CMAKE_BUILD_TYPE Debug CACHE STRING "Choose the type of build." FORCE)
 endif()
-
-#set(CMAKE_CUDA_ARCHITECTURES 86)  # For MX550 ?
-set(CMAKE_CUDA_ARCHITECTURES 50)  # For MX130 (Compute Capability 5.0)
 
 
 set(CMAKE_CXX_STANDARD 17)
