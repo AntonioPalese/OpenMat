@@ -1,4 +1,5 @@
 #pragma once
+#include "type_traits/types.cuh"
 #include "tensor_view.cuh"
 #include "device_tensor_view.cuh"
 #include "cuda_defines.cuh"
@@ -129,9 +130,10 @@
     }
 
 #define DEFINE_BINARY_OP_LAUNCH_FRW_DEC(OP_NAME)\
-    template void launch_##OP_NAME<float>(TensorView<const float> lhs, TensorView<const float> rhs, TensorView<float> dst);\
-    template void launch_##OP_NAME<int>(TensorView<const int> lhs, TensorView<const int> rhs, TensorView<int> dst);\
-    template void launch_##OP_NAME<char>(TensorView<const char> lhs, TensorView<const char> rhs, TensorView<char> dst);
+    template void launch_##OP_NAME<float>(const TensorView<const float> lhs, const TensorView<const float> rhs, TensorView<float> dst);\
+    template void launch_##OP_NAME<int>(const TensorView<const int> lhs, const TensorView<const int> rhs, TensorView<int> dst);\
+    template void launch_##OP_NAME<char>(const TensorView<const char> lhs, const TensorView<const char> rhs, TensorView<char> dst);\
+    template void launch_##OP_NAME<float16_t>(const TensorView<const float16_t> lhs, const TensorView<const float16_t> rhs, TensorView<float16_t> dst);
 
 #define DEFINE_BINARY_OP_KERNEL_H(OP_NAME)\
     template<typename T>\

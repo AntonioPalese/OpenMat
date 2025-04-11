@@ -1,7 +1,9 @@
 #pragma once
-#include "cuda_defines.cuh"
 #include <vector>
 #include <cstring>
+
+#include "cuda_defines.cuh"
+#include "type_traits/types.cuh"
 
 namespace om {
 
@@ -67,7 +69,7 @@ struct DeviceTensorView {
         assert(num_indices == rank && "Incorrect number of indices for tensor access.");
 
         size_t idx_array[] = { static_cast<size_t>(indices)... };
-        return __ldg(&data[compute_flat_index(idx_array)]);
+        return device_load(&data[compute_flat_index(idx_array)]);
     }
 
     __device__

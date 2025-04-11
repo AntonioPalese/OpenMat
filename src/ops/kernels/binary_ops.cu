@@ -30,10 +30,10 @@ namespace om
 
 
     DEFINE_BINARY_OP_LAUNCH(div)
-    DEFINE_BINARY_OP_KERNEL_K1(div, ( static_cast<double>(rhs(x)) != 0.0 ? lhs(x) / rhs(x) : INFINITY ))
-    DEFINE_BINARY_OP_KERNEL_K2(div, ( static_cast<double>(rhs(y, x)) != 0.0 ? lhs(y, x) / rhs(y, x) : INFINITY ))
-    DEFINE_BINARY_OP_KERNEL_K3(div, ( static_cast<double>(rhs(z, y, x)) != 0.0 ? lhs(z, y, x) / rhs(z, y, x) : INFINITY ))
-    DEFINE_BINARY_OP_KERNEL_K4(div, ( static_cast<double>(rhs(n, c, h, w)) != 0.0 ? lhs(n, c, h, w) / rhs(n, c, h, w) : INFINITY ))
-    DEFINE_BINARY_OP_KERNEL_ND(div, ( static_cast<double>(rhs[offset]) != 0.0 ? lhs[offset] / rhs[offset] : INFINITY ))
+    DEFINE_BINARY_OP_KERNEL_K1(div, ( static_cast<double>(rhs(x)) != 0.0 ? lhs(x) / rhs(x) : T{INFINITY} ))
+    DEFINE_BINARY_OP_KERNEL_K2(div, ( static_cast<double>(rhs(y, x)) != 0.0 ? lhs(y, x) / rhs(y, x) : T{INFINITY} ))
+    DEFINE_BINARY_OP_KERNEL_K3(div, ( static_cast<double>(rhs(z, y, x)) != 0.0 ? lhs(z, y, x) / rhs(z, y, x) : T{INFINITY} ))
+    DEFINE_BINARY_OP_KERNEL_K4(div, ( static_cast<double>(rhs(n, c, h, w)) != 0.0 ? lhs(n, c, h, w) / rhs(n, c, h, w) : T{INFINITY} ))
+    DEFINE_BINARY_OP_KERNEL_ND(div, ( static_cast<double>(rhs[offset]) != 0.0 ? lhs[offset] / rhs[offset] : T{INFINITY} ))
     DEFINE_BINARY_OP_LAUNCH_FRW_DEC(div)
 }

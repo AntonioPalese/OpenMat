@@ -1,6 +1,7 @@
 #pragma once
 
 #include "utils.h"
+#include "type_traits/types.cuh"
 #include <iostream>
 #include <string>
 #include <regex>
@@ -27,6 +28,9 @@ namespace om
 
     template<>
     inline std::string dtype<char>() { return "int8"; }
+
+    template<>
+    inline std::string dtype<float16_t>() { return "float16"; }
 }
 
 namespace om

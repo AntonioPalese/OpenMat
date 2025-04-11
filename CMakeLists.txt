@@ -34,11 +34,16 @@ list(REMOVE_ITEM SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
 # ----------------------------------------
 file(GLOB CUDA_HEADERS "headers/ops/kernels/*.cuh")
 list(APPEND HEADERS ${CUDA_HEADERS})
+file(GLOB CUDA_TYPE_TRAITS_H "headers/type_traits/*.cuh")
+list(APPEND HEADERS ${CUDA_TYPE_TRAITS_H})
 
 file(GLOB CUDA_SRC "src/ops/kernels/*.cu")
 list(APPEND SRC ${CUDA_SRC})
+file(GLOB CUDA_TYPE_TRAITS_SRC "src/type_traits/*.cu")
+list(APPEND SRC ${CUDA_TYPE_TRAITS_SRC})
 
 set_source_files_properties(${CUDA_SRC} PROPERTIES LANGUAGE CUDA)
+#set_source_files_properties(${CUDA_TYPE_TRAITS} PROPERTIES LANGUAGE CUDA)
 
 # ----------------------------------------
 # Shared library target

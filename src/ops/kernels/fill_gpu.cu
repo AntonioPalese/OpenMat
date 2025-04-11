@@ -1,6 +1,7 @@
 #include <stdexcept>
 #include "ops/kernels/fill_gpu.cuh"
 #include "cuda_defines.cuh"
+#include "type_traits/types.cuh"
 
 namespace om {
 
@@ -119,4 +120,5 @@ namespace om {
     template void launch_fill<float>(TensorView<float>, float);
     template void launch_fill<int>(TensorView<int>, int);
     template void launch_fill<char>(TensorView<char>, char);
+    template void launch_fill<float16_t>(TensorView<float16_t>, float16_t);
 }
