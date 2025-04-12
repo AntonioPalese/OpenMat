@@ -4,11 +4,25 @@ project(OpenMat LANGUAGES CXX CUDA)
 # Load dynamic CUDA arch detection
 #include("${CMAKE_SOURCE_DIR}/cmake/detect_cuda_arch.cmake")
 
+if(DEFINED ENV{CMAKE_LIBRARY_PATH})
+    message(STATUS "Custom flag (CMAKE_LIBRARY_PATH) is set: $ENV{CMAKE_LIBRARY_PATH}")
+else()
+    message(WARNING "CMAKE_LIBRARY_PATH is not set in the environment.")
+endif()
+
+string(REPLACE ":" ";" CUDA_LIB_PATH_LIST "$ENV{CMAKE_LIBRARY_PATH}")
+
+foreach(path IN LISTS CUDA_LIB_PATH_LIST)
+    message(STATUS "CUDA LIB path: ${path}")
+endforeach()
+
+
 cmake_policy(SET CMP0104 NEW)
 #set(CMAKE_CUDA_ARCHITECTURES 50 CACHE STRING "Default fallback arch" FORCE)
 
-#set(CMAKE_CUDA_ARCHITECTURES 86)  # For MX550 ?
-set(CMAKE_CUDA_ARCHITECTURES 50)  # For MX130 (Compute Capability 5.0)
+#set(CMAKE_CUDA_ARCHITECTURES 86)
+#set(CMAKE_CUDA_ARCHITECTURES 50)
+set(CMAKE_CUDA_ARCHITECTURES 61)
 
 message(STATUS "Using CUDA architecture: ${CMAKE_CUDA_ARCHITECTURES}")
 
@@ -68,3 +82,7 @@ target_link_libraries(${PROJECT_NAME}_app
             cuda
             cudart
     )
+
+foreach(path IN LISTS CUDA_LIB_PATH_LIST)
+     target_link_directories(${PROJECT_NAME}_app PUBLIC ${path} )
+endforeach()

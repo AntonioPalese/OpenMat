@@ -76,5 +76,8 @@ float16_t operator/(const float16_t &lhs, const float16_t &rhs)
     #endif
 }
     
+template <typename T>
+struct is_extended_arithmetic : std::is_arithmetic<T> {};
+
 template <>
-struct std::is_arithmetic<float16_t> : std::true_type {};
+struct is_extended_arithmetic<float16_t> : std::true_type {};

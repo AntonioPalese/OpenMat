@@ -1,13 +1,13 @@
 #pragma once
 #include "tensor_view.cuh"
-#include <type_traits>
+#include "type_traits/types.cuh"
 #include <stdexcept>
 #include <limits>
 
 #define DEFINE_UNARY_OPS_CPU(OP_NAME, OP_EXPR)\
     template<typename T>\
     void OP_NAME##_cpu(const TensorView<const T> lhs, T value, TensorView<T> dst) {\
-        static_assert(std::is_arithmetic_v<T>, "add_cpu requires an arithmetic type");\
+        static_assert(is_extended_arithmetic<T>{}, "add_cpu requires an arithmetic type");\
         size_t _total = lhs.size();\
         for(size_t idx = 0; idx < _total; ++idx)\
             dst[idx] = OP_EXPR;\
