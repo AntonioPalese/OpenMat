@@ -3,6 +3,8 @@ project(OpenMat LANGUAGES CXX CUDA)
 
 # Load dynamic CUDA arch detection
 #include("${CMAKE_SOURCE_DIR}/cmake/detect_cuda_arch.cmake")
+enable_language(CUDA)
+find_package(CUDAToolkit REQUIRED)
 
 if(DEFINED ENV{CMAKE_LIBRARY_PATH})
     message(STATUS "Custom flag (CMAKE_LIBRARY_PATH) is set: $ENV{CMAKE_LIBRARY_PATH}")
@@ -18,10 +20,7 @@ endforeach()
 
 
 cmake_policy(SET CMP0104 NEW)
-#set(CMAKE_CUDA_ARCHITECTURES 50 CACHE STRING "Default fallback arch" FORCE)
 
-#set(CMAKE_CUDA_ARCHITECTURES 86)
-#set(CMAKE_CUDA_ARCHITECTURES 50)
 set(CMAKE_CUDA_ARCHITECTURES 61)
 
 message(STATUS "Using CUDA architecture: ${CMAKE_CUDA_ARCHITECTURES}")
@@ -57,7 +56,6 @@ file(GLOB CUDA_TYPE_TRAITS_SRC "src/type_traits/*.cu")
 list(APPEND SRC ${CUDA_TYPE_TRAITS_SRC})
 
 set_source_files_properties(${CUDA_SRC} PROPERTIES LANGUAGE CUDA)
-#set_source_files_properties(${CUDA_TYPE_TRAITS} PROPERTIES LANGUAGE CUDA)
 
 # ----------------------------------------
 # Shared library target
@@ -83,6 +81,8 @@ target_link_libraries(${PROJECT_NAME}_app
             cudart
     )
 
+target_include_directories(${PROJECT_NAME} PUBLIC ${CUDAToolkit_INCLUDE_DIRS})
+
 foreach(path IN LISTS CUDA_LIB_PATH_LIST)
-     target_link_directories(${PROJECT_NAME}_app PUBLIC ${path} )
+        target_link_directories(${PROJECT_NAME}  PUBLIC ${path} )
 endforeach()

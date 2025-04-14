@@ -1,6 +1,5 @@
-#include "mat.cuh"
-#include "tensor.cuh"
 #include "mat_utils.h"
+#include "tensor.cuh"
 
 int main()
 {
