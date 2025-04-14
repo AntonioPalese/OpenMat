@@ -1,4 +1,3 @@
-#pragma once
 #include "allocator.h"
 #include "cuda_defines.cuh"
 

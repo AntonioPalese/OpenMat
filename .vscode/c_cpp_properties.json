@@ -3,7 +3,8 @@
         {
             "name": "Linux",
             "includePath": [
-                "${workspaceFolder}/**"
+                "${workspaceFolder}/headers/*",
+                "/usr/local/cuda-12.8/targets/x86_64-linux/include"
             ],
             "defines": [],
             "cStandard": "c17",

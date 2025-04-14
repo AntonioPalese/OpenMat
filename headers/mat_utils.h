@@ -1,5 +1,4 @@
 #pragma once
-
 #include "utils.h"
 #include "type_traits/types.cuh"
 #include <iostream>
@@ -9,7 +8,7 @@
 
 namespace om
 {
-    template<typename T> class Mat;
+    template<typename T> class Tensor;
 };
 
 namespace om
@@ -44,7 +43,7 @@ namespace om
     DEVICE_TYPE str_to_enum(const std::string& src);
 
     template<typename T>
-    void print(const Mat<T>& mat);    
+    void print(const Tensor<T>& mat);    
 
     struct Device
     {
