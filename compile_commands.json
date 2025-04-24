@@ -1,0 +1,62 @@
+[
+{
+  "directory": "/home/antonio-ubuntu/OpenMat/build",
+  "command": "/usr/bin/c++ -DOpenMat_EXPORTS -I/home/antonio-ubuntu/OpenMat/headers -I/usr/local/cuda-12.8/targets/x86_64-linux/include -g -fPIC -o CMakeFiles/OpenMat.dir/src/mat_utils.cpp.o -c /home/antonio-ubuntu/OpenMat/src/mat_utils.cpp",
+  "file": "/home/antonio-ubuntu/OpenMat/src/mat_utils.cpp",
+  "output": "CMakeFiles/OpenMat.dir/src/mat_utils.cpp.o"
+},
+{
+  "directory": "/home/antonio-ubuntu/OpenMat/build",
+  "command": "/usr/bin/c++ -DOpenMat_EXPORTS -I/home/antonio-ubuntu/OpenMat/headers -I/usr/local/cuda-12.8/targets/x86_64-linux/include -g -fPIC -o CMakeFiles/OpenMat.dir/src/ops/cpu/binary_ops.cpp.o -c /home/antonio-ubuntu/OpenMat/src/ops/cpu/binary_ops.cpp",
+  "file": "/home/antonio-ubuntu/OpenMat/src/ops/cpu/binary_ops.cpp",
+  "output": "CMakeFiles/OpenMat.dir/src/ops/cpu/binary_ops.cpp.o"
+},
+{
+  "directory": "/home/antonio-ubuntu/OpenMat/build",
+  "command": "/usr/bin/c++ -DOpenMat_EXPORTS -I/home/antonio-ubuntu/OpenMat/headers -I/usr/local/cuda-12.8/targets/x86_64-linux/include -g -fPIC -o CMakeFiles/OpenMat.dir/src/ops/cpu/fill_cpu.cpp.o -c /home/antonio-ubuntu/OpenMat/src/ops/cpu/fill_cpu.cpp",
+  "file": "/home/antonio-ubuntu/OpenMat/src/ops/cpu/fill_cpu.cpp",
+  "output": "CMakeFiles/OpenMat.dir/src/ops/cpu/fill_cpu.cpp.o"
+},
+{
+  "directory": "/home/antonio-ubuntu/OpenMat/build",
+  "command": "/usr/bin/c++ -DOpenMat_EXPORTS -I/home/antonio-ubuntu/OpenMat/headers -I/usr/local/cuda-12.8/targets/x86_64-linux/include -g -fPIC -o CMakeFiles/OpenMat.dir/src/ops/cpu/unary_ops.cpp.o -c /home/antonio-ubuntu/OpenMat/src/ops/cpu/unary_ops.cpp",
+  "file": "/home/antonio-ubuntu/OpenMat/src/ops/cpu/unary_ops.cpp",
+  "output": "CMakeFiles/OpenMat.dir/src/ops/cpu/unary_ops.cpp.o"
+},
+{
+  "directory": "/home/antonio-ubuntu/OpenMat/build",
+  "command": "/usr/bin/c++ -DOpenMat_EXPORTS -I/home/antonio-ubuntu/OpenMat/headers -I/usr/local/cuda-12.8/targets/x86_64-linux/include -g -fPIC -o CMakeFiles/OpenMat.dir/src/utils.cpp.o -c /home/antonio-ubuntu/OpenMat/src/utils.cpp",
+  "file": "/home/antonio-ubuntu/OpenMat/src/utils.cpp",
+  "output": "CMakeFiles/OpenMat.dir/src/utils.cpp.o"
+},
+{
+  "directory": "/home/antonio-ubuntu/OpenMat/build",
+  "command": "/usr/local/cuda-12.8/bin/nvcc -forward-unknown-to-host-compiler -DOpenMat_EXPORTS --options-file CMakeFiles/OpenMat.dir/includes_CUDA.rsp -g \"--generate-code=arch=compute_61,code=[compute_61,sm_61]\" -Xcompiler=-fPIC -x cu -rdc=true -c /home/antonio-ubuntu/OpenMat/src/ops/kernels/binary_ops.cu -o CMakeFiles/OpenMat.dir/src/ops/kernels/binary_ops.cu.o",
+  "file": "/home/antonio-ubuntu/OpenMat/src/ops/kernels/binary_ops.cu",
+  "output": "CMakeFiles/OpenMat.dir/src/ops/kernels/binary_ops.cu.o"
+},
+{
+  "directory": "/home/antonio-ubuntu/OpenMat/build",
+  "command": "/usr/local/cuda-12.8/bin/nvcc -forward-unknown-to-host-compiler -DOpenMat_EXPORTS --options-file CMakeFiles/OpenMat.dir/includes_CUDA.rsp -g \"--generate-code=arch=compute_61,code=[compute_61,sm_61]\" -Xcompiler=-fPIC -x cu -rdc=true -c /home/antonio-ubuntu/OpenMat/src/ops/kernels/fill_gpu.cu -o CMakeFiles/OpenMat.dir/src/ops/kernels/fill_gpu.cu.o",
+  "file": "/home/antonio-ubuntu/OpenMat/src/ops/kernels/fill_gpu.cu",
+  "output": "CMakeFiles/OpenMat.dir/src/ops/kernels/fill_gpu.cu.o"
+},
+{
+  "directory": "/home/antonio-ubuntu/OpenMat/build",
+  "command": "/usr/local/cuda-12.8/bin/nvcc -forward-unknown-to-host-compiler -DOpenMat_EXPORTS --options-file CMakeFiles/OpenMat.dir/includes_CUDA.rsp -g \"--generate-code=arch=compute_61,code=[compute_61,sm_61]\" -Xcompiler=-fPIC -x cu -rdc=true -c /home/antonio-ubuntu/OpenMat/src/ops/kernels/unary_ops.cu -o CMakeFiles/OpenMat.dir/src/ops/kernels/unary_ops.cu.o",
+  "file": "/home/antonio-ubuntu/OpenMat/src/ops/kernels/unary_ops.cu",
+  "output": "CMakeFiles/OpenMat.dir/src/ops/kernels/unary_ops.cu.o"
+},
+{
+  "directory": "/home/antonio-ubuntu/OpenMat/build",
+  "command": "/usr/local/cuda-12.8/bin/nvcc -forward-unknown-to-host-compiler -DOpenMat_EXPORTS --options-file CMakeFiles/OpenMat.dir/includes_CUDA.rsp -g \"--generate-code=arch=compute_61,code=[compute_61,sm_61]\" -Xcompiler=-fPIC -x cu -rdc=true -c /home/antonio-ubuntu/OpenMat/src/type_traits/types.cu -o CMakeFiles/OpenMat.dir/src/type_traits/types.cu.o",
+  "file": "/home/antonio-ubuntu/OpenMat/src/type_traits/types.cu",
+  "output": "CMakeFiles/OpenMat.dir/src/type_traits/types.cu.o"
+},
+{
+  "directory": "/home/antonio-ubuntu/OpenMat/build",
+  "command": "/usr/bin/c++  -I/home/antonio-ubuntu/OpenMat/headers -I/usr/local/cuda-12.8/targets/x86_64-linux/include -g -o CMakeFiles/OpenMat_app.dir/src/main.cpp.o -c /home/antonio-ubuntu/OpenMat/src/main.cpp",
+  "file": "/home/antonio-ubuntu/OpenMat/src/main.cpp",
+  "output": "CMakeFiles/OpenMat_app.dir/src/main.cpp.o"
+}
+]

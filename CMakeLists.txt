@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.22.1 FATAL_ERROR)
 project(OpenMat LANGUAGES CXX CUDA)
 
+# Compile with  : cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -B build
+
 # Load dynamic CUDA arch detection
 #include("${CMAKE_SOURCE_DIR}/cmake/detect_cuda_arch.cmake")
 enable_language(CUDA)
