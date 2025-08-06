@@ -7,7 +7,7 @@
 #define DEFINE_UNARY_OPS_CPU(OP_NAME, OP_EXPR)\
     template<typename T>\
     void OP_NAME##_cpu(const TensorView<const T> lhs, T value, TensorView<T> dst) {\
-        static_assert(is_extended_arithmetic<T>{}, "add_cpu requires an arithmetic type");\
+        static_assert(is_extended_arithmetic<T>{}, "unary op requires an arithmetic type");\
         size_t _total = lhs.size();\
         for(size_t idx = 0; idx < _total; ++idx)\
             dst[idx] = OP_EXPR;\
