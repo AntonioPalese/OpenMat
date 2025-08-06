@@ -88,3 +88,6 @@ target_include_directories(${PROJECT_NAME} PUBLIC ${CUDAToolkit_INCLUDE_DIRS})
 foreach(path IN LISTS CUDA_LIB_PATH_LIST)
         target_link_directories(${PROJECT_NAME}  PUBLIC ${path} )
 endforeach()
+
+enable_testing()
+add_subdirectory(tests)
