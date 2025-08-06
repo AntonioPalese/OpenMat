@@ -18,18 +18,14 @@ om::Tensor<value_type>::Tensor(const Tensor& rhs) : m_Shape(rhs.m_Shape), m_Stri
 }
 
 template <typename value_type>
-om::Tensor<value_type>::Tensor(Tensor &&rhs) : m_Shape(rhs.m_Shape), m_Stride(rhs.m_Stride), m_Device(rhs.m_Device)
+om::Tensor<value_type>::Tensor(Tensor &&rhs)
+    : m_Shape(std::move(rhs.m_Shape)),
+      m_Stride(std::move(rhs.m_Stride)),
+      m_Device(rhs.m_Device),
+      m_Data(rhs.m_Data),
+      m_Allocator(std::move(rhs.m_Allocator))
 {
-    if(rhs.m_Data)
-    {
-        m_Allocator = std::move(rhs.m_Allocator);
-        size_t total_size_ = std::accumulate(m_Shape.begin(), m_Shape.end(), 1, std::multiplies<>());
-        m_Data = m_Allocator->allocate(total_size_);
-        m_Allocator->copy(m_Data, rhs.m_Data, total_size_);
-
-        rhs.m_Allocator->deallocate(rhs.m_Data);
-        rhs.m_Data = nullptr;
-    }
+    rhs.m_Data = nullptr;
 }
 
 template <typename value_type>
