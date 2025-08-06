@@ -25,17 +25,10 @@ namespace om
     };
 
 
-    template<typename T>
-    __global__ void apply_op_rank1(DeviceTensorView<T> tensor, T value);
-    template<typename T>
-    __global__ void apply_op_rank2(DeviceTensorView<T> tensor, T value);
-    template<typename T>
-    __global__ void apply_op_rank3(DeviceTensorView<T> tensor, T value);
-    template<typename T>
-    __global__ void apply_op_rank4(DeviceTensorView<T> tensor, T value);
-    template<typename T>
-    __global__ void apply_op_nd(DeviceTensorView<T> tensor, T value);
-
-    template<typename T>
-    void launch_apply_op(TensorView<T> tensor, T value);
+    // Apply a unary operation \p op element-wise from \p src to \p dst.
+    //
+    // Kernels are defined in the corresponding .cu file; only the host
+    // dispatch function is exposed here.
+    template<typename T, typename Op>
+    void launch_apply_op(const TensorView<const T> src, TensorView<T> dst, Op op);
 }
