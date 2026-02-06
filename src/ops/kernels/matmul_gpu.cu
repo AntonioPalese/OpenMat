@@ -65,7 +65,7 @@ namespace om
             // Compute partial dot product for this tile
             #pragma unroll
             for (int k = 0; k < MATMUL_TILE_SIZE; ++k) {
-                sum += tileA[ty][k] * tileB[k][tx];
+                sum = sum + (tileA[ty][k] * tileB[k][tx]);
             }
 
             __syncthreads();
@@ -136,4 +136,9 @@ namespace om
         const TensorView<const double> lhs, 
         const TensorView<const double> rhs, 
         TensorView<double> dst);
+
+    template void launch_matmul<float16_t>(
+        const TensorView<const float16_t> lhs, 
+        const TensorView<const float16_t> rhs, 
+        TensorView<float16_t> dst);
 }

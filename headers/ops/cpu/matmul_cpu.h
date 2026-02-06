@@ -1,5 +1,6 @@
 #pragma once
 #include "tensor_view.cuh"
+#include "type_traits/types.cuh"
 #include <type_traits>
 #include <stdexcept>
 
@@ -8,7 +9,7 @@ namespace om
     /**
      * @brief CPU matrix multiplication: C = A × B
      * 
-     * @tparam T Arithmetic type (float, double, int, etc.)
+     * @tparam T Arithmetic type (float, double, int, float16_t, etc.)
      * @param lhs Left-hand side matrix (M × K)
      * @param rhs Right-hand side matrix (K × N)  
      * @param dst Output matrix (M × N)
@@ -17,7 +18,7 @@ namespace om
      */
     template<typename T>
     void matmul_cpu(const TensorView<const T> lhs, const TensorView<const T> rhs, TensorView<T> dst) {
-        static_assert(std::is_arithmetic_v<T>, "matmul requires an arithmetic type");
+        static_assert(is_extended_arithmetic<T>::value, "matmul requires an arithmetic type");
 
         // Validate ranks
         if (lhs.rank != 2 || rhs.rank != 2 || dst.rank != 2) {
@@ -43,7 +44,7 @@ namespace om
             for (size_t j = 0; j < N; ++j) {
                 T sum = T{0};
                 for (size_t k = 0; k < K; ++k) {
-                    sum += lhs(i, k) * rhs(k, j);
+                    sum = sum + (lhs(i, k) * rhs(k, j));
                 }
                 dst(i, j) = sum;
             }

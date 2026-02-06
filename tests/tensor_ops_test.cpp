@@ -148,3 +148,292 @@ TEST(TensorArithmetic, GPUMatMul) {
     EXPECT_FLOAT_EQ(host[2], 2.0f);
     EXPECT_FLOAT_EQ(host[3], 2.0f);
 }
+
+// FP16 Tests
+TEST(TensorArithmetic, GPUFP16Operations) {
+    Device gpu("cuda:0");
+    
+    // Create fp16 tensors
+    Tensor<float16_t> a({4}, gpu);
+    Tensor<float16_t> b({4}, gpu);
+    
+    a.fill(float16_t(2.0f));
+    b.fill(float16_t(3.0f));
+    
+    // Test addition
+    Tensor<float16_t> add_res = a + b;
+    std::vector<float16_t> host(4);
+    add_res.copyToHost(host.data());
+    
+    for (int i = 0; i < 4; ++i) {
+        EXPECT_NEAR(float(host[i]), 5.0f, 0.01f);  // 2 + 3 = 5
+    }
+    
+    // Test subtraction
+    Tensor<float16_t> sub_res = a - b;
+    sub_res.copyToHost(host.data());
+    for (int i = 0; i < 4; ++i) {
+        EXPECT_NEAR(float(host[i]), -1.0f, 0.01f);  // 2 - 3 = -1
+    }
+    
+    // Test multiplication
+    Tensor<float16_t> mul_res = a * b;
+    mul_res.copyToHost(host.data());
+    for (int i = 0; i < 4; ++i) {
+        EXPECT_NEAR(float(host[i]), 6.0f, 0.01f);  // 2 * 3 = 6
+    }
+    
+    // Test division
+    Tensor<float16_t> div_res = a / b;
+    div_res.copyToHost(host.data());
+    for (int i = 0; i < 4; ++i) {
+        EXPECT_NEAR(float(host[i]), 2.0f/3.0f, 0.01f);  // 2 / 3 ≈ 0.666
+    }
+}
+
+TEST(TensorArithmetic, GPUFP16MatMul) {
+    Device gpu("cuda:0");
+    
+    // Create fp16 matrices for matmul: [2x2] × [2x2]
+    // A = [[1, 1],   B = [[1, 1],   C = [[2, 2],
+    //      [1, 1]]        [1, 1]]        [2, 2]]
+    Tensor<float16_t> a({2, 2}, gpu);
+    Tensor<float16_t> b({2, 2}, gpu);
+    
+    a.fill(float16_t(1.0f));
+    b.fill(float16_t(1.0f));
+    
+    Tensor<float16_t> c = a.matmul(b);
+    
+    // Verify shape
+    EXPECT_EQ(c.shape()[0], 2);
+    EXPECT_EQ(c.shape()[1], 2);
+    
+    // Copy result to host and verify
+    std::vector<float16_t> host(4);
+    c.copyToHost(host.data());
+    
+    // Each element should be 2.0 (1*1 + 1*1)
+    for (int i = 0; i < 4; ++i) {
+        EXPECT_NEAR(float(host[i]), 2.0f, 0.01f);
+    }
+}
+
+TEST(TensorArithmetic, GPUFP16MatMulLarger) {
+    Device gpu("cuda:0");
+    
+    // Test larger matrix: [4x3] × [3x4] = [4x4]
+    Tensor<float16_t> a({4, 3}, gpu);
+    Tensor<float16_t> b({3, 4}, gpu);
+    
+    a.fill(float16_t(2.0f));  // All 2s
+    b.fill(float16_t(0.5f));  // All 0.5s
+    
+    Tensor<float16_t> c = a.matmul(b);
+    
+    // Verify shape
+    EXPECT_EQ(c.shape()[0], 4);
+    EXPECT_EQ(c.shape()[1], 4);
+    
+    // Copy result to host
+    std::vector<float16_t> host(16);
+    c.copyToHost(host.data());
+    
+    // Each element: sum of 3 products of (2 * 0.5) = 3 * 1 = 3
+    for (int i = 0; i < 16; ++i) {
+        EXPECT_NEAR(float(host[i]), 3.0f, 0.01f);
+    }
+}
+
+// ============================================================================
+// Benchmarks
+// ============================================================================
+
+#include <chrono>
+#include <iostream>
+#include <iomanip>
+
+// Helper macro for timing
+#define BENCHMARK_START() auto _bench_start = std::chrono::high_resolution_clock::now()
+#define BENCHMARK_END(label, ops) do { \
+    cudaDeviceSynchronize(); \
+    auto _bench_end = std::chrono::high_resolution_clock::now(); \
+    auto _duration = std::chrono::duration<double, std::milli>(_bench_end - _bench_start).count(); \
+    std::cout << std::setw(30) << std::left << label \
+              << std::setw(12) << std::right << std::fixed << std::setprecision(3) << _duration << " ms" \
+              << std::setw(12) << std::right << ops << " ops" \
+              << std::setw(12) << std::right << std::fixed << std::setprecision(2) << (ops / _duration * 1000.0) << " ops/s" \
+              << std::endl; \
+} while(0)
+
+TEST(Benchmark, MatMulFloat) {
+    Device gpu("cuda:0");
+    
+    // Warmup
+    Tensor<float> warmup_a({64, 64}, gpu);
+    Tensor<float> warmup_b({64, 64}, gpu);
+    warmup_a.fill(1.0f);
+    warmup_b.fill(1.0f);
+    auto warmup = warmup_a.matmul(warmup_b);
+    cudaDeviceSynchronize();
+    
+    std::cout << "\n=== MatMul Benchmark (float32) ===" << std::endl;
+    std::cout << std::setw(30) << std::left << "Size" 
+              << std::setw(12) << std::right << "Time"
+              << std::setw(12) << std::right << "FLOPs"
+              << std::setw(12) << std::right << "GFLOPS" << std::endl;
+    std::cout << std::string(66, '-') << std::endl;
+    
+    const size_t sizes[] = {256, 512, 1024, 2048, 4096};
+    for (size_t N : sizes) {
+        Tensor<float> a({N, N}, gpu);
+        Tensor<float> b({N, N}, gpu);
+        a.fill(1.0f);
+        b.fill(1.0f);
+        cudaDeviceSynchronize();
+        
+        BENCHMARK_START();
+        auto c = a.matmul(b);
+        cudaDeviceSynchronize();
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration<double, std::milli>(end - _bench_start).count();
+        
+        // MatMul FLOPs = 2*N^3 (multiply + add for each element)
+        double flops = 2.0 * N * N * N;
+        double gflops = flops / (duration * 1e6);
+        
+        std::cout << std::setw(30) << std::left << (std::to_string(N) + "x" + std::to_string(N))
+                  << std::setw(12) << std::right << std::fixed << std::setprecision(3) << duration << " ms"
+                  << std::setw(12) << std::right << std::scientific << std::setprecision(2) << flops
+                  << std::setw(12) << std::right << std::fixed << std::setprecision(2) << gflops << std::endl;
+    }
+}
+
+TEST(Benchmark, MatMulFP16) {
+    Device gpu("cuda:0");
+    
+    // Warmup
+    Tensor<float16_t> warmup_a({64, 64}, gpu);
+    Tensor<float16_t> warmup_b({64, 64}, gpu);
+    warmup_a.fill(float16_t(1.0f));
+    warmup_b.fill(float16_t(1.0f));
+    auto warmup = warmup_a.matmul(warmup_b);
+    cudaDeviceSynchronize();
+    
+    std::cout << "\n=== MatMul Benchmark (float16) ===" << std::endl;
+    std::cout << std::setw(30) << std::left << "Size" 
+              << std::setw(12) << std::right << "Time"
+              << std::setw(12) << std::right << "FLOPs"
+              << std::setw(12) << std::right << "GFLOPS" << std::endl;
+    std::cout << std::string(66, '-') << std::endl;
+    
+    const size_t sizes[] = {256, 512, 1024, 2048, 4096};
+    for (size_t N : sizes) {
+        Tensor<float16_t> a({N, N}, gpu);
+        Tensor<float16_t> b({N, N}, gpu);
+        a.fill(float16_t(1.0f));
+        b.fill(float16_t(1.0f));
+        cudaDeviceSynchronize();
+        
+        BENCHMARK_START();
+        auto c = a.matmul(b);
+        cudaDeviceSynchronize();
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration<double, std::milli>(end - _bench_start).count();
+        
+        double flops = 2.0 * N * N * N;
+        double gflops = flops / (duration * 1e6);
+        
+        std::cout << std::setw(30) << std::left << (std::to_string(N) + "x" + std::to_string(N))
+                  << std::setw(12) << std::right << std::fixed << std::setprecision(3) << duration << " ms"
+                  << std::setw(12) << std::right << std::scientific << std::setprecision(2) << flops
+                  << std::setw(12) << std::right << std::fixed << std::setprecision(2) << gflops << std::endl;
+    }
+}
+
+TEST(Benchmark, ElementWiseOps) {
+    Device gpu("cuda:0");
+    
+    const size_t N = 16 * 1024 * 1024;  // 16M elements
+    
+    std::cout << "\n=== Element-wise Operations Benchmark (16M elements) ===" << std::endl;
+    std::cout << std::setw(30) << std::left << "Operation" 
+              << std::setw(12) << std::right << "Time"
+              << std::setw(15) << std::right << "Throughput" << std::endl;
+    std::cout << std::string(57, '-') << std::endl;
+    
+    // Float32
+    {
+        Tensor<float> a({N}, gpu);
+        Tensor<float> b({N}, gpu);
+        a.fill(2.0f);
+        b.fill(3.0f);
+        cudaDeviceSynchronize();
+        
+        BENCHMARK_START();
+        auto c = a + b;
+        cudaDeviceSynchronize();
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration<double, std::milli>(end - _bench_start).count();
+        
+        std::cout << std::setw(30) << std::left << "float32 add"
+                  << std::setw(12) << std::right << std::fixed << std::setprecision(3) << duration << " ms"
+                  << std::setw(15) << std::right << std::fixed << std::setprecision(2) << (N / duration / 1e6) << " Gelem/s" << std::endl;
+    }
+    
+    // Float16
+    {
+        Tensor<float16_t> a({N}, gpu);
+        Tensor<float16_t> b({N}, gpu);
+        a.fill(float16_t(2.0f));
+        b.fill(float16_t(3.0f));
+        cudaDeviceSynchronize();
+        
+        BENCHMARK_START();
+        auto c = a + b;
+        cudaDeviceSynchronize();
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration<double, std::milli>(end - _bench_start).count();
+        
+        std::cout << std::setw(30) << std::left << "float16 add"
+                  << std::setw(12) << std::right << std::fixed << std::setprecision(3) << duration << " ms"
+                  << std::setw(15) << std::right << std::fixed << std::setprecision(2) << (N / duration / 1e6) << " Gelem/s" << std::endl;
+    }
+    
+    // Multiplication comparison
+    {
+        Tensor<float> a({N}, gpu);
+        Tensor<float> b({N}, gpu);
+        a.fill(2.0f);
+        b.fill(3.0f);
+        cudaDeviceSynchronize();
+        
+        BENCHMARK_START();
+        auto c = a * b;
+        cudaDeviceSynchronize();
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration<double, std::milli>(end - _bench_start).count();
+        
+        std::cout << std::setw(30) << std::left << "float32 mul"
+                  << std::setw(12) << std::right << std::fixed << std::setprecision(3) << duration << " ms"
+                  << std::setw(15) << std::right << std::fixed << std::setprecision(2) << (N / duration / 1e6) << " Gelem/s" << std::endl;
+    }
+    
+    {
+        Tensor<float16_t> a({N}, gpu);
+        Tensor<float16_t> b({N}, gpu);
+        a.fill(float16_t(2.0f));
+        b.fill(float16_t(3.0f));
+        cudaDeviceSynchronize();
+        
+        BENCHMARK_START();
+        auto c = a * b;
+        cudaDeviceSynchronize();
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration<double, std::milli>(end - _bench_start).count();
+        
+        std::cout << std::setw(30) << std::left << "float16 mul"
+                  << std::setw(12) << std::right << std::fixed << std::setprecision(3) << duration << " ms"
+                  << std::setw(15) << std::right << std::fixed << std::setprecision(2) << (N / duration / 1e6) << " Gelem/s" << std::endl;
+    }
+}
