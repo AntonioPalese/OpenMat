@@ -73,6 +73,18 @@ namespace om
         Tensor<value_type> div(const Tensor<value_type>& rhs) const;      
         Tensor<value_type> operator/(const Tensor<value_type>& rhs) const;
 
+        /**
+         * @brief Matrix multiplication: C = this × rhs
+         * 
+         * Computes C[M,N] = A[M,K] × B[K,N]
+         * Both tensors must be 2D matrices with compatible inner dimensions.
+         * 
+         * @param rhs Right-hand side matrix (K × N)
+         * @return Result matrix (M × N)
+         * @throws std::runtime_error if dimensions are incompatible or tensors are not 2D
+         */
+        Tensor<value_type> matmul(const Tensor<value_type>& rhs) const;
+
         Tensor<value_type> add(const value_type& scalar) const;   
         Tensor<value_type> operator+(const value_type& scalar) const;  
         Tensor<value_type> sub(const value_type& scalar) const;  

@@ -99,6 +99,32 @@ om::Tensor<value_type> om::Tensor<value_type>::operator/(const Tensor<value_type
     return this->div(rhs);
 }
 
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::matmul(const Tensor<value_type> &rhs) const
+{
+    // Validate 2D tensors
+    if (this->rank() != 2 || rhs.rank() != 2) {
+        throw std::runtime_error("matmul: both tensors must be 2D matrices");
+    }
+
+    // A is M×K, B is K×N, C is M×N
+    size_t M = this->shape()[0];
+    size_t K = this->shape()[1];
+    size_t K2 = rhs.shape()[0];
+    size_t N = rhs.shape()[1];
+
+    if (K != K2) {
+        throw std::runtime_error("matmul: inner dimensions must match (A.cols=" + 
+            std::to_string(K) + " != B.rows=" + std::to_string(K2) + ")");
+    }
+
+    // Create output tensor with shape {M, N}
+    Tensor<value_type> out({M, N}, this->device());
+
+    _matmul(this->view(), rhs.view(), out.view(), this->device_type());
+
+    return out;
+}
 
 /// 
 template <typename value_type>
