@@ -44,16 +44,35 @@ python scripts/benchmark.py --shapes 256 1024 4096 --ops matmul transpose add
 
 ## Architecture
 
+The data flow for a tensor operation (e.g. `a + b`):
+
 ```
-OpenMat
-├── Tensor<T, Rank>          # Rank-specialized tensor: compile-time rank, runtime shape
-├── DeviceTensor<T>          # RAII wrapper: cudaMalloc/cudaFree lifecycle
-├── KernelDispatcher         # Runtime dispatch: selects optimal kernel by rank + shape
-└── kernels/
-    ├── matmul_rank2.cu      # Tiled shared-memory matmul for 2D tensors
-    ├── matmul_nd.cu         # Generalized batched matmul for N-D tensors
-    ├── transpose.cu         # Coalesced memory access transpose
-    └── elementwise.cu       # Vectorized elementwise ops (add, mul, relu)
+Tensor<T>::operator+()
+  → _add(TensorView, TensorView, TensorView, DEVICE_TYPE)   // kernel_launcher.inl
+    → add_dispatch<DEVICE_TYPE::CPU/CUDA, T>::exec()        // kernel_launcher.h
+      → add_cpu()  or  launch_add()                         // ops/cpu/ or ops/kernels/
+        → flat CPU loop  or  rank-specialized CUDA kernel
+```
+
+**`Tensor<T>`** — owning N-dimensional tensor. Stores shape, row-major strides, a raw `T*`, a `Device`, and a `unique_ptr<Allocator<T>>`. Copy deep-copies via the allocator; move transfers ownership and nulls the source pointer.
+
+**`Allocator<T>` / `AllocatorFactory<T>`** — abstract base with two implementations: `CpuAllocator` (malloc/free/memcpy) and `GpuAllocator` (cudaMalloc/cudaFree/cudaMemcpy). Selected at `Tensor` construction time from `DEVICE_TYPE`.
+
+**`TensorView<T>`** — non-owning host-side view (raw pointer + shape/stride pointers + rank). Passed to CPU ops and converted to `DeviceTensorView` via `.as_device_tw()` before kernel launch.
+
+**`DeviceTensorView<T>`** — non-owning device-side view. Its constructor allocates shape/stride arrays on the GPU with `cudaMalloc`/`cudaMemcpy`; destructor frees them. Move-only. Operator `()` is `__device__`-only.
+
+**Kernel dispatch** — two macro families in `kernel_launcher.h`/`.inl`:
+- `DEFINE_DEVICE_DISPATCH_BINARY_H` declares `op_dispatch<DEVICE_TYPE, T>` structs routing to `add_cpu` or `launch_add`.
+- `DEFINE_DEVICE_DISPATCH_BINARY_INL` defines the free function `_add(…, DEVICE_TYPE)` that switches at runtime into the correct struct.
+
+**Rank-specialized CUDA kernels** — `DEFINE_BINARY_OP_LAUNCH` generates a `launch_op` function that switches on `tensor.rank` (1–4) and selects a kernel with a rank-tuned grid/block layout. Rank ≥ 5 falls back to a flat 1D kernel (`_kernel_nd`) that reconstructs multi-indices from a linear index. Explicit template instantiations for `float`, `int`, `char`, `float16_t` are emitted per op.
+
+```
+headers/ops/cpu/        ← CPU op declarations (macro-generated inline functions)
+src/ops/cpu/            ← CPU op .cpp translation units
+headers/ops/kernels/    ← CUDA kernel declarations and launch macros (.cuh)
+src/ops/kernels/        ← CUDA kernel .cu translation units
 ```
 
 ---
@@ -63,25 +82,25 @@ OpenMat
 These are the non-obvious choices made during development, and why.
 
 **Rank-specialized kernels over a single generic kernel**
-A generic N-D kernel requires runtime stride computation and can't use compile-time loop unrolling. For rank-2 (the common case), a specialized kernel using shared memory tiling and compile-time tile size achieves significantly better occupancy. The dispatcher selects the rank-2 path when possible and falls back to the N-D path otherwise.
+A single flat kernel must reconstruct multi-dimensional indices from a linear offset at runtime, which adds per-thread division and modulo overhead and prevents rank-aware grid/block tuning. For rank 1–4, dedicated kernels use grid shapes matched to the tensor dimensions (e.g. a 2D `dim3(16,16)` block for rank-2), avoiding that overhead. Rank ≥ 5 falls back to `_kernel_nd`, which does the index reconstruction generically.
 
-**RAII for GPU memory via `DeviceTensor`**
-Raw `cudaMalloc`/`cudaFree` pairs are error-prone in the presence of exceptions and early returns. `DeviceTensor` wraps the allocation in a move-only class with destructor-managed cleanup, making GPU memory lifetime deterministic and explicit — the same pattern used in PyTorch's `at::DataPtr`.
+**RAII for GPU memory via `Tensor<T>` + `Allocator<T>`**
+Rather than pairing raw `cudaMalloc`/`cudaFree` calls at each use site, every `Tensor` owns a polymorphic `Allocator` chosen at construction time by `AllocatorFactory`. The destructor delegates to `allocator->deallocate`, making GPU memory lifetime deterministic regardless of exceptions or early returns — the same pattern used in PyTorch's `at::DataPtr`.
 
-**Shape and stride metadata on-device**
-Rather than maintaining a CPU-side mirror of shape/stride and passing it to every kernel launch, OpenMat stores a compact metadata struct in GPU constant memory. This avoids per-launch host-device copies for shape-dependent index computations.
+**Shape and stride metadata uploaded per kernel launch via `DeviceTensorView`**
+Each kernel receives a `DeviceTensorView` whose constructor copies shape and stride arrays to GPU memory with `cudaMalloc`/`cudaMemcpy`. This keeps metadata close to the data pointer inside the kernel without requiring a persistent GPU-side mirror or constant memory management. The view is move-only and frees its device metadata in the destructor.
 
-**Runtime dispatch over template specialization for all ranks**
-Full template specialization over rank (1–8) would produce a binary explosion and make Python FFI impractical. Instead, the dispatcher uses a rank enum at the boundary and calls the correct specialized kernel internally. The hot path is still type-safe; only the dispatch boundary is dynamic.
+**Runtime dispatch via macro-generated structs instead of virtual functions**
+Using `virtual` dispatch for CPU vs. CUDA would add a vtable indirection on every element-wise op. Instead, `DEFINE_DEVICE_DISPATCH_BINARY_H` generates `op_dispatch<DEVICE_TYPE, T>` template specializations resolved at compile time. The only runtime branch is a `switch` on `DEVICE_TYPE` in the inlined free function, which the compiler can optimize away when the device is known statically.
 
 ---
 
 ## Key features
 
-- **Rank-specialized kernels**: matmul, transpose, and elementwise ops with dedicated kernels for 2D tensors (tiled shared memory, vectorized loads)
-- **N-dimensional support**: generalized kernels for arbitrary-rank tensors with stride-aware index computation
-- **RAII GPU memory**: `DeviceTensor<T>` manages allocation/deallocation with move semantics and no raw pointer leaks
-- **Automatic kernel dispatch**: runtime selection of the most efficient kernel based on tensor rank and operation type
+- **Rank-specialized kernels**: elementwise ops (add, sub, mul, div) with dedicated CUDA kernels for rank 1–4, each with a rank-tuned grid/block layout
+- **N-dimensional support**: generic `_kernel_nd` fallback for rank ≥ 5 with stride-aware index reconstruction
+- **RAII GPU memory**: `Tensor<T>` owns a polymorphic `Allocator<T>` (CPU or GPU) with move semantics and no raw pointer leaks
+- **Unified CPU/GPU API**: the same `operator+`, `operator-`, etc. work on both devices; dispatch is resolved at runtime from `DEVICE_TYPE`
 - **Python FFI** _(in progress)_: C-ABI boundary layer for safe access from Python without GIL contention
 
 ---
