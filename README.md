@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="images/logo.png" alt="OpenMat Logo" width="300"/>
+</p>
+
 # OpenMat
 
 **High-performance CUDA tensor framework in C++/CUDA** — rank-specialized kernels, RAII GPU memory management, and N-dimensional tensor operations with automatic kernel dispatch.
