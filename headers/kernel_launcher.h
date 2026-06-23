@@ -4,9 +4,11 @@
 #include "ops/kernels/fill_gpu.cuh"
 #include "ops/kernels/binary_op_macros.cuh"
 #include "ops/kernels/unary_op_macros.cuh"
+#include "ops/kernels/matmul_gpu.cuh"
 #include "ops/cpu/fill_cpu.h"
 #include "ops/cpu/binary_op_macros.h"
 #include "ops/cpu/unary_op_macros.h"
+#include "ops/cpu/matmul_cpu.h"
 
 
 #define DEFINE_DEVICE_DISPATCH_BINARY_INL(OP_NAME)\
@@ -91,6 +93,9 @@ namespace om
     DEFINE_DEVICE_DISPATCH_UNARY_H(sub_k, sub_k_cpu, launch_sub_k)
     DEFINE_DEVICE_DISPATCH_UNARY_H(mul_k, mul_k_cpu, launch_mul_k)
     DEFINE_DEVICE_DISPATCH_UNARY_H(div_k, div_k_cpu, launch_div_k)
+
+    // MatMul dispatch - uses same binary signature pattern
+    DEFINE_DEVICE_DISPATCH_BINARY_H(matmul, matmul_cpu, launch_matmul)
 }
 
 #include "kernel_launcher.inl"

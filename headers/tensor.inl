@@ -18,18 +18,14 @@ om::Tensor<value_type>::Tensor(const Tensor& rhs) : m_Shape(rhs.m_Shape), m_Stri
 }
 
 template <typename value_type>
-om::Tensor<value_type>::Tensor(Tensor &&rhs) : m_Shape(rhs.m_Shape), m_Stride(rhs.m_Stride), m_Device(rhs.m_Device)
+om::Tensor<value_type>::Tensor(Tensor &&rhs)
+    : m_Shape(std::move(rhs.m_Shape)),
+      m_Stride(std::move(rhs.m_Stride)),
+      m_Device(rhs.m_Device),
+      m_Data(rhs.m_Data),
+      m_Allocator(std::move(rhs.m_Allocator))
 {
-    if(rhs.m_Data)
-    {
-        m_Allocator = std::move(rhs.m_Allocator);
-        size_t total_size_ = std::accumulate(m_Shape.begin(), m_Shape.end(), 1, std::multiplies<>());
-        m_Data = m_Allocator->allocate(total_size_);
-        m_Allocator->copy(m_Data, rhs.m_Data, total_size_);
-
-        rhs.m_Allocator->deallocate(rhs.m_Data);
-        rhs.m_Data = nullptr;
-    }
+    rhs.m_Data = nullptr;
 }
 
 template <typename value_type>
@@ -103,6 +99,32 @@ om::Tensor<value_type> om::Tensor<value_type>::operator/(const Tensor<value_type
     return this->div(rhs);
 }
 
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::matmul(const Tensor<value_type> &rhs) const
+{
+    // Validate 2D tensors
+    if (this->rank() != 2 || rhs.rank() != 2) {
+        throw std::runtime_error("matmul: both tensors must be 2D matrices");
+    }
+
+    // A is M×K, B is K×N, C is M×N
+    size_t M = this->shape()[0];
+    size_t K = this->shape()[1];
+    size_t K2 = rhs.shape()[0];
+    size_t N = rhs.shape()[1];
+
+    if (K != K2) {
+        throw std::runtime_error("matmul: inner dimensions must match (A.cols=" + 
+            std::to_string(K) + " != B.rows=" + std::to_string(K2) + ")");
+    }
+
+    // Create output tensor with shape {M, N}
+    Tensor<value_type> out({M, N}, this->device());
+
+    _matmul(this->view(), rhs.view(), out.view(), this->device_type());
+
+    return out;
+}
 
 /// 
 template <typename value_type>

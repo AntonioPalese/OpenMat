@@ -18,4 +18,7 @@ namespace om {
     DEFINE_DEVICE_DISPATCH_UNARY_INL(sub_k)
     DEFINE_DEVICE_DISPATCH_UNARY_INL(mul_k)
     DEFINE_DEVICE_DISPATCH_UNARY_INL(div_k)
+
+    // MatMul dispatch
+    DEFINE_DEVICE_DISPATCH_BINARY_INL(matmul)
 }
