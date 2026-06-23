@@ -6,7 +6,7 @@
 
 **High-performance CUDA tensor framework in C++/CUDA** — rank-specialized kernels, RAII GPU memory management, and N-dimensional tensor operations with automatic kernel dispatch.
 
-> Not a wrapper around cuBLAS. Every kernel is written from scratch.
+> Not a wrapper around cuBLAS/CUDNN. Every kernel is written from scratch.
 
 ![Language](https://img.shields.io/badge/language-C%2B%2B17%20%2F%20CUDA-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
