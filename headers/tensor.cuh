@@ -13,6 +13,7 @@
 #include "tensor_view.cuh"
 #include "device_tensor_view.cuh"
 #include "kernel_launcher.h"
+#include "ops/kernels/fused_op.cuh"
 
 
 namespace om
@@ -94,6 +95,12 @@ namespace om
         Tensor<value_type> div(const value_type& scalar) const;      
         Tensor<value_type> operator/(const value_type& scalar) const;
 
+
+        template<typename Op>
+        Tensor<value_type> apply(Op op) const;
+
+        Tensor<value_type> scale_shift(value_type scale, value_type shift) const;
+        Tensor<value_type> shift_scale(value_type shift, value_type scale) const;
 
         void copyToHost(value_type* dest) const;
         void copyToDevice(value_type* dest) const;        

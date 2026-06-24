@@ -17,6 +17,18 @@ namespace om
         __device__ T operator()(T x) const { return x * b; }
     };
 
+    template <typename T>
+    struct Div {
+        T b;
+        __device__ T operator()(T x) const { return x / b; }
+    };
+
+    template <typename T>
+    struct Pow {
+        T b;
+        __device__ T operator()(T x) const { return pow(x, b); }
+    };
+
     template <typename F, typename G>
     struct Compose {
         F f;

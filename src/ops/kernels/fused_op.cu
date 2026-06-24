@@ -119,9 +119,33 @@ namespace om {
         cudaDeviceSynchronize();
     }
 
-    // Explicit instantiations
+    // Explicit instantiations — Add
     template void launch_apply_op<float>(const TensorView<const float> src, TensorView<float> dst, Add<float> op);
     template void launch_apply_op<int>(const TensorView<const int> src, TensorView<int> dst, Add<int> op);
     template void launch_apply_op<char>(const TensorView<const char> src, TensorView<char> dst, Add<char> op);
     template void launch_apply_op<float16_t>(const TensorView<const float16_t> src, TensorView<float16_t> dst, Add<float16_t> op);
+
+    // Explicit instantiations — Mul
+    template void launch_apply_op<float>(const TensorView<const float> src, TensorView<float> dst, Mul<float> op);
+    template void launch_apply_op<int>(const TensorView<const int> src, TensorView<int> dst, Mul<int> op);
+    template void launch_apply_op<char>(const TensorView<const char> src, TensorView<char> dst, Mul<char> op);
+    template void launch_apply_op<float16_t>(const TensorView<const float16_t> src, TensorView<float16_t> dst, Mul<float16_t> op);
+
+    // Explicit instantiations — Div
+    template void launch_apply_op<float>(const TensorView<const float> src, TensorView<float> dst, Div<float> op);
+    template void launch_apply_op<int>(const TensorView<const int> src, TensorView<int> dst, Div<int> op);
+    template void launch_apply_op<char>(const TensorView<const char> src, TensorView<char> dst, Div<char> op);
+    template void launch_apply_op<float16_t>(const TensorView<const float16_t> src, TensorView<float16_t> dst, Div<float16_t> op);
+
+    // Explicit instantiations — scale_shift: Compose<Mul, Add>
+    template void launch_apply_op<float>(const TensorView<const float> src, TensorView<float> dst, Compose<Mul<float>, Add<float>> op);
+    template void launch_apply_op<int>(const TensorView<const int> src, TensorView<int> dst, Compose<Mul<int>, Add<int>> op);
+    template void launch_apply_op<char>(const TensorView<const char> src, TensorView<char> dst, Compose<Mul<char>, Add<char>> op);
+    template void launch_apply_op<float16_t>(const TensorView<const float16_t> src, TensorView<float16_t> dst, Compose<Mul<float16_t>, Add<float16_t>> op);
+
+    // Explicit instantiations — shift_scale: Compose<Add, Mul>
+    template void launch_apply_op<float>(const TensorView<const float> src, TensorView<float> dst, Compose<Add<float>, Mul<float>> op);
+    template void launch_apply_op<int>(const TensorView<const int> src, TensorView<int> dst, Compose<Add<int>, Mul<int>> op);
+    template void launch_apply_op<char>(const TensorView<const char> src, TensorView<char> dst, Compose<Add<char>, Mul<char>> op);
+    template void launch_apply_op<float16_t>(const TensorView<const float16_t> src, TensorView<float16_t> dst, Compose<Add<float16_t>, Mul<float16_t>> op);
 }

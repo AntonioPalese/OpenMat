@@ -61,12 +61,14 @@ The kernel takes any `Op` (a functor, a composition, etc.) and applies it elemen
 The `.cu` file only instantiates `launch_apply_op` for `Op = Add<T>`:
 
 ```cpp
-template void launch_apply_op<float>(..., Add<float> op);
-template void launch_apply_op<int>(..., Add<int> op);
+template void launch_apply_op<float>(const TensorView<const float> src, TensorView<float> dst, Add<float> op);
+template void launch_apply_op<int>(const TensorView<const int> src, TensorView<int> dst, Add<int> op);
 // ...
 ```
 
 `Mul<T>` and `Compose<F,G>` **have no explicit instantiations**. Attempting to use them from a `.cpp` translation unit (which cannot instantiate CUDA templates) will result in a linker error. To use them today, `launch_apply_op` must be called from a `.cu` file.
+
+Note: the `src` parameter must be `TensorView<const T>`, not `TensorView<T>`. The `match()` method signature takes `TensorView<T>`, so the shape check must be called as `src.match(dst)` — passing `dst` (non-const) to const — not `dst.match(src)`, which would attempt an illegal `const T*` → `T*` conversion.
 
 ### No integration in `Tensor<T>`
 
@@ -89,9 +91,11 @@ The signature `__device__ auto operator()(auto x)` requires C++20. The project i
 ```cpp
 template <typename T>
 struct ReLU {
-    __device__ T operator()(T x) const { return x > T{0} ? x : T{0}; }
+    __device__ T operator()(T x) const { return x > static_cast<T>(0) ? x : static_cast<T>(0); }
 };
 ```
+
+Avoid `T{0}` in device code for types with non-trivial constructors (e.g. `float16_t`): nvcc forbids dynamic initialization of `__shared__` variables, and `T{0}` invokes the constructor rather than doing a plain zero-cast. Use `static_cast<T>(0)` instead — it produces the same value without triggering the constructor.
 
 Then add the explicit instantiations in `fused_op.cu`:
 

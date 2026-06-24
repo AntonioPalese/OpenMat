@@ -193,6 +193,27 @@ om::Tensor<value_type> om::Tensor<value_type>::operator/(const value_type& scala
 ////
 
 template <typename value_type>
+template <typename Op>
+om::Tensor<value_type> om::Tensor<value_type>::apply(Op op) const
+{
+    Tensor<value_type> out(this->shape(), this->device());
+    launch_apply_op<value_type>(this->view(), out.view(), op);
+    return out;
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::scale_shift(value_type scale, value_type shift) const
+{
+    return this->apply(Compose<Mul<value_type>, Add<value_type>>{Mul<value_type>{scale}, Add<value_type>{shift}});
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::shift_scale(value_type shift, value_type scale) const
+{
+    return this->apply(Compose<Add<value_type>, Mul<value_type>>{Add<value_type>{shift}, Mul<value_type>{scale}});
+}
+
+template <typename value_type>
 void om::Tensor<value_type>::copyToHost(value_type *dest) const
 {            
     size_t total_size_ = std::accumulate(m_Shape.begin(), m_Shape.end(), 1, std::multiplies<>());
