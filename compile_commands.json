@@ -26,6 +26,11 @@
 },
 {
   "directory": "/home/apalese/OpenMat/build",
+  "command": "/usr/bin/c++ -DOpenMat_EXPORTS -I/home/apalese/OpenMat/headers -g -fPIC -o CMakeFiles/OpenMat.dir/src/python/openmat_capi.cpp.o -c /home/apalese/OpenMat/src/python/openmat_capi.cpp",
+  "file": "/home/apalese/OpenMat/src/python/openmat_capi.cpp"
+},
+{
+  "directory": "/home/apalese/OpenMat/build",
   "command": "/usr/bin/c++ -DOpenMat_EXPORTS -I/home/apalese/OpenMat/headers -g -fPIC -o CMakeFiles/OpenMat.dir/src/utils.cpp.o -c /home/apalese/OpenMat/src/utils.cpp",
   "file": "/home/apalese/OpenMat/src/utils.cpp"
 },
