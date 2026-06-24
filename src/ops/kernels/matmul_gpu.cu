@@ -21,37 +21,34 @@ namespace om
         size_t strideC0, size_t strideC1)
     {
 
-        __shared__ T tileA[MATMUL_TILE_SIZE][MATMUL_TILE_SIZE];
-        __shared__ T tileB[MATMUL_TILE_SIZE][MATMUL_TILE_SIZE];
-
+        __shared__ unsigned char rawA[MATMUL_TILE_SIZE * MATMUL_TILE_SIZE * sizeof(T)];
+        __shared__ unsigned char rawB[MATMUL_TILE_SIZE * MATMUL_TILE_SIZE * sizeof(T)];
+        T* tileA = reinterpret_cast<T*>(rawA);
+        T* tileB = reinterpret_cast<T*>(rawB);
 
         int tx = threadIdx.x;
         int ty = threadIdx.y;
 
-      
         size_t row = blockIdx.y * MATMUL_TILE_SIZE + ty;
         size_t col = blockIdx.x * MATMUL_TILE_SIZE + tx;
 
         T sum = static_cast<T>(0);
-
 
         int numTiles = (K + MATMUL_TILE_SIZE - 1) / MATMUL_TILE_SIZE;
 
         for (int t = 0; t < numTiles; ++t) {
 
             size_t aCol = t * MATMUL_TILE_SIZE + tx;
-            tileA[ty][tx] = (row < M && aCol < K) ? A[row * strideA0 + aCol * strideA1] : static_cast<T>(0);
-
+            tileA[ty * MATMUL_TILE_SIZE + tx] = (row < M && aCol < K) ? A[row * strideA0 + aCol * strideA1] : static_cast<T>(0);
 
             size_t bRow = t * MATMUL_TILE_SIZE + ty;
-            tileB[ty][tx] = (bRow < K && col < N) ? B[bRow * strideB0 + col * strideB1] : static_cast<T>(0);
+            tileB[ty * MATMUL_TILE_SIZE + tx] = (bRow < K && col < N) ? B[bRow * strideB0 + col * strideB1] : static_cast<T>(0);
 
             __syncthreads();
 
-
             #pragma unroll
             for (int k = 0; k < MATMUL_TILE_SIZE; ++k) {
-                sum = sum + (tileA[ty][k] * tileB[k][tx]);
+                sum = sum + (tileA[ty * MATMUL_TILE_SIZE + k] * tileB[k * MATMUL_TILE_SIZE + tx]);
             }
 
             __syncthreads();
