@@ -268,6 +268,62 @@ value_type om::Tensor<value_type>::max() const
 }
 
 template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::reshape(const std::vector<size_t>& new_shape) const
+{
+    size_t new_size = std::accumulate(new_shape.begin(), new_shape.end(), size_t{1}, std::multiplies<size_t>{});
+    if (new_size != this->size())
+        throw std::invalid_argument("reshape: new shape must have the same total number of elements");
+
+    Tensor<value_type> out(*this);
+    out.m_Shape = new_shape;
+    out.m_Stride.resize(new_shape.size());
+    out.m_Stride.back() = 1;
+    for (int i = static_cast<int>(new_shape.size()) - 2; i >= 0; --i)
+        out.m_Stride[i] = out.m_Stride[i + 1] * new_shape[i + 1];
+    return out;
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::flatten() const
+{
+    return this->reshape({this->size()});
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::squeeze(size_t axis) const
+{
+    if (axis >= this->rank())
+        throw std::out_of_range("squeeze: axis out of range");
+    if (m_Shape[axis] != 1)
+        throw std::invalid_argument("squeeze: dimension at axis must be 1");
+
+    std::vector<size_t> new_shape;
+    new_shape.reserve(this->rank() - 1);
+    for (size_t i = 0; i < this->rank(); ++i)
+        if (i != axis) new_shape.push_back(m_Shape[i]);
+
+    if (new_shape.empty()) new_shape.push_back(1);
+    return this->reshape(new_shape);
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::unsqueeze(size_t axis) const
+{
+    if (axis > this->rank())
+        throw std::out_of_range("unsqueeze: axis out of range");
+
+    std::vector<size_t> new_shape;
+    new_shape.reserve(this->rank() + 1);
+    for (size_t i = 0; i < axis; ++i)
+        new_shape.push_back(m_Shape[i]);
+    new_shape.push_back(1);
+    for (size_t i = axis; i < this->rank(); ++i)
+        new_shape.push_back(m_Shape[i]);
+
+    return this->reshape(new_shape);
+}
+
+template <typename value_type>
 template <typename Op>
 om::Tensor<value_type> om::Tensor<value_type>::apply(Op op) const
 {

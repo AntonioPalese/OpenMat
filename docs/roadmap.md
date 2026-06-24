@@ -280,7 +280,7 @@ static Tensor<T> load(const std::string& path); // corrispondente load
 |x| Alta | 3.1 — `.to()` / `.cpu()` / `.cuda()` |
 |x| Alta | 3.2 — `zeros`, `ones`, `from_vector` |
 |x| Media | 1.2 — Riduzioni (`sum`, `mean`, `max`) |
-| | Media | 2.1 — `reshape`, `flatten` |
+|x| Media | 2.1 — `reshape`, `flatten` |
 | | Media | 4.3 — `relu`, `sigmoid` |
 | | Media | 2.2 — `transpose`, `permute` |
 | | Bassa | 6.1 — CUDA streams |
