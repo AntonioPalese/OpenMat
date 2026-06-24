@@ -3,7 +3,6 @@
 
 namespace om
 {
-    // cpu allocator ////////////////////////////////// 
     template<typename T>
     T* CpuAllocator<T>::allocate(size_t count) {
         if (count == 0)
@@ -33,9 +32,9 @@ namespace om
     {
         CUDA_CALL(cudaMemcpy(dst, src, sizeof(T) * count, cudaMemcpyHostToDevice));
     }
-    //////////////////////////////////
+    
 
-    // gpu allocator //////////////////////////////////
+    
     template <typename T>
     T *GpuAllocator<T>::allocate(size_t count)
     {
@@ -64,5 +63,4 @@ namespace om
     {
        CUDA_CALL(cudaMemcpy(dst, src, sizeof(T) * count, cudaMemcpyDeviceToHost));
     }
-    //////////////////////////////////
 }

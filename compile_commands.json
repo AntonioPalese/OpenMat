@@ -16,6 +16,11 @@
 },
 {
   "directory": "/home/apalese/OpenMat/build",
+  "command": "/usr/bin/c++ -DOpenMat_EXPORTS -I/home/apalese/OpenMat/headers -g -fPIC -o CMakeFiles/OpenMat.dir/src/ops/cpu/matmul_cpu.cpp.o -c /home/apalese/OpenMat/src/ops/cpu/matmul_cpu.cpp",
+  "file": "/home/apalese/OpenMat/src/ops/cpu/matmul_cpu.cpp"
+},
+{
+  "directory": "/home/apalese/OpenMat/build",
   "command": "/usr/bin/c++ -DOpenMat_EXPORTS -I/home/apalese/OpenMat/headers -g -fPIC -o CMakeFiles/OpenMat.dir/src/ops/cpu/unary_ops.cpp.o -c /home/apalese/OpenMat/src/ops/cpu/unary_ops.cpp",
   "file": "/home/apalese/OpenMat/src/ops/cpu/unary_ops.cpp"
 },
@@ -33,6 +38,16 @@
   "directory": "/home/apalese/OpenMat/build",
   "command": "/usr/bin/nvcc -forward-unknown-to-host-compiler -DOpenMat_EXPORTS -I/home/apalese/OpenMat/headers -g --generate-code=arch=compute_61,code=[compute_61,sm_61] -Xcompiler=-fPIC -x cu -dc /home/apalese/OpenMat/src/ops/kernels/fill_gpu.cu -o CMakeFiles/OpenMat.dir/src/ops/kernels/fill_gpu.cu.o",
   "file": "/home/apalese/OpenMat/src/ops/kernels/fill_gpu.cu"
+},
+{
+  "directory": "/home/apalese/OpenMat/build",
+  "command": "/usr/bin/nvcc -forward-unknown-to-host-compiler -DOpenMat_EXPORTS -I/home/apalese/OpenMat/headers -g --generate-code=arch=compute_61,code=[compute_61,sm_61] -Xcompiler=-fPIC -x cu -dc /home/apalese/OpenMat/src/ops/kernels/fused_op.cu -o CMakeFiles/OpenMat.dir/src/ops/kernels/fused_op.cu.o",
+  "file": "/home/apalese/OpenMat/src/ops/kernels/fused_op.cu"
+},
+{
+  "directory": "/home/apalese/OpenMat/build",
+  "command": "/usr/bin/nvcc -forward-unknown-to-host-compiler -DOpenMat_EXPORTS -I/home/apalese/OpenMat/headers -g --generate-code=arch=compute_61,code=[compute_61,sm_61] -Xcompiler=-fPIC -x cu -dc /home/apalese/OpenMat/src/ops/kernels/matmul_gpu.cu -o CMakeFiles/OpenMat.dir/src/ops/kernels/matmul_gpu.cu.o",
+  "file": "/home/apalese/OpenMat/src/ops/kernels/matmul_gpu.cu"
 },
 {
   "directory": "/home/apalese/OpenMat/build",

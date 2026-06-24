@@ -18,8 +18,7 @@ namespace om
 
         virtual void copyFromCurrentLoc(T* dst, const T* src, std::size_t count) const = 0;
     };
-
-    // cpu allocator ////////////////////////////////// 
+    
     template<typename T>
     class CpuAllocator : public Allocator<T>
     {

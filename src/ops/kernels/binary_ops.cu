@@ -2,7 +2,6 @@
 
 namespace om 
 {
-    // Usage: name, expression using lhs(r,c) and rhs(r,c)
     DEFINE_BINARY_OP_KERNEL_K1(add, lhs(x) + rhs(x))
     DEFINE_BINARY_OP_KERNEL_K2(add, lhs(y, x) + rhs(y, x))
     DEFINE_BINARY_OP_KERNEL_K3(add, lhs(z, y, x) + rhs(z, y, x))

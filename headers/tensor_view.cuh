@@ -16,7 +16,7 @@ namespace om {
         size_t rank;
 
         __host__
-        bool match(TensorView<T> other) const
+        bool match(const TensorView<T> other) const
         {
             if(rank != other.rank) return false;
             for(size_t i = 0; i < rank; i++)

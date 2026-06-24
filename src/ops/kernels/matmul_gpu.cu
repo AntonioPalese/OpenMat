@@ -7,15 +7,9 @@
 
 namespace om 
 {
-    // Tile size for shared memory optimization
+
     constexpr int MATMUL_TILE_SIZE = 16;
 
-    /**
-     * @brief CUDA kernel for tiled matrix multiplication
-     * 
-     * Uses shared memory to cache tiles for better performance.
-     * Each thread block computes a TILE_SIZE × TILE_SIZE portion of output.
-     */
     template<typename T>
     __global__ void matmul_kernel(
         const T* __restrict__ A,
@@ -26,43 +20,35 @@ namespace om
         size_t strideB0, size_t strideB1,
         size_t strideC0, size_t strideC1)
     {
-        // Shared memory for tiles
+
         __shared__ T tileA[MATMUL_TILE_SIZE][MATMUL_TILE_SIZE];
         __shared__ T tileB[MATMUL_TILE_SIZE][MATMUL_TILE_SIZE];
 
-        // Thread indices within the block
+
         int tx = threadIdx.x;
         int ty = threadIdx.y;
 
-        // Global row and column for this thread
+      
         size_t row = blockIdx.y * MATMUL_TILE_SIZE + ty;
         size_t col = blockIdx.x * MATMUL_TILE_SIZE + tx;
 
-        T sum = T{0};
+        T sum = static_cast<T>(0);
 
-        // Iterate over tiles
+
         int numTiles = (K + MATMUL_TILE_SIZE - 1) / MATMUL_TILE_SIZE;
-        
-        for (int t = 0; t < numTiles; ++t) {
-            // Load tile of A into shared memory
-            size_t aCol = t * MATMUL_TILE_SIZE + tx;
-            if (row < M && aCol < K) {
-                tileA[ty][tx] = A[row * strideA0 + aCol * strideA1];
-            } else {
-                tileA[ty][tx] = T{0};
-            }
 
-            // Load tile of B into shared memory
+        for (int t = 0; t < numTiles; ++t) {
+
+            size_t aCol = t * MATMUL_TILE_SIZE + tx;
+            tileA[ty][tx] = (row < M && aCol < K) ? A[row * strideA0 + aCol * strideA1] : static_cast<T>(0);
+
+
             size_t bRow = t * MATMUL_TILE_SIZE + ty;
-            if (bRow < K && col < N) {
-                tileB[ty][tx] = B[bRow * strideB0 + col * strideB1];
-            } else {
-                tileB[ty][tx] = T{0};
-            }
+            tileB[ty][tx] = (bRow < K && col < N) ? B[bRow * strideB0 + col * strideB1] : static_cast<T>(0);
 
             __syncthreads();
 
-            // Compute partial dot product for this tile
+
             #pragma unroll
             for (int k = 0; k < MATMUL_TILE_SIZE; ++k) {
                 sum = sum + (tileA[ty][k] * tileB[k][tx]);
@@ -71,19 +57,16 @@ namespace om
             __syncthreads();
         }
 
-        // Write result
+
         if (row < M && col < N) {
             C[row * strideC0 + col * strideC1] = sum;
         }
     }
 
-    /**
-     * @brief Launch matmul kernel: C = A × B
-     */
     template<typename T>
     void launch_matmul(const TensorView<const T> lhs, const TensorView<const T> rhs, TensorView<T> dst)
     {
-        // Validate ranks
+
         if (lhs.rank != 2 || rhs.rank != 2 || dst.rank != 2) {
             throw std::runtime_error("launch_matmul: all tensors must be 2D matrices");
         }
@@ -101,14 +84,13 @@ namespace om
             throw std::runtime_error("launch_matmul: output dimensions mismatch");
         }
 
-        // Configure grid and block dimensions
+ 
         dim3 threads(MATMUL_TILE_SIZE, MATMUL_TILE_SIZE);
         dim3 blocks(
             (N + MATMUL_TILE_SIZE - 1) / MATMUL_TILE_SIZE,
             (M + MATMUL_TILE_SIZE - 1) / MATMUL_TILE_SIZE
         );
 
-        // Launch kernel with strides
         matmul_kernel<T><<<blocks, threads>>>(
             lhs.data, rhs.data, dst.data,
             M, K, N,
@@ -121,7 +103,7 @@ namespace om
         cudaDeviceSynchronize();
     }
 
-    // Explicit template instantiations
+
     template void launch_matmul<float>(
         const TensorView<const float> lhs, 
         const TensorView<const float> rhs, 

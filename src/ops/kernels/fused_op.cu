@@ -69,7 +69,7 @@ namespace om {
     template <typename T, typename Op>
     void launch_apply_op(const TensorView<const T> src, TensorView<T> dst, Op op)
     {
-        if (!dst.match(src))
+        if (!src.match(dst))
             throw std::invalid_argument("Source and destination must have the same shape");
 
         switch (dst.rank)
