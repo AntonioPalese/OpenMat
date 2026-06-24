@@ -119,6 +119,147 @@ namespace om {
         cudaDeviceSynchronize();
     }
 
+    // ---------------------------------------------------------------------------
+    // Binary fused kernels
+    // ---------------------------------------------------------------------------
+
+    template <typename T, typename Op>
+    __global__ void apply_binary_op_rank1(
+        const DeviceTensorView<const T> lhs, const DeviceTensorView<const T> rhs,
+        DeviceTensorView<T> dst, Op op)
+    {
+        size_t x = blockIdx.x * blockDim.x + threadIdx.x;
+        if (x < dst.shape[0])
+            dst(x) = op(lhs(x), rhs(x));
+    }
+
+    template <typename T, typename Op>
+    __global__ void apply_binary_op_rank2(
+        const DeviceTensorView<const T> lhs, const DeviceTensorView<const T> rhs,
+        DeviceTensorView<T> dst, Op op)
+    {
+        size_t x = blockIdx.x * blockDim.x + threadIdx.x;
+        size_t y = blockIdx.y * blockDim.y + threadIdx.y;
+        if (y < dst.shape[0] && x < dst.shape[1])
+            dst(y, x) = op(lhs(y, x), rhs(y, x));
+    }
+
+    template <typename T, typename Op>
+    __global__ void apply_binary_op_rank3(
+        const DeviceTensorView<const T> lhs, const DeviceTensorView<const T> rhs,
+        DeviceTensorView<T> dst, Op op)
+    {
+        size_t x = blockIdx.x * blockDim.x + threadIdx.x;
+        size_t y = blockIdx.y * blockDim.y + threadIdx.y;
+        size_t z = blockIdx.z * blockDim.z + threadIdx.z;
+        if (z < dst.shape[0] && y < dst.shape[1] && x < dst.shape[2])
+            dst(z, y, x) = op(lhs(z, y, x), rhs(z, y, x));
+    }
+
+    template <typename T, typename Op>
+    __global__ void apply_binary_op_rank4(
+        const DeviceTensorView<const T> lhs, const DeviceTensorView<const T> rhs,
+        DeviceTensorView<T> dst, Op op)
+    {
+        size_t w = threadIdx.x + blockIdx.x * blockDim.x;
+        size_t h = threadIdx.y + blockIdx.y * blockDim.y;
+        size_t n = blockIdx.z;
+
+        for (size_t c = threadIdx.z; c < dst.shape[1]; c += blockDim.z) {
+            if (n < dst.shape[0] && c < dst.shape[1] &&
+                h < dst.shape[2] && w < dst.shape[3])
+                dst(n, c, h, w) = op(lhs(n, c, h, w), rhs(n, c, h, w));
+        }
+    }
+
+    template <typename T, typename Op>
+    __global__ void apply_binary_op_nd(
+        const DeviceTensorView<const T> lhs, const DeviceTensorView<const T> rhs,
+        DeviceTensorView<T> dst, Op op)
+    {
+        size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+        size_t total = dst.size();
+        if (idx >= total) return;
+
+        size_t offset = 0;
+        size_t tmp = idx;
+        for (size_t d = 0; d < dst.rank; ++d) {
+            size_t coord = tmp % dst.shape[d];
+            offset += coord * dst.stride[d];
+            tmp /= dst.shape[d];
+        }
+        dst[offset] = op(lhs[offset], rhs[offset]);
+    }
+
+    template <typename T, typename Op>
+    void launch_apply_binary_op(const TensorView<const T> lhs, const TensorView<const T> rhs,
+                                TensorView<T> dst, Op op)
+    {
+        if (!lhs.match(dst) || !rhs.match(dst))
+            throw std::invalid_argument("launch_apply_binary_op: all tensors must have the same shape");
+
+        switch (dst.rank)
+        {
+        case 1:
+            {
+                dim3 threads(256);
+                dim3 blocks((dst.shape[0] + 255) / 256);
+                apply_binary_op_rank1<<<blocks, threads>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw(), op);
+            }
+            break;
+        case 2:
+            {
+                dim3 threads(16, 16);
+                dim3 blocks((dst.shape[1] + 15) / 16, (dst.shape[0] + 15) / 16);
+                apply_binary_op_rank2<<<blocks, threads>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw(), op);
+            }
+            break;
+        case 3:
+            {
+                dim3 threads(8, 8, 8);
+                dim3 blocks((dst.shape[2] + 7) / 8, (dst.shape[1] + 7) / 8, (dst.shape[0] + 7) / 8);
+                apply_binary_op_rank3<<<blocks, threads>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw(), op);
+            }
+            break;
+        case 4:
+            {
+                dim3 threads(8, 8, dst.shape[1] < 8 ? dst.shape[1] : 8);
+                dim3 blocks(
+                    (dst.shape[3] + threads.x - 1) / threads.x,
+                    (dst.shape[2] + threads.y - 1) / threads.y,
+                    dst.shape[0]
+                );
+                apply_binary_op_rank4<<<blocks, threads>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw(), op);
+            }
+            break;
+        default:
+            {
+                size_t total = dst.size();
+                dim3 threads(256);
+                dim3 blocks((total + 255) / 256);
+                apply_binary_op_nd<<<blocks, threads>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw(), op);
+            }
+            break;
+        }
+        CUDA_CHECK;
+        cudaDeviceSynchronize();
+    }
+
+#define INSTANTIATE_BINARY_FUSED(T) \
+    template void launch_apply_binary_op<T>(const TensorView<const T>, const TensorView<const T>, TensorView<T>, BinaryAdd<T>); \
+    template void launch_apply_binary_op<T>(const TensorView<const T>, const TensorView<const T>, TensorView<T>, BinarySub<T>); \
+    template void launch_apply_binary_op<T>(const TensorView<const T>, const TensorView<const T>, TensorView<T>, BinaryMul<T>); \
+    template void launch_apply_binary_op<T>(const TensorView<const T>, const TensorView<const T>, TensorView<T>, BinaryDiv<T>); \
+    template void launch_apply_binary_op<T>(const TensorView<const T>, const TensorView<const T>, TensorView<T>, BinaryCompose<BinaryAdd<T>, Mul<T>>); \
+    template void launch_apply_binary_op<T>(const TensorView<const T>, const TensorView<const T>, TensorView<T>, BinaryCompose<BinarySub<T>, Mul<T>>); \
+    template void launch_apply_binary_op<T>(const TensorView<const T>, const TensorView<const T>, TensorView<T>, BinaryCompose<BinaryMul<T>, Add<T>>); \
+    template void launch_apply_binary_op<T>(const TensorView<const T>, const TensorView<const T>, TensorView<T>, BinaryCompose<BinaryDiv<T>, Add<T>>);
+
+    INSTANTIATE_BINARY_FUSED(float)
+    INSTANTIATE_BINARY_FUSED(int)
+    INSTANTIATE_BINARY_FUSED(char)
+    INSTANTIATE_BINARY_FUSED(float16_t)
+
     // Explicit instantiations — Add
     template void launch_apply_op<float>(const TensorView<const float> src, TensorView<float> dst, Add<float> op);
     template void launch_apply_op<int>(const TensorView<const int> src, TensorView<int> dst, Add<int> op);

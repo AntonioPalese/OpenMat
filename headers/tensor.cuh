@@ -102,6 +102,18 @@ namespace om
         Tensor<value_type> scale_shift(value_type scale, value_type shift) const;
         Tensor<value_type> shift_scale(value_type shift, value_type scale) const;
 
+        template<typename Op>
+        Tensor<value_type> apply_binary(const Tensor<value_type>& rhs, Op op) const;
+
+
+        Tensor<value_type> fused_add_mul(const Tensor<value_type>& rhs, value_type scale) const;
+
+        Tensor<value_type> fused_sub_mul(const Tensor<value_type>& rhs, value_type scale) const;
+
+        Tensor<value_type> fused_mul_add(const Tensor<value_type>& rhs, value_type shift) const;
+    
+        Tensor<value_type> fused_div_add(const Tensor<value_type>& rhs, value_type shift) const;
+
         void copyToHost(value_type* dest) const;
         void copyToDevice(value_type* dest) const;        
 

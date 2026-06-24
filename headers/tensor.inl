@@ -214,6 +214,39 @@ om::Tensor<value_type> om::Tensor<value_type>::shift_scale(value_type shift, val
 }
 
 template <typename value_type>
+template <typename Op>
+om::Tensor<value_type> om::Tensor<value_type>::apply_binary(const Tensor<value_type>& rhs, Op op) const
+{
+    Tensor<value_type> out(this->shape(), this->device());
+    launch_apply_binary_op<value_type>(this->view(), rhs.view(), out.view(), op);
+    return out;
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::fused_add_mul(const Tensor<value_type>& rhs, value_type scale) const
+{
+    return this->apply_binary(rhs, BinaryCompose<BinaryAdd<value_type>, Mul<value_type>>{BinaryAdd<value_type>{}, Mul<value_type>{scale}});
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::fused_sub_mul(const Tensor<value_type>& rhs, value_type scale) const
+{
+    return this->apply_binary(rhs, BinaryCompose<BinarySub<value_type>, Mul<value_type>>{BinarySub<value_type>{}, Mul<value_type>{scale}});
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::fused_mul_add(const Tensor<value_type>& rhs, value_type shift) const
+{
+    return this->apply_binary(rhs, BinaryCompose<BinaryMul<value_type>, Add<value_type>>{BinaryMul<value_type>{}, Add<value_type>{shift}});
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::fused_div_add(const Tensor<value_type>& rhs, value_type shift) const
+{
+    return this->apply_binary(rhs, BinaryCompose<BinaryDiv<value_type>, Add<value_type>>{BinaryDiv<value_type>{}, Add<value_type>{shift}});
+}
+
+template <typename value_type>
 void om::Tensor<value_type>::copyToHost(value_type *dest) const
 {            
     size_t total_size_ = std::accumulate(m_Shape.begin(), m_Shape.end(), 1, std::multiplies<>());

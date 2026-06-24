@@ -40,4 +40,44 @@ namespace om
 
     template<typename T, typename Op>
     void launch_apply_op(const TensorView<const T> src, TensorView<T> dst, Op op);
+
+    // ---------------------------------------------------------------------------
+    // Binary fused functors: Op(lhs[i], rhs[i])
+    // ---------------------------------------------------------------------------
+
+    template <typename T>
+    struct BinaryAdd {
+        __device__ T operator()(T x, T y) const { return x + y; }
+    };
+
+    template <typename T>
+    struct BinarySub {
+        __device__ T operator()(T x, T y) const { return x - y; }
+    };
+
+    template <typename T>
+    struct BinaryMul {
+        __device__ T operator()(T x, T y) const { return x * y; }
+    };
+
+    template <typename T>
+    struct BinaryDiv {
+        __device__ T operator()(T x, T y) const { return x / y; }
+    };
+
+    // Compose a binary op with a unary post-op: dst[i] = post(bin(lhs[i], rhs[i]))
+    template <typename BinOp, typename UnaryOp>
+    struct BinaryCompose {
+        BinOp bin;
+        UnaryOp post;
+
+        template <typename T>
+        __device__ auto operator()(T x, T y) const -> decltype(post(bin(x, y))) {
+            return post(bin(x, y));
+        }
+    };
+
+    template<typename T, typename Op>
+    void launch_apply_binary_op(const TensorView<const T> lhs, const TensorView<const T> rhs,
+                                TensorView<T> dst, Op op);
 }
