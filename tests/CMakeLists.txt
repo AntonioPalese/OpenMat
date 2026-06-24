@@ -7,7 +7,13 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(googletest)
 
-add_executable(tensor_ops_test tensor_ops_test.cpp)
-target_link_libraries(tensor_ops_test PRIVATE OpenMat cuda cudart GTest::gtest_main)
+function(add_om_test target source)
+    add_executable(${target} ${source})
+    target_link_libraries(${target} PRIVATE OpenMat cuda cudart GTest::gtest_main)
+    add_test(NAME ${target} COMMAND ${target})
+endfunction()
 
-add_test(NAME tensor_ops_test COMMAND tensor_ops_test)
+add_om_test(test_arithmetic      test_arithmetic.cpp)
+add_om_test(test_fused_ops       test_fused_ops.cpp)
+add_om_test(test_device_transfer test_device_transfer.cpp)
+add_om_test(test_benchmarks      test_benchmarks.cpp)

@@ -66,8 +66,23 @@
 },
 {
   "directory": "/home/apalese/OpenMat/build/tests",
-  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -o CMakeFiles/tensor_ops_test.dir/tensor_ops_test.cpp.o -c /home/apalese/OpenMat/tests/tensor_ops_test.cpp",
-  "file": "/home/apalese/OpenMat/tests/tensor_ops_test.cpp"
+  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -o CMakeFiles/test_arithmetic.dir/test_arithmetic.cpp.o -c /home/apalese/OpenMat/tests/test_arithmetic.cpp",
+  "file": "/home/apalese/OpenMat/tests/test_arithmetic.cpp"
+},
+{
+  "directory": "/home/apalese/OpenMat/build/tests",
+  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -o CMakeFiles/test_fused_ops.dir/test_fused_ops.cpp.o -c /home/apalese/OpenMat/tests/test_fused_ops.cpp",
+  "file": "/home/apalese/OpenMat/tests/test_fused_ops.cpp"
+},
+{
+  "directory": "/home/apalese/OpenMat/build/tests",
+  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -o CMakeFiles/test_device_transfer.dir/test_device_transfer.cpp.o -c /home/apalese/OpenMat/tests/test_device_transfer.cpp",
+  "file": "/home/apalese/OpenMat/tests/test_device_transfer.cpp"
+},
+{
+  "directory": "/home/apalese/OpenMat/build/tests",
+  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -o CMakeFiles/test_benchmarks.dir/test_benchmarks.cpp.o -c /home/apalese/OpenMat/tests/test_benchmarks.cpp",
+  "file": "/home/apalese/OpenMat/tests/test_benchmarks.cpp"
 },
 {
   "directory": "/home/apalese/OpenMat/build/_deps/googletest-build/googlemock",
