@@ -27,7 +27,17 @@ namespace om
         Tensor(const std::vector<size_t>& shape, const Device& dv = Device(0, DEVICE_TYPE::CPU));
         Tensor(const Tensor& rhs); // copy
         Tensor(Tensor&& rhs); // move
-        ~Tensor();        
+        ~Tensor();
+
+        static Tensor<value_type> zeros(const std::vector<size_t>& shape,
+                                        const Device& dv = Device(0, DEVICE_TYPE::CPU));
+        static Tensor<value_type> ones(const std::vector<size_t>& shape,
+                                       const Device& dv = Device(0, DEVICE_TYPE::CPU));
+        static Tensor<value_type> full(const std::vector<size_t>& shape, value_type value,
+                                       const Device& dv = Device(0, DEVICE_TYPE::CPU));
+        static Tensor<value_type> from_vector(const std::vector<value_type>& data,
+                                              const std::vector<size_t>& shape,
+                                              const Device& dv = Device(0, DEVICE_TYPE::CPU));
         
         const value_type& operator()(std::initializer_list<size_t> indices) const
         {
@@ -95,6 +105,11 @@ namespace om
         Tensor<value_type> div(const value_type& scalar) const;      
         Tensor<value_type> operator/(const value_type& scalar) const;
 
+
+        value_type sum() const;
+        value_type mean() const;
+        value_type min() const;
+        value_type max() const;
 
         template<typename Op>
         Tensor<value_type> apply(Op op) const;

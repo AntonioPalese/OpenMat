@@ -5,10 +5,12 @@
 #include "ops/kernels/binary_op_macros.cuh"
 #include "ops/kernels/unary_op_macros.cuh"
 #include "ops/kernels/matmul_gpu.cuh"
+#include "ops/kernels/reduce_gpu.cuh"
 #include "ops/cpu/fill_cpu.h"
 #include "ops/cpu/binary_op_macros.h"
 #include "ops/cpu/unary_op_macros.h"
 #include "ops/cpu/matmul_cpu.h"
+#include "ops/cpu/reduce_cpu.h"
 
 
 #define DEFINE_DEVICE_DISPATCH_BINARY_INL(OP_NAME)\

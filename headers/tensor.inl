@@ -36,6 +36,48 @@ om::Tensor<value_type>::~Tensor()
 }
 
 template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::zeros(const std::vector<size_t>& shape, const Device& dv)
+{
+    Tensor<value_type> t(shape, dv);
+    t.fill(static_cast<value_type>(0));
+    return t;
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::ones(const std::vector<size_t>& shape, const Device& dv)
+{
+    Tensor<value_type> t(shape, dv);
+    t.fill(static_cast<value_type>(1));
+    return t;
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::full(const std::vector<size_t>& shape, value_type value, const Device& dv)
+{
+    Tensor<value_type> t(shape, dv);
+    t.fill(value);
+    return t;
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::from_vector(const std::vector<value_type>& data,
+                                                           const std::vector<size_t>& shape,
+                                                           const Device& dv)
+{
+    size_t expected = std::accumulate(shape.begin(), shape.end(), size_t{1}, std::multiplies<size_t>{});
+    if (data.size() != expected)
+        throw std::invalid_argument("from_vector: data size does not match shape");
+
+    Tensor<value_type> t(shape, dv);
+    if (dv.m_Dt == DEVICE_TYPE::CPU) {
+        std::memcpy(t.m_Data, data.data(), sizeof(value_type) * expected);
+    } else {
+        CUDA_CALL(cudaMemcpy(t.m_Data, data.data(), sizeof(value_type) * expected, cudaMemcpyHostToDevice));
+    }
+    return t;
+}
+
+template <typename value_type>
 om::Tensor<value_type> om::Tensor<value_type>::add(const Tensor<value_type> &rhs) const
 {
     Tensor<value_type> out(this->shape(), this->device());
@@ -191,6 +233,39 @@ om::Tensor<value_type> om::Tensor<value_type>::operator/(const value_type& scala
     return this->div(scalar);
 }
 ////
+
+template <typename value_type>
+value_type om::Tensor<value_type>::sum() const
+{
+    if (device_type() == DEVICE_TYPE::CPU)
+        return reduce_sum_cpu<value_type>(this->view());
+    return launch_reduce_sum<value_type>(this->view());
+}
+
+template <typename value_type>
+value_type om::Tensor<value_type>::mean() const
+{
+    value_type s = this->sum();
+    size_t n = this->size();
+    if (n == 0) throw std::invalid_argument("mean: empty tensor");
+    return static_cast<value_type>(static_cast<double>(s) / static_cast<double>(n));
+}
+
+template <typename value_type>
+value_type om::Tensor<value_type>::min() const
+{
+    if (device_type() == DEVICE_TYPE::CPU)
+        return reduce_min_cpu<value_type>(this->view());
+    return launch_reduce_min<value_type>(this->view());
+}
+
+template <typename value_type>
+value_type om::Tensor<value_type>::max() const
+{
+    if (device_type() == DEVICE_TYPE::CPU)
+        return reduce_max_cpu<value_type>(this->view());
+    return launch_reduce_max<value_type>(this->view());
+}
 
 template <typename value_type>
 template <typename Op>

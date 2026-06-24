@@ -278,8 +278,8 @@ static Tensor<T> load(const std::string& path); // corrispondente load
 |x| Alta | 4.2 — CPU path per fused ops (bug latente) |
 |x| Alta | 4.1 — Test per le API fused |
 |x| Alta | 3.1 — `.to()` / `.cpu()` / `.cuda()` |
-| | Alta | 3.2 — `zeros`, `ones`, `from_vector` |
-| | Media | 1.2 — Riduzioni (`sum`, `mean`, `max`) |
+|x| Alta | 3.2 — `zeros`, `ones`, `from_vector` |
+|x| Media | 1.2 — Riduzioni (`sum`, `mean`, `max`) |
 | | Media | 2.1 — `reshape`, `flatten` |
 | | Media | 4.3 — `relu`, `sigmoid` |
 | | Media | 2.2 — `transpose`, `permute` |
