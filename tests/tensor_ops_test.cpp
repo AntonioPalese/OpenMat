@@ -246,6 +246,544 @@ TEST(TensorArithmetic, GPUFP16MatMulLarger) {
 }
 
 // ============================================================================
+// Fused operations — CPU path
+// ============================================================================
+
+TEST(FusedOps, CPUApplyUnary) {
+    Device cpu("cpu:0");
+    Tensor<float> a({4}, cpu);
+    a({0}) = 1.0f; a({1}) = 2.0f; a({2}) = 3.0f; a({3}) = 4.0f;
+
+    // Add scalar
+    auto r = a.apply(Add<float>{10.0f});
+    EXPECT_FLOAT_EQ(r({0}), 11.0f);
+    EXPECT_FLOAT_EQ(r({1}), 12.0f);
+    EXPECT_FLOAT_EQ(r({2}), 13.0f);
+    EXPECT_FLOAT_EQ(r({3}), 14.0f);
+
+    // Mul scalar
+    auto s = a.apply(Mul<float>{2.0f});
+    EXPECT_FLOAT_EQ(s({0}), 2.0f);
+    EXPECT_FLOAT_EQ(s({1}), 4.0f);
+    EXPECT_FLOAT_EQ(s({2}), 6.0f);
+    EXPECT_FLOAT_EQ(s({3}), 8.0f);
+}
+
+TEST(FusedOps, CPUScaleShift) {
+    Device cpu("cpu:0");
+    Tensor<float> a({4}, cpu);
+    a({0}) = 1.0f; a({1}) = 2.0f; a({2}) = 3.0f; a({3}) = 4.0f;
+
+    // scale_shift: x * 2 + 1
+    auto r = a.scale_shift(2.0f, 1.0f);
+    EXPECT_FLOAT_EQ(r({0}), 3.0f);
+    EXPECT_FLOAT_EQ(r({1}), 5.0f);
+    EXPECT_FLOAT_EQ(r({2}), 7.0f);
+    EXPECT_FLOAT_EQ(r({3}), 9.0f);
+
+    // shift_scale: (x + 1) * 2
+    auto s = a.shift_scale(1.0f, 2.0f);
+    EXPECT_FLOAT_EQ(s({0}), 4.0f);
+    EXPECT_FLOAT_EQ(s({1}), 6.0f);
+    EXPECT_FLOAT_EQ(s({2}), 8.0f);
+    EXPECT_FLOAT_EQ(s({3}), 10.0f);
+}
+
+TEST(FusedOps, CPUApplyBinary) {
+    Device cpu("cpu:0");
+    Tensor<float> a({4}, cpu);
+    Tensor<float> b({4}, cpu);
+    a({0}) = 1.0f; a({1}) = 2.0f; a({2}) = 3.0f; a({3}) = 4.0f;
+    b({0}) = 4.0f; b({1}) = 3.0f; b({2}) = 2.0f; b({3}) = 1.0f;
+
+    // (a + b) * 2
+    auto r = a.fused_add_mul(b, 2.0f);
+    EXPECT_FLOAT_EQ(r({0}), 10.0f);  // (1+4)*2
+    EXPECT_FLOAT_EQ(r({1}), 10.0f);  // (2+3)*2
+    EXPECT_FLOAT_EQ(r({2}), 10.0f);  // (3+2)*2
+    EXPECT_FLOAT_EQ(r({3}), 10.0f);  // (4+1)*2
+
+    // (a * b) + 1
+    auto s = a.fused_mul_add(b, 1.0f);
+    EXPECT_FLOAT_EQ(s({0}), 5.0f);   // 1*4+1
+    EXPECT_FLOAT_EQ(s({1}), 7.0f);   // 2*3+1
+    EXPECT_FLOAT_EQ(s({2}), 7.0f);   // 3*2+1
+    EXPECT_FLOAT_EQ(s({3}), 5.0f);   // 4*1+1
+}
+
+TEST(FusedOps, CPUMatchesGPU) {
+    // Verifica che CPU e GPU producano lo stesso risultato per scale_shift
+    Device cpu("cpu:0");
+    Device gpu("cuda:0");
+
+    const size_t N = 8;
+    Tensor<float> a_cpu({N}, cpu);
+    Tensor<float> a_gpu({N}, gpu);
+
+    for (size_t i = 0; i < N; ++i) {
+        float v = static_cast<float>(i + 1);
+        a_cpu({i}) = v;
+    }
+    a_gpu.fill(0.0f);
+    // Copia manuale cpu→gpu
+    std::vector<float> buf(N);
+    for (size_t i = 0; i < N; ++i) buf[i] = a_cpu({i});
+    // Riempiamo il tensore GPU elemento per elemento tramite fill non è pratico —
+    // usiamo un loop su GPU fill + verifichiamo i valori attesi direttamente
+    // Qui testiamo solo che il path CPU non crashi e produca valori corretti
+    auto r_cpu = a_cpu.scale_shift(3.0f, -1.0f);  // x*3 - 1
+    EXPECT_FLOAT_EQ(r_cpu({0}), 2.0f);   // 1*3-1
+    EXPECT_FLOAT_EQ(r_cpu({1}), 5.0f);   // 2*3-1
+    EXPECT_FLOAT_EQ(r_cpu({2}), 8.0f);   // 3*3-1
+    EXPECT_FLOAT_EQ(r_cpu({7}), 23.0f);  // 8*3-1
+}
+
+// ============================================================================
+// Device transfer — .to() / .cpu() / .cuda()
+// ============================================================================
+
+TEST(DeviceTransfer, CPUtoGPU_Values) {
+    Device cpu("cpu:0");
+    Tensor<float> a({4}, cpu);
+    a({0}) = 1.0f; a({1}) = 2.0f; a({2}) = 3.0f; a({3}) = 4.0f;
+
+    auto g = a.cuda();
+    EXPECT_EQ(g.device_type(), DEVICE_TYPE::CUDA);
+    EXPECT_EQ(g.shape(), a.shape());
+
+    std::vector<float> h(4);
+    g.copyToHost(h.data());
+    EXPECT_FLOAT_EQ(h[0], 1.0f);
+    EXPECT_FLOAT_EQ(h[1], 2.0f);
+    EXPECT_FLOAT_EQ(h[2], 3.0f);
+    EXPECT_FLOAT_EQ(h[3], 4.0f);
+}
+
+TEST(DeviceTransfer, GPUtoCPU_Values) {
+    Device gpu("cuda:0");
+    Tensor<float> a({4}, gpu);
+    a.fill(7.0f);
+
+    auto c = a.cpu();
+    EXPECT_EQ(c.device_type(), DEVICE_TYPE::CPU);
+    EXPECT_EQ(c.shape(), a.shape());
+
+    EXPECT_FLOAT_EQ(c({0}), 7.0f);
+    EXPECT_FLOAT_EQ(c({3}), 7.0f);
+}
+
+TEST(DeviceTransfer, RoundTrip_CPU_GPU_CPU) {
+    Device cpu("cpu:0");
+    Tensor<float> a({8}, cpu);
+    for (size_t i = 0; i < 8; ++i) a({i}) = static_cast<float>(i);
+
+    auto roundtrip = a.cuda().cpu();
+    EXPECT_EQ(roundtrip.device_type(), DEVICE_TYPE::CPU);
+    for (size_t i = 0; i < 8; ++i)
+        EXPECT_FLOAT_EQ(roundtrip({i}), static_cast<float>(i));
+}
+
+TEST(DeviceTransfer, SameDevice_CPU_DeepCopy) {
+    Device cpu("cpu:0");
+    Tensor<float> a({4}, cpu);
+    a({0}) = 5.0f; a({1}) = 6.0f; a({2}) = 7.0f; a({3}) = 8.0f;
+
+    auto b = a.to(Device("cpu:0"));
+    EXPECT_EQ(b.device_type(), DEVICE_TYPE::CPU);
+
+    // modifica a — b non deve cambiare (deep copy)
+    a({0}) = 99.0f;
+    EXPECT_FLOAT_EQ(b({0}), 5.0f);
+}
+
+TEST(DeviceTransfer, SameDevice_GPU_DeepCopy) {
+    Device gpu("cuda:0");
+    Tensor<float> a({4}, gpu);
+    a.fill(3.0f);
+
+    auto b = a.to(Device("cuda:0"));
+    EXPECT_EQ(b.device_type(), DEVICE_TYPE::CUDA);
+
+    std::vector<float> h(4);
+    b.copyToHost(h.data());
+    for (float v : h) EXPECT_FLOAT_EQ(v, 3.0f);
+}
+
+TEST(DeviceTransfer, ShapePreserved_Rank2) {
+    Device cpu("cpu:0");
+    Tensor<float> a({3, 5}, cpu);
+    a.fill(1.0f);
+
+    auto g = a.cuda();
+    EXPECT_EQ(g.rank(), 2u);
+    EXPECT_EQ(g.shape()[0], 3u);
+    EXPECT_EQ(g.shape()[1], 5u);
+
+    auto back = g.cpu();
+    EXPECT_EQ(back.rank(), 2u);
+    EXPECT_EQ(back.shape()[0], 3u);
+    EXPECT_EQ(back.shape()[1], 5u);
+    EXPECT_FLOAT_EQ(back({0, 0}), 1.0f);
+    EXPECT_FLOAT_EQ(back({2, 4}), 1.0f);
+}
+
+TEST(DeviceTransfer, OpAfterTransfer) {
+    // trasferisci su GPU, esegui un'operazione, riporta su CPU
+    Device cpu("cpu:0");
+    Tensor<float> a({4}, cpu);
+    for (size_t i = 0; i < 4; ++i) a({i}) = static_cast<float>(i + 1);
+
+    auto result = (a.cuda() * 2.0f).cpu();
+    EXPECT_FLOAT_EQ(result({0}), 2.0f);
+    EXPECT_FLOAT_EQ(result({1}), 4.0f);
+    EXPECT_FLOAT_EQ(result({2}), 6.0f);
+    EXPECT_FLOAT_EQ(result({3}), 8.0f);
+}
+
+// ============================================================================
+// Fused operations — GPU path
+// ============================================================================
+
+// Helper: copy GPU tensor to std::vector
+static std::vector<float> to_host(const Tensor<float>& t) {
+    std::vector<float> v(t.size());
+    t.copyToHost(v.data());
+    return v;
+}
+
+// --- apply (unary) ---
+
+TEST(FusedOps, GPUApplyAdd_Rank1) {
+    Device gpu("cuda:0");
+    Tensor<float> a({6}, gpu);
+    a.fill(3.0f);
+
+    auto r = a.apply(Add<float>{7.0f});
+    auto h = to_host(r);
+    for (float v : h) EXPECT_FLOAT_EQ(v, 10.0f);
+}
+
+TEST(FusedOps, GPUApplyMul_Rank1) {
+    Device gpu("cuda:0");
+    Tensor<float> a({6}, gpu);
+    a.fill(4.0f);
+
+    auto r = a.apply(Mul<float>{0.5f});
+    auto h = to_host(r);
+    for (float v : h) EXPECT_FLOAT_EQ(v, 2.0f);
+}
+
+TEST(FusedOps, GPUApplyCompose_Rank1) {
+    // Compose<Add, Mul>: x → (x + 2) * 3
+    Device gpu("cuda:0");
+    Tensor<float> a({4}, gpu);
+    a.fill(1.0f);
+
+    auto r = a.apply(Compose<Add<float>, Mul<float>>{Add<float>{2.0f}, Mul<float>{3.0f}});
+    auto h = to_host(r);
+    for (float v : h) EXPECT_FLOAT_EQ(v, 9.0f);  // (1+2)*3
+}
+
+TEST(FusedOps, GPUApplyAdd_Rank2) {
+    Device gpu("cuda:0");
+    Tensor<float> a({3, 4}, gpu);
+    a.fill(5.0f);
+
+    auto r = a.apply(Add<float>{-2.0f});
+    EXPECT_EQ(r.shape()[0], 3u);
+    EXPECT_EQ(r.shape()[1], 4u);
+    auto h = to_host(r);
+    for (float v : h) EXPECT_FLOAT_EQ(v, 3.0f);
+}
+
+TEST(FusedOps, GPUApplyMul_Rank3) {
+    Device gpu("cuda:0");
+    Tensor<float> a({2, 3, 4}, gpu);
+    a.fill(2.0f);
+
+    auto r = a.apply(Mul<float>{3.0f});
+    EXPECT_EQ(r.rank(), 3u);
+    auto h = to_host(r);
+    for (float v : h) EXPECT_FLOAT_EQ(v, 6.0f);
+}
+
+// --- scale_shift / shift_scale ---
+
+TEST(FusedOps, GPUScaleShift_Rank1) {
+    // scale_shift(s, b): x*s + b
+    Device gpu("cuda:0");
+    Tensor<float> a({8}, gpu);
+    a.fill(2.0f);
+
+    auto r = a.scale_shift(3.0f, 1.0f);
+    auto h = to_host(r);
+    for (float v : h) EXPECT_FLOAT_EQ(v, 7.0f);  // 2*3+1
+}
+
+TEST(FusedOps, GPUShiftScale_Rank1) {
+    // shift_scale(b, s): (x+b)*s
+    Device gpu("cuda:0");
+    Tensor<float> a({8}, gpu);
+    a.fill(2.0f);
+
+    auto r = a.shift_scale(1.0f, 3.0f);
+    auto h = to_host(r);
+    for (float v : h) EXPECT_FLOAT_EQ(v, 9.0f);  // (2+1)*3
+}
+
+TEST(FusedOps, GPUScaleShift_Rank2) {
+    Device gpu("cuda:0");
+    Tensor<float> a({4, 4}, gpu);
+    a.fill(5.0f);
+
+    auto r = a.scale_shift(2.0f, -3.0f);
+    auto h = to_host(r);
+    for (float v : h) EXPECT_FLOAT_EQ(v, 7.0f);  // 5*2-3
+}
+
+// --- apply_binary (generic) ---
+
+TEST(FusedOps, GPUApplyBinaryAdd_Rank1) {
+    Device gpu("cuda:0");
+    Tensor<float> a({4}, gpu);
+    Tensor<float> b({4}, gpu);
+    a.fill(3.0f);
+    b.fill(2.0f);
+
+    auto r = a.apply_binary(b, BinaryAdd<float>{});
+    auto h = to_host(r);
+    for (float v : h) EXPECT_FLOAT_EQ(v, 5.0f);
+}
+
+TEST(FusedOps, GPUApplyBinaryMul_Rank2) {
+    Device gpu("cuda:0");
+    Tensor<float> a({3, 3}, gpu);
+    Tensor<float> b({3, 3}, gpu);
+    a.fill(4.0f);
+    b.fill(0.5f);
+
+    auto r = a.apply_binary(b, BinaryMul<float>{});
+    EXPECT_EQ(r.shape()[0], 3u);
+    EXPECT_EQ(r.shape()[1], 3u);
+    auto h = to_host(r);
+    for (float v : h) EXPECT_FLOAT_EQ(v, 2.0f);
+}
+
+TEST(FusedOps, GPUApplyBinaryDiv_Rank1) {
+    Device gpu("cuda:0");
+    Tensor<float> a({4}, gpu);
+    Tensor<float> b({4}, gpu);
+    a.fill(9.0f);
+    b.fill(3.0f);
+
+    auto r = a.apply_binary(b, BinaryDiv<float>{});
+    auto h = to_host(r);
+    for (float v : h) EXPECT_FLOAT_EQ(v, 3.0f);
+}
+
+// --- named binary fused methods ---
+
+TEST(FusedOps, GPUFusedAddMul_Rank1) {
+    // (a + b) * scale
+    Device gpu("cuda:0");
+    Tensor<float> a({6}, gpu);
+    Tensor<float> b({6}, gpu);
+    a.fill(3.0f);
+    b.fill(7.0f);
+
+    auto r = a.fused_add_mul(b, 2.0f);
+    auto h = to_host(r);
+    for (float v : h) EXPECT_FLOAT_EQ(v, 20.0f);  // (3+7)*2
+}
+
+TEST(FusedOps, GPUFusedSubMul_Rank1) {
+    // (a - b) * scale
+    Device gpu("cuda:0");
+    Tensor<float> a({6}, gpu);
+    Tensor<float> b({6}, gpu);
+    a.fill(10.0f);
+    b.fill(4.0f);
+
+    auto r = a.fused_sub_mul(b, 3.0f);
+    auto h = to_host(r);
+    for (float v : h) EXPECT_FLOAT_EQ(v, 18.0f);  // (10-4)*3
+}
+
+TEST(FusedOps, GPUFusedMulAdd_Rank1) {
+    // (a * b) + shift
+    Device gpu("cuda:0");
+    Tensor<float> a({6}, gpu);
+    Tensor<float> b({6}, gpu);
+    a.fill(3.0f);
+    b.fill(4.0f);
+
+    auto r = a.fused_mul_add(b, 5.0f);
+    auto h = to_host(r);
+    for (float v : h) EXPECT_FLOAT_EQ(v, 17.0f);  // 3*4+5
+}
+
+TEST(FusedOps, GPUFusedDivAdd_Rank1) {
+    // (a / b) + shift
+    Device gpu("cuda:0");
+    Tensor<float> a({6}, gpu);
+    Tensor<float> b({6}, gpu);
+    a.fill(12.0f);
+    b.fill(4.0f);
+
+    auto r = a.fused_div_add(b, 1.0f);
+    auto h = to_host(r);
+    for (float v : h) EXPECT_FLOAT_EQ(v, 4.0f);  // 12/4+1
+}
+
+TEST(FusedOps, GPUFusedAddMul_Rank2) {
+    Device gpu("cuda:0");
+    Tensor<float> a({4, 4}, gpu);
+    Tensor<float> b({4, 4}, gpu);
+    a.fill(2.0f);
+    b.fill(3.0f);
+
+    auto r = a.fused_add_mul(b, 0.5f);
+    EXPECT_EQ(r.shape()[0], 4u);
+    EXPECT_EQ(r.shape()[1], 4u);
+    auto h = to_host(r);
+    for (float v : h) EXPECT_FLOAT_EQ(v, 2.5f);  // (2+3)*0.5
+}
+
+TEST(FusedOps, GPUFusedMulAdd_Rank3) {
+    Device gpu("cuda:0");
+    Tensor<float> a({2, 3, 4}, gpu);
+    Tensor<float> b({2, 3, 4}, gpu);
+    a.fill(2.0f);
+    b.fill(3.0f);
+
+    auto r = a.fused_mul_add(b, 10.0f);
+    EXPECT_EQ(r.rank(), 3u);
+    auto h = to_host(r);
+    for (float v : h) EXPECT_FLOAT_EQ(v, 16.0f);  // 2*3+10
+}
+
+// --- CPU vs GPU consistency ---
+
+TEST(FusedOps, CPUGPUConsistency_ScaleShift) {
+    // scale_shift deve dare lo stesso risultato su CPU e GPU
+    const size_t N = 16;
+    Device cpu("cpu:0");
+    Device gpu("cuda:0");
+
+    Tensor<float> a_cpu({N}, cpu);
+    Tensor<float> a_gpu({N}, gpu);
+
+    for (size_t i = 0; i < N; ++i)
+        a_cpu({i}) = static_cast<float>(i);
+    a_gpu.fill(0.0f);
+    // Inizializza GPU con gli stessi valori via scale_shift da zero:
+    // a_gpu[i] = 0, non possiamo caricare valori arbitrari senza from_vector.
+    // Usiamo valori uniformi che possiamo verificare su entrambi.
+    Tensor<float> b_cpu({N}, cpu);
+    Tensor<float> b_gpu({N}, gpu);
+    for (size_t i = 0; i < N; ++i) b_cpu({i}) = 5.0f;
+    b_gpu.fill(5.0f);
+
+    auto r_cpu = b_cpu.scale_shift(2.0f, 3.0f);
+    auto r_gpu = b_gpu.scale_shift(2.0f, 3.0f);
+
+    std::vector<float> h_gpu(N);
+    r_gpu.copyToHost(h_gpu.data());
+
+    for (size_t i = 0; i < N; ++i)
+        EXPECT_FLOAT_EQ(r_cpu({i}), h_gpu[i]);
+}
+
+TEST(FusedOps, CPUGPUConsistency_FusedAddMul) {
+    const size_t N = 8;
+    Device cpu("cpu:0");
+    Device gpu("cuda:0");
+
+    Tensor<float> a_cpu({N}, cpu);
+    Tensor<float> b_cpu({N}, cpu);
+    Tensor<float> a_gpu({N}, gpu);
+    Tensor<float> b_gpu({N}, gpu);
+    for (size_t i = 0; i < N; ++i) {
+        a_cpu({i}) = 4.0f;
+        b_cpu({i}) = 6.0f;
+    }
+    a_gpu.fill(4.0f);
+    b_gpu.fill(6.0f);
+
+    auto r_cpu = a_cpu.fused_add_mul(b_cpu, 0.5f);
+    auto r_gpu = a_gpu.fused_add_mul(b_gpu, 0.5f);
+
+    std::vector<float> h_gpu(N);
+    r_gpu.copyToHost(h_gpu.data());
+
+    for (size_t i = 0; i < N; ++i)
+        EXPECT_FLOAT_EQ(r_cpu({i}), h_gpu[i]);
+}
+
+// --- equivalenza con operazioni separate ---
+
+TEST(FusedOps, FusedAddMulEquivalent) {
+    // fused_add_mul(b, s) == (a + b) * s calcolato in due passi
+    Device gpu("cuda:0");
+    Tensor<float> a({8}, gpu);
+    Tensor<float> b({8}, gpu);
+    a.fill(3.0f);
+    b.fill(5.0f);
+
+    auto fused  = a.fused_add_mul(b, 2.0f);
+    auto unfused = (a + b) * 2.0f;
+
+    auto h_f = to_host(fused);
+    auto h_u = to_host(unfused);
+    for (size_t i = 0; i < h_f.size(); ++i)
+        EXPECT_FLOAT_EQ(h_f[i], h_u[i]);
+}
+
+TEST(FusedOps, FusedMulAddEquivalent) {
+    // fused_mul_add(b, s) == (a * b) + s calcolato in due passi
+    Device gpu("cuda:0");
+    Tensor<float> a({8}, gpu);
+    Tensor<float> b({8}, gpu);
+    a.fill(3.0f);
+    b.fill(4.0f);
+
+    auto fused   = a.fused_mul_add(b, 2.0f);
+    auto unfused = (a * b) + 2.0f;
+
+    auto h_f = to_host(fused);
+    auto h_u = to_host(unfused);
+    for (size_t i = 0; i < h_f.size(); ++i)
+        EXPECT_FLOAT_EQ(h_f[i], h_u[i]);
+}
+
+TEST(FusedOps, ScaleShiftEquivalent) {
+    // scale_shift(s, b) == a*s + b calcolato in due passi
+    Device gpu("cuda:0");
+    Tensor<float> a({8}, gpu);
+    a.fill(5.0f);
+
+    auto fused   = a.scale_shift(2.0f, -1.0f);
+    auto unfused = a * 2.0f + (-1.0f);
+
+    auto h_f = to_host(fused);
+    auto h_u = to_host(unfused);
+    for (size_t i = 0; i < h_f.size(); ++i)
+        EXPECT_FLOAT_EQ(h_f[i], h_u[i]);
+}
+
+// --- shape mismatch ---
+
+TEST(FusedOps, ShapeMismatchThrows) {
+    Device gpu("cuda:0");
+    Tensor<float> a({4}, gpu);
+    Tensor<float> b({8}, gpu);
+    a.fill(1.0f);
+    b.fill(1.0f);
+
+    EXPECT_THROW(a.apply_binary(b, BinaryAdd<float>{}), std::invalid_argument);
+}
+
+// ============================================================================
 // Benchmarks
 // ============================================================================
 

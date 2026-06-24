@@ -8,25 +8,25 @@ namespace om
     template <typename T>
     struct Add {
         T a;
-        __device__ T operator()(T x) const { return x + a; }
+        __host__ __device__ T operator()(T x) const { return x + a; }
     };
 
     template <typename T>
     struct Mul {
         T b;
-        __device__ T operator()(T x) const { return x * b; }
+        __host__ __device__ T operator()(T x) const { return x * b; }
     };
 
     template <typename T>
     struct Div {
         T b;
-        __device__ T operator()(T x) const { return x / b; }
+        __host__ __device__ T operator()(T x) const { return x / b; }
     };
 
     template <typename T>
     struct Pow {
         T b;
-        __device__ T operator()(T x) const { return pow(x, b); }
+        __host__ __device__ T operator()(T x) const { return pow(x, b); }
     };
 
     template <typename F, typename G>
@@ -35,7 +35,7 @@ namespace om
         G g;
 
         template <typename T>
-        __device__ auto operator()(T x) const -> decltype(g(f(x))) { return g(f(x)); }
+        __host__ __device__ auto operator()(T x) const -> decltype(g(f(x))) { return g(f(x)); }
     };
 
     template<typename T, typename Op>
@@ -47,22 +47,22 @@ namespace om
 
     template <typename T>
     struct BinaryAdd {
-        __device__ T operator()(T x, T y) const { return x + y; }
+        __host__ __device__ T operator()(T x, T y) const { return x + y; }
     };
 
     template <typename T>
     struct BinarySub {
-        __device__ T operator()(T x, T y) const { return x - y; }
+        __host__ __device__ T operator()(T x, T y) const { return x - y; }
     };
 
     template <typename T>
     struct BinaryMul {
-        __device__ T operator()(T x, T y) const { return x * y; }
+        __host__ __device__ T operator()(T x, T y) const { return x * y; }
     };
 
     template <typename T>
     struct BinaryDiv {
-        __device__ T operator()(T x, T y) const { return x / y; }
+        __host__ __device__ T operator()(T x, T y) const { return x / y; }
     };
 
     // Compose a binary op with a unary post-op: dst[i] = post(bin(lhs[i], rhs[i]))
@@ -72,7 +72,7 @@ namespace om
         UnaryOp post;
 
         template <typename T>
-        __device__ auto operator()(T x, T y) const -> decltype(post(bin(x, y))) {
+        __host__ __device__ auto operator()(T x, T y) const -> decltype(post(bin(x, y))) {
             return post(bin(x, y));
         }
     };

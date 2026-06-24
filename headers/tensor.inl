@@ -197,7 +197,15 @@ template <typename Op>
 om::Tensor<value_type> om::Tensor<value_type>::apply(Op op) const
 {
     Tensor<value_type> out(this->shape(), this->device());
-    launch_apply_op<value_type>(this->view(), out.view(), op);
+    if (this->device_type() == DEVICE_TYPE::CPU) {
+        auto src = this->view();
+        auto dst = out.view();
+        size_t n = src.size();
+        for (size_t i = 0; i < n; ++i)
+            dst[i] = op(src[i]);
+    } else {
+        launch_apply_op<value_type>(this->view(), out.view(), op);
+    }
     return out;
 }
 
@@ -218,7 +226,18 @@ template <typename Op>
 om::Tensor<value_type> om::Tensor<value_type>::apply_binary(const Tensor<value_type>& rhs, Op op) const
 {
     Tensor<value_type> out(this->shape(), this->device());
-    launch_apply_binary_op<value_type>(this->view(), rhs.view(), out.view(), op);
+    if (this->device_type() == DEVICE_TYPE::CPU) {
+        auto lhs_v = this->view();
+        auto rhs_v = rhs.view();
+        auto dst_v = out.view();
+        if (!lhs_v.match(rhs_v))
+            throw std::invalid_argument("apply_binary: tensors must have the same shape");
+        size_t n = lhs_v.size();
+        for (size_t i = 0; i < n; ++i)
+            dst_v[i] = op(lhs_v[i], rhs_v[i]);
+    } else {
+        launch_apply_binary_op<value_type>(this->view(), rhs.view(), out.view(), op);
+    }
     return out;
 }
 
@@ -244,6 +263,38 @@ template <typename value_type>
 om::Tensor<value_type> om::Tensor<value_type>::fused_div_add(const Tensor<value_type>& rhs, value_type shift) const
 {
     return this->apply_binary(rhs, BinaryCompose<BinaryDiv<value_type>, Add<value_type>>{BinaryDiv<value_type>{}, Add<value_type>{shift}});
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::to(const Device& target) const
+{
+    if (target.m_Dt == this->device_type()) {
+        return Tensor<value_type>(*this);
+    }
+
+    Tensor<value_type> out(this->shape(), target);
+    size_t n = this->size();
+
+    if (this->device_type() == DEVICE_TYPE::CPU && target.m_Dt == DEVICE_TYPE::CUDA) {
+        CUDA_CALL(cudaMemcpy(out.m_Data, m_Data, sizeof(value_type) * n, cudaMemcpyHostToDevice));
+    } else {
+        // CUDA → CPU
+        CUDA_CALL(cudaMemcpy(out.m_Data, m_Data, sizeof(value_type) * n, cudaMemcpyDeviceToHost));
+    }
+
+    return out;
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::cpu() const
+{
+    return this->to(Device(0, DEVICE_TYPE::CPU));
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::cuda() const
+{
+    return this->to(Device(0, DEVICE_TYPE::CUDA));
 }
 
 template <typename value_type>

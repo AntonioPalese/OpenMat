@@ -114,8 +114,12 @@ namespace om
     
         Tensor<value_type> fused_div_add(const Tensor<value_type>& rhs, value_type shift) const;
 
+        Tensor<value_type> to(const Device& target) const;
+        Tensor<value_type> cpu() const;
+        Tensor<value_type> cuda() const;
+
         void copyToHost(value_type* dest) const;
-        void copyToDevice(value_type* dest) const;        
+        void copyToDevice(value_type* dest) const;
 
         Device device() const {return m_Device;}
 
