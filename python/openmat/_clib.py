@@ -11,11 +11,15 @@ def _find_lib():
     env = os.environ.get("OPENMAT_LIB")
     if env:
         return env
-    # 2. Relative to this file: ../../build/OpenMat.so
     here = pathlib.Path(__file__).resolve().parent
-    candidate = here.parent.parent / "build" / "OpenMat.so"
-    if candidate.exists():
-        return str(candidate)
+    # 2. Installed alongside this module (wheel / pip install)
+    bundled = here / "OpenMat.so"
+    if bundled.exists():
+        return str(bundled)
+    # 3. Development layout: <repo>/build/OpenMat.so
+    dev = here.parent.parent / "build" / "OpenMat.so"
+    if dev.exists():
+        return str(dev)
     raise FileNotFoundError(
         "Cannot find OpenMat.so. "
         "Build with ./compile.sh or set OPENMAT_LIB=/path/to/OpenMat.so"

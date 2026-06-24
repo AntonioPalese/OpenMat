@@ -2,3 +2,5 @@
 *.out
 *.cache*
 *.bin
+*.so
+**/__pycache__/**
