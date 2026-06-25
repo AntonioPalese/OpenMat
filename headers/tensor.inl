@@ -45,6 +45,22 @@ om::Tensor<value_type>::Tensor(Tensor &&rhs)
 }
 
 template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::operator=(Tensor&& rhs)
+{
+    if (this != &rhs) {
+        if (m_Data) m_Allocator->deallocate_async(m_Data, m_Stream.get());
+        m_Shape     = std::move(rhs.m_Shape);
+        m_Stride    = std::move(rhs.m_Stride);
+        m_Device    = rhs.m_Device;
+        m_Data      = rhs.m_Data;
+        m_Stream    = std::move(rhs.m_Stream);
+        m_Allocator = std::move(rhs.m_Allocator);
+        rhs.m_Data  = nullptr;
+    }
+    return *this;
+}
+
+template <typename value_type>
 om::Tensor<value_type>::~Tensor()
 {
     if (m_Data)

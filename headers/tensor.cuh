@@ -29,7 +29,8 @@ namespace om
 
         Tensor(const std::vector<size_t>& shape, const Device& dv = Device(0, DEVICE_TYPE::CPU));
         Tensor(const Tensor& rhs); // copy
-        Tensor(Tensor&& rhs); // move
+        Tensor(Tensor&& rhs);      // move
+        Tensor& operator=(Tensor&& rhs); // move-assign
         ~Tensor();
 
         static Tensor<value_type> zeros(const std::vector<size_t>& shape,
