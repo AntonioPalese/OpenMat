@@ -162,6 +162,16 @@ namespace om
         Tensor<value_type> cpu() const;
         Tensor<value_type> cuda() const;
 
+        // Async transfer overloads — caller must synchronize the stream before reading.
+        Tensor<value_type> to(const Device& target, const Stream& s) const;
+        Tensor<value_type> cpu(const Stream& s) const;
+        Tensor<value_type> cuda(const Stream& s) const;
+
+        static Tensor<value_type> from_vector(const std::vector<value_type>& data,
+                                              const std::vector<size_t>& shape,
+                                              const Device& dv,
+                                              const Stream& s);
+
         void copyToHost(value_type* dest) const;
         void copyToDevice(value_type* dest) const;
 
@@ -176,7 +186,12 @@ namespace om
         std::string dtype() const {return om::dtype<value_type>();}
         size_t size() const {return std::accumulate(m_Shape.begin(), m_Shape.end(), 1, std::multiplies<>());}
         size_t rank() const {return m_Shape.size();}
+        const Stream& stream() const {return m_Stream;}
+
     private:
+        // Internal constructor used by stream overloads to associate output
+        // tensors with the enqueuing stream for async alloc/free.
+        Tensor(const std::vector<size_t>& shape, const Device& dv, Stream stream);
 
         void _compute_strides();
         inline size_t _compute_flat_index(const std::vector<size_t>& indices) const;
@@ -185,6 +200,7 @@ namespace om
         std::vector<size_t> m_Stride;
         _Ty* m_Data;
         Device m_Device;
+        Stream m_Stream;
 
         std::unique_ptr<Allocator<_Ty>> m_Allocator;
     };

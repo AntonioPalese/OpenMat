@@ -153,12 +153,16 @@ namespace om {
         int blocks = static_cast<int>((n + REDUCE_BLOCK - 1) / REDUCE_BLOCK);
 
         T* d_partial = nullptr;
+#if CUDART_VERSION >= 11020
+        CUDA_CALL(cudaMallocAsync(&d_partial, blocks * sizeof(T), stream));
+#else
         CUDA_CALL(cudaMalloc(&d_partial, blocks * sizeof(T)));
+#endif
 
         reduce_sum_kernel<<<blocks, REDUCE_BLOCK, 0, stream>>>(src.data, d_partial, n);
         CUDA_CHECK;
 
-        // Must sync before D→H copy; use stream-specific sync when a stream is provided
+        // Must sync before D→H copy
         if (stream != nullptr)
             cudaStreamSynchronize(stream);
         else
@@ -166,7 +170,12 @@ namespace om {
 
         std::vector<T> h(blocks);
         CUDA_CALL(cudaMemcpy(h.data(), d_partial, blocks * sizeof(T), cudaMemcpyDeviceToHost));
+
+#if CUDART_VERSION >= 11020
+        CUDA_CALL(cudaFreeAsync(d_partial, stream));
+#else
         CUDA_CALL(cudaFree(d_partial));
+#endif
 
         T result = static_cast<T>(0);
         for (T v : h) result = result + v;
@@ -188,7 +197,11 @@ namespace om {
         int blocks = static_cast<int>((n + REDUCE_BLOCK - 1) / REDUCE_BLOCK);
 
         T* d_partial = nullptr;
+#if CUDART_VERSION >= 11020
+        CUDA_CALL(cudaMallocAsync(&d_partial, blocks * sizeof(T), stream));
+#else
         CUDA_CALL(cudaMalloc(&d_partial, blocks * sizeof(T)));
+#endif
 
         reduce_min_kernel<<<blocks, REDUCE_BLOCK, 0, stream>>>(src.data, d_partial, n, identity);
         CUDA_CHECK;
@@ -200,7 +213,12 @@ namespace om {
 
         std::vector<T> h(blocks);
         CUDA_CALL(cudaMemcpy(h.data(), d_partial, blocks * sizeof(T), cudaMemcpyDeviceToHost));
+
+#if CUDART_VERSION >= 11020
+        CUDA_CALL(cudaFreeAsync(d_partial, stream));
+#else
         CUDA_CALL(cudaFree(d_partial));
+#endif
 
         T result = identity;
         for (T v : h) if (v < result) result = v;
@@ -222,7 +240,11 @@ namespace om {
         int blocks = static_cast<int>((n + REDUCE_BLOCK - 1) / REDUCE_BLOCK);
 
         T* d_partial = nullptr;
+#if CUDART_VERSION >= 11020
+        CUDA_CALL(cudaMallocAsync(&d_partial, blocks * sizeof(T), stream));
+#else
         CUDA_CALL(cudaMalloc(&d_partial, blocks * sizeof(T)));
+#endif
 
         reduce_max_kernel<<<blocks, REDUCE_BLOCK, 0, stream>>>(src.data, d_partial, n, identity);
         CUDA_CHECK;
@@ -234,7 +256,12 @@ namespace om {
 
         std::vector<T> h(blocks);
         CUDA_CALL(cudaMemcpy(h.data(), d_partial, blocks * sizeof(T), cudaMemcpyDeviceToHost));
+
+#if CUDART_VERSION >= 11020
+        CUDA_CALL(cudaFreeAsync(d_partial, stream));
+#else
         CUDA_CALL(cudaFree(d_partial));
+#endif
 
         T result = identity;
         for (T v : h) if (v > result) result = v;
@@ -253,7 +280,11 @@ namespace om {
 
         int blocks = static_cast<int>((n + REDUCE_BLOCK - 1) / REDUCE_BLOCK);
         float16_t* d_partial = nullptr;
+#if CUDART_VERSION >= 11020
+        CUDA_CALL(cudaMallocAsync(&d_partial, blocks * sizeof(float16_t), stream));
+#else
         CUDA_CALL(cudaMalloc(&d_partial, blocks * sizeof(float16_t)));
+#endif
 
         reduce_min_kernel<<<blocks, REDUCE_BLOCK, 0, stream>>>(src.data, d_partial, n, identity);
         CUDA_CHECK;
@@ -263,7 +294,12 @@ namespace om {
 
         std::vector<float16_t> h(blocks);
         CUDA_CALL(cudaMemcpy(h.data(), d_partial, blocks * sizeof(float16_t), cudaMemcpyDeviceToHost));
+
+#if CUDART_VERSION >= 11020
+        CUDA_CALL(cudaFreeAsync(d_partial, stream));
+#else
         CUDA_CALL(cudaFree(d_partial));
+#endif
 
         float16_t result = identity;
         for (float16_t v : h) if (float(v) < float(result)) result = v;
@@ -280,7 +316,11 @@ namespace om {
 
         int blocks = static_cast<int>((n + REDUCE_BLOCK - 1) / REDUCE_BLOCK);
         float16_t* d_partial = nullptr;
+#if CUDART_VERSION >= 11020
+        CUDA_CALL(cudaMallocAsync(&d_partial, blocks * sizeof(float16_t), stream));
+#else
         CUDA_CALL(cudaMalloc(&d_partial, blocks * sizeof(float16_t)));
+#endif
 
         reduce_max_kernel<<<blocks, REDUCE_BLOCK, 0, stream>>>(src.data, d_partial, n, identity);
         CUDA_CHECK;
@@ -290,7 +330,12 @@ namespace om {
 
         std::vector<float16_t> h(blocks);
         CUDA_CALL(cudaMemcpy(h.data(), d_partial, blocks * sizeof(float16_t), cudaMemcpyDeviceToHost));
+
+#if CUDART_VERSION >= 11020
+        CUDA_CALL(cudaFreeAsync(d_partial, stream));
+#else
         CUDA_CALL(cudaFree(d_partial));
+#endif
 
         float16_t result = identity;
         for (float16_t v : h) if (float(v) > float(result)) result = v;

@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 #include <stdexcept>
+#include <cuda_runtime.h>
 
 namespace om
 {
@@ -14,11 +15,31 @@ namespace om
         virtual T* allocate(size_t count) = 0;
         virtual void deallocate(T* ptr) = 0;
 
-        virtual void copy(T*dst, const T* src, size_t count) = 0;
+        virtual void copy(T* dst, const T* src, size_t count) = 0;
 
         virtual void copyFromCurrentLoc(T* dst, const T* src, std::size_t count) const = 0;
+
+        // Stream-aware async variants. Default implementations fall back to the
+        // synchronous methods so subclasses only override what they support.
+        virtual T* allocate_async(size_t count, cudaStream_t stream) {
+            return this->allocate(count);
+        }
+        virtual void deallocate_async(T* ptr, cudaStream_t stream) {
+            this->deallocate(ptr);
+        }
+        virtual void copy_async(T* dst, const T* src, size_t count, cudaStream_t stream) {
+            this->copy(dst, src, count);
+        }
+        virtual void copy_host_to_device_async(T* dst, const T* src, size_t count, cudaStream_t stream) {
+            // Default: synchronous H2D copy (overridden by CpuAllocator for pinned src)
+            this->copyFromCurrentLoc(dst, src, count);
+        }
+        virtual void copy_device_to_host_async(T* dst, const T* src, size_t count, cudaStream_t stream) {
+            // Default: synchronous D2H copy (overridden by GpuAllocator)
+            this->copyFromCurrentLoc(dst, src, count);
+        }
     };
-    
+
     template<typename T>
     class CpuAllocator : public Allocator<T>
     {
@@ -26,9 +47,11 @@ namespace om
         virtual T* allocate(size_t count) override;
         virtual void deallocate(T* ptr) override;
 
-        virtual void copy(T*dst, const T* src, size_t count) override;
+        virtual void copy(T* dst, const T* src, size_t count) override;
 
         virtual void copyFromCurrentLoc(T* dst, const T* src, std::size_t count) const override;
+
+        virtual void copy_host_to_device_async(T* dst, const T* src, size_t count, cudaStream_t stream) override;
     };
 
     template<typename T>
@@ -38,9 +61,15 @@ namespace om
         virtual T* allocate(size_t count) override;
         virtual void deallocate(T* ptr) override;
 
-        virtual void copy(T*dst, const T* src, size_t count) override;
+        virtual void copy(T* dst, const T* src, size_t count) override;
 
         virtual void copyFromCurrentLoc(T* dst, const T* src, std::size_t count) const override;
+
+        virtual T* allocate_async(size_t count, cudaStream_t stream) override;
+        virtual void deallocate_async(T* ptr, cudaStream_t stream) override;
+        virtual void copy_async(T* dst, const T* src, size_t count, cudaStream_t stream) override;
+        virtual void copy_host_to_device_async(T* dst, const T* src, size_t count, cudaStream_t stream) override;
+        virtual void copy_device_to_host_async(T* dst, const T* src, size_t count, cudaStream_t stream) override;
     };
 
     template<typename T>
