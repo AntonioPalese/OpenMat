@@ -16,5 +16,5 @@ namespace om
     __global__ void fill_kernel_nd(DeviceTensorView<T> tensor, T value);
 
     template<typename T>
-    void launch_fill(TensorView<T> tensor, T value);
+    void launch_fill(TensorView<T> tensor, T value, cudaStream_t stream = 0);
 }

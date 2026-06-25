@@ -16,6 +16,7 @@
 #include "ops/kernels/fused_op.cuh"
 #include "ops/kernels/transpose_gpu.cuh"
 #include "ops/cpu/transpose_cpu.h"
+#include "stream.h"
 
 
 namespace om
@@ -110,6 +111,31 @@ namespace om
 
         Tensor<value_type> transpose() const;
         Tensor<value_type> permute(const std::vector<size_t>& axes) const;
+
+        // ── Stream overloads ────────────────────────────────────────────────
+        // All return a new Tensor; the caller is responsible for synchronizing
+        // the stream before reading results.
+
+        Tensor<value_type> add(const Tensor<value_type>& rhs, const Stream& s) const;
+        Tensor<value_type> sub(const Tensor<value_type>& rhs, const Stream& s) const;
+        Tensor<value_type> mul(const Tensor<value_type>& rhs, const Stream& s) const;
+        Tensor<value_type> div(const Tensor<value_type>& rhs, const Stream& s) const;
+
+        Tensor<value_type> add(const value_type& scalar, const Stream& s) const;
+        Tensor<value_type> sub(const value_type& scalar, const Stream& s) const;
+        Tensor<value_type> mul(const value_type& scalar, const Stream& s) const;
+        Tensor<value_type> div(const value_type& scalar, const Stream& s) const;
+
+        Tensor<value_type> matmul(const Tensor<value_type>& rhs, const Stream& s) const;
+
+        Tensor<value_type> transpose(const Stream& s) const;
+        Tensor<value_type> permute(const std::vector<size_t>& axes, const Stream& s) const;
+
+        template<typename Op>
+        Tensor<value_type> apply(Op op, const Stream& s) const;
+
+        Tensor<value_type> relu(const Stream& s) const;
+        Tensor<value_type> sigmoid(const Stream& s) const;
 
         template<typename Op>
         Tensor<value_type> apply(Op op) const;

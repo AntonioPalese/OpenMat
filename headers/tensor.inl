@@ -460,6 +460,138 @@ void om::Tensor<value_type>::copyToDevice(value_type *dest) const
         throw std::runtime_error("Tensor::copyToDevice: memory already on device");
 }
 
+// ── Stream overload implementations ─────────────────────────────────────────
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::add(const Tensor<value_type>& rhs, const Stream& s) const
+{
+    Tensor<value_type> out(this->shape(), this->device());
+    launch_add<value_type>(this->view(), rhs.view(), out.view(), s.get());
+    return out;
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::sub(const Tensor<value_type>& rhs, const Stream& s) const
+{
+    Tensor<value_type> out(this->shape(), this->device());
+    launch_sub<value_type>(this->view(), rhs.view(), out.view(), s.get());
+    return out;
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::mul(const Tensor<value_type>& rhs, const Stream& s) const
+{
+    Tensor<value_type> out(this->shape(), this->device());
+    launch_mul<value_type>(this->view(), rhs.view(), out.view(), s.get());
+    return out;
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::div(const Tensor<value_type>& rhs, const Stream& s) const
+{
+    Tensor<value_type> out(this->shape(), this->device());
+    launch_div<value_type>(this->view(), rhs.view(), out.view(), s.get());
+    return out;
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::add(const value_type& scalar, const Stream& s) const
+{
+    Tensor<value_type> out(this->shape(), this->device());
+    launch_add_k<value_type>(this->view(), scalar, out.view(), s.get());
+    return out;
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::sub(const value_type& scalar, const Stream& s) const
+{
+    Tensor<value_type> out(this->shape(), this->device());
+    launch_sub_k<value_type>(this->view(), scalar, out.view(), s.get());
+    return out;
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::mul(const value_type& scalar, const Stream& s) const
+{
+    Tensor<value_type> out(this->shape(), this->device());
+    launch_mul_k<value_type>(this->view(), scalar, out.view(), s.get());
+    return out;
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::div(const value_type& scalar, const Stream& s) const
+{
+    Tensor<value_type> out(this->shape(), this->device());
+    launch_div_k<value_type>(this->view(), scalar, out.view(), s.get());
+    return out;
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::matmul(const Tensor<value_type>& rhs, const Stream& s) const
+{
+    if (this->rank() != 2 || rhs.rank() != 2)
+        throw std::runtime_error("matmul: both tensors must be 2D matrices");
+    size_t M = m_Shape[0], K = m_Shape[1], K2 = rhs.shape()[0], N = rhs.shape()[1];
+    if (K != K2)
+        throw std::runtime_error("matmul: inner dimensions must match");
+    Tensor<value_type> out({M, N}, this->device());
+    launch_matmul<value_type>(this->view(), rhs.view(), out.view(), s.get());
+    return out;
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::transpose(const Stream& s) const
+{
+    if (this->rank() != 2)
+        throw std::runtime_error("transpose: tensor must be rank-2");
+    size_t M = m_Shape[0], N = m_Shape[1];
+    Tensor<value_type> out({N, M}, this->device());
+    launch_transpose<value_type>(this->view(), out.view(), s.get());
+    return out;
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::permute(const std::vector<size_t>& axes, const Stream& s) const
+{
+    size_t r = this->rank();
+    if (axes.size() != r)
+        throw std::invalid_argument("permute: axes length must match tensor rank");
+    std::vector<bool> seen(r, false);
+    for (size_t a : axes) {
+        if (a >= r) throw std::out_of_range("permute: axis value out of range");
+        if (seen[a]) throw std::invalid_argument("permute: duplicate axis");
+        seen[a] = true;
+    }
+    std::vector<size_t> out_shape(r);
+    for (size_t d = 0; d < r; ++d) out_shape[d] = m_Shape[axes[d]];
+    Tensor<value_type> out(out_shape, this->device());
+    launch_permute<value_type>(this->view(), out.view(), axes.data(), r, s.get());
+    return out;
+}
+
+template <typename value_type>
+template <typename Op>
+om::Tensor<value_type> om::Tensor<value_type>::apply(Op op, const Stream& s) const
+{
+    Tensor<value_type> out(this->shape(), this->device());
+    launch_apply_op<value_type>(this->view(), out.view(), op, s.get());
+    return out;
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::relu(const Stream& s) const
+{
+    return this->apply(ReLU<value_type>{}, s);
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::sigmoid(const Stream& s) const
+{
+    return this->apply(Sigmoid<value_type>{}, s);
+}
+
+// ── End stream overloads ─────────────────────────────────────────────────────
+
 template <typename value_type>
 om::Tensor<value_type> om::Tensor<value_type>::transpose() const
 {

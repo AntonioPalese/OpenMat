@@ -67,7 +67,7 @@ namespace om {
     }
 
     template <typename T, typename Op>
-    void launch_apply_op(const TensorView<const T> src, TensorView<T> dst, Op op)
+    void launch_apply_op(const TensorView<const T> src, TensorView<T> dst, Op op, cudaStream_t stream)
     {
         if (!src.match(dst))
             throw std::invalid_argument("Source and destination must have the same shape");
@@ -78,32 +78,32 @@ namespace om {
             {
                 dim3 threads(16);
                 dim3 blocks((dst.shape[0] + 15) / 16);
-                apply_op_rank1<<<blocks, threads>>>(src.as_device_tw(), dst.as_device_tw(), op);
+                apply_op_rank1<<<blocks, threads, 0, stream>>>(src.as_device_tw(), dst.as_device_tw(), op);
             }
             break;
         case 2:
             {
                 dim3 threads(16, 16);
                 dim3 blocks((dst.shape[1] + 15) / 16, (dst.shape[0] + 15) / 16);
-                apply_op_rank2<<<blocks, threads>>>(src.as_device_tw(), dst.as_device_tw(), op);
+                apply_op_rank2<<<blocks, threads, 0, stream>>>(src.as_device_tw(), dst.as_device_tw(), op);
             }
             break;
         case 3:
             {
-                dim3 threads(8, 8, 8); // 512 threads per block
+                dim3 threads(8, 8, 8);
                 dim3 blocks((dst.shape[2] + 7) / 8, (dst.shape[1] + 7) / 8, (dst.shape[0] + 7) / 8);
-                apply_op_rank3<<<blocks, threads>>>(src.as_device_tw(), dst.as_device_tw(), op);
+                apply_op_rank3<<<blocks, threads, 0, stream>>>(src.as_device_tw(), dst.as_device_tw(), op);
             }
             break;
         case 4:
             {
-                dim3 threads(8, 8, dst.shape[1] < 8 ? dst.shape[1] : 8); // avoid large z
+                dim3 threads(8, 8, dst.shape[1] < 8 ? dst.shape[1] : 8);
                 dim3 blocks(
                     (dst.shape[3] + threads.x - 1) / threads.x,
                     (dst.shape[2] + threads.y - 1) / threads.y,
                     dst.shape[0]
                 );
-                apply_op_rank4<<<blocks, threads>>>(src.as_device_tw(), dst.as_device_tw(), op);
+                apply_op_rank4<<<blocks, threads, 0, stream>>>(src.as_device_tw(), dst.as_device_tw(), op);
             }
             break;
         default:
@@ -111,12 +111,12 @@ namespace om {
                 size_t total_elements = dst.size();
                 dim3 threads(256);
                 dim3 blocks((total_elements + threads.x - 1) / threads.x);
-                apply_op_nd<<<blocks, threads>>>(src.as_device_tw(), dst.as_device_tw(), op);
+                apply_op_nd<<<blocks, threads, 0, stream>>>(src.as_device_tw(), dst.as_device_tw(), op);
             }
             break;
         }
         CUDA_CHECK;
-        cudaDeviceSynchronize();
+        if (stream == nullptr) cudaDeviceSynchronize();
     }
 
     // ---------------------------------------------------------------------------
@@ -193,7 +193,7 @@ namespace om {
 
     template <typename T, typename Op>
     void launch_apply_binary_op(const TensorView<const T> lhs, const TensorView<const T> rhs,
-                                TensorView<T> dst, Op op)
+                                TensorView<T> dst, Op op, cudaStream_t stream)
     {
         if (!lhs.match(dst) || !rhs.match(dst))
             throw std::invalid_argument("launch_apply_binary_op: all tensors must have the same shape");
@@ -204,21 +204,21 @@ namespace om {
             {
                 dim3 threads(256);
                 dim3 blocks((dst.shape[0] + 255) / 256);
-                apply_binary_op_rank1<<<blocks, threads>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw(), op);
+                apply_binary_op_rank1<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw(), op);
             }
             break;
         case 2:
             {
                 dim3 threads(16, 16);
                 dim3 blocks((dst.shape[1] + 15) / 16, (dst.shape[0] + 15) / 16);
-                apply_binary_op_rank2<<<blocks, threads>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw(), op);
+                apply_binary_op_rank2<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw(), op);
             }
             break;
         case 3:
             {
                 dim3 threads(8, 8, 8);
                 dim3 blocks((dst.shape[2] + 7) / 8, (dst.shape[1] + 7) / 8, (dst.shape[0] + 7) / 8);
-                apply_binary_op_rank3<<<blocks, threads>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw(), op);
+                apply_binary_op_rank3<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw(), op);
             }
             break;
         case 4:
@@ -229,7 +229,7 @@ namespace om {
                     (dst.shape[2] + threads.y - 1) / threads.y,
                     dst.shape[0]
                 );
-                apply_binary_op_rank4<<<blocks, threads>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw(), op);
+                apply_binary_op_rank4<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw(), op);
             }
             break;
         default:
@@ -237,23 +237,23 @@ namespace om {
                 size_t total = dst.size();
                 dim3 threads(256);
                 dim3 blocks((total + 255) / 256);
-                apply_binary_op_nd<<<blocks, threads>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw(), op);
+                apply_binary_op_nd<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw(), op);
             }
             break;
         }
         CUDA_CHECK;
-        cudaDeviceSynchronize();
+        if (stream == nullptr) cudaDeviceSynchronize();
     }
 
 #define INSTANTIATE_BINARY_FUSED(T) \
-    template void launch_apply_binary_op<T>(const TensorView<const T>, const TensorView<const T>, TensorView<T>, BinaryAdd<T>); \
-    template void launch_apply_binary_op<T>(const TensorView<const T>, const TensorView<const T>, TensorView<T>, BinarySub<T>); \
-    template void launch_apply_binary_op<T>(const TensorView<const T>, const TensorView<const T>, TensorView<T>, BinaryMul<T>); \
-    template void launch_apply_binary_op<T>(const TensorView<const T>, const TensorView<const T>, TensorView<T>, BinaryDiv<T>); \
-    template void launch_apply_binary_op<T>(const TensorView<const T>, const TensorView<const T>, TensorView<T>, BinaryCompose<BinaryAdd<T>, Mul<T>>); \
-    template void launch_apply_binary_op<T>(const TensorView<const T>, const TensorView<const T>, TensorView<T>, BinaryCompose<BinarySub<T>, Mul<T>>); \
-    template void launch_apply_binary_op<T>(const TensorView<const T>, const TensorView<const T>, TensorView<T>, BinaryCompose<BinaryMul<T>, Add<T>>); \
-    template void launch_apply_binary_op<T>(const TensorView<const T>, const TensorView<const T>, TensorView<T>, BinaryCompose<BinaryDiv<T>, Add<T>>);
+    template void launch_apply_binary_op<T>(const TensorView<const T>, const TensorView<const T>, TensorView<T>, BinaryAdd<T>,                          cudaStream_t); \
+    template void launch_apply_binary_op<T>(const TensorView<const T>, const TensorView<const T>, TensorView<T>, BinarySub<T>,                          cudaStream_t); \
+    template void launch_apply_binary_op<T>(const TensorView<const T>, const TensorView<const T>, TensorView<T>, BinaryMul<T>,                          cudaStream_t); \
+    template void launch_apply_binary_op<T>(const TensorView<const T>, const TensorView<const T>, TensorView<T>, BinaryDiv<T>,                          cudaStream_t); \
+    template void launch_apply_binary_op<T>(const TensorView<const T>, const TensorView<const T>, TensorView<T>, BinaryCompose<BinaryAdd<T>, Mul<T>>,   cudaStream_t); \
+    template void launch_apply_binary_op<T>(const TensorView<const T>, const TensorView<const T>, TensorView<T>, BinaryCompose<BinarySub<T>, Mul<T>>,   cudaStream_t); \
+    template void launch_apply_binary_op<T>(const TensorView<const T>, const TensorView<const T>, TensorView<T>, BinaryCompose<BinaryMul<T>, Add<T>>,   cudaStream_t); \
+    template void launch_apply_binary_op<T>(const TensorView<const T>, const TensorView<const T>, TensorView<T>, BinaryCompose<BinaryDiv<T>, Add<T>>,   cudaStream_t);
 
     INSTANTIATE_BINARY_FUSED(float)
     INSTANTIATE_BINARY_FUSED(int)
@@ -261,44 +261,44 @@ namespace om {
     INSTANTIATE_BINARY_FUSED(float16_t)
 
     // Explicit instantiations — Add
-    template void launch_apply_op<float>(const TensorView<const float> src, TensorView<float> dst, Add<float> op);
-    template void launch_apply_op<int>(const TensorView<const int> src, TensorView<int> dst, Add<int> op);
-    template void launch_apply_op<char>(const TensorView<const char> src, TensorView<char> dst, Add<char> op);
-    template void launch_apply_op<float16_t>(const TensorView<const float16_t> src, TensorView<float16_t> dst, Add<float16_t> op);
+    template void launch_apply_op<float>    (const TensorView<const float>,     TensorView<float>,     Add<float>,     cudaStream_t);
+    template void launch_apply_op<int>      (const TensorView<const int>,       TensorView<int>,       Add<int>,       cudaStream_t);
+    template void launch_apply_op<char>     (const TensorView<const char>,      TensorView<char>,      Add<char>,      cudaStream_t);
+    template void launch_apply_op<float16_t>(const TensorView<const float16_t>, TensorView<float16_t>, Add<float16_t>, cudaStream_t);
 
     // Explicit instantiations — Mul
-    template void launch_apply_op<float>(const TensorView<const float> src, TensorView<float> dst, Mul<float> op);
-    template void launch_apply_op<int>(const TensorView<const int> src, TensorView<int> dst, Mul<int> op);
-    template void launch_apply_op<char>(const TensorView<const char> src, TensorView<char> dst, Mul<char> op);
-    template void launch_apply_op<float16_t>(const TensorView<const float16_t> src, TensorView<float16_t> dst, Mul<float16_t> op);
+    template void launch_apply_op<float>    (const TensorView<const float>,     TensorView<float>,     Mul<float>,     cudaStream_t);
+    template void launch_apply_op<int>      (const TensorView<const int>,       TensorView<int>,       Mul<int>,       cudaStream_t);
+    template void launch_apply_op<char>     (const TensorView<const char>,      TensorView<char>,      Mul<char>,      cudaStream_t);
+    template void launch_apply_op<float16_t>(const TensorView<const float16_t>, TensorView<float16_t>, Mul<float16_t>, cudaStream_t);
 
     // Explicit instantiations — Div
-    template void launch_apply_op<float>(const TensorView<const float> src, TensorView<float> dst, Div<float> op);
-    template void launch_apply_op<int>(const TensorView<const int> src, TensorView<int> dst, Div<int> op);
-    template void launch_apply_op<char>(const TensorView<const char> src, TensorView<char> dst, Div<char> op);
-    template void launch_apply_op<float16_t>(const TensorView<const float16_t> src, TensorView<float16_t> dst, Div<float16_t> op);
+    template void launch_apply_op<float>    (const TensorView<const float>,     TensorView<float>,     Div<float>,     cudaStream_t);
+    template void launch_apply_op<int>      (const TensorView<const int>,       TensorView<int>,       Div<int>,       cudaStream_t);
+    template void launch_apply_op<char>     (const TensorView<const char>,      TensorView<char>,      Div<char>,      cudaStream_t);
+    template void launch_apply_op<float16_t>(const TensorView<const float16_t>, TensorView<float16_t>, Div<float16_t>, cudaStream_t);
 
     // Explicit instantiations — scale_shift: Compose<Mul, Add>
-    template void launch_apply_op<float>(const TensorView<const float> src, TensorView<float> dst, Compose<Mul<float>, Add<float>> op);
-    template void launch_apply_op<int>(const TensorView<const int> src, TensorView<int> dst, Compose<Mul<int>, Add<int>> op);
-    template void launch_apply_op<char>(const TensorView<const char> src, TensorView<char> dst, Compose<Mul<char>, Add<char>> op);
-    template void launch_apply_op<float16_t>(const TensorView<const float16_t> src, TensorView<float16_t> dst, Compose<Mul<float16_t>, Add<float16_t>> op);
+    template void launch_apply_op<float>    (const TensorView<const float>,     TensorView<float>,     Compose<Mul<float>,     Add<float>>,     cudaStream_t);
+    template void launch_apply_op<int>      (const TensorView<const int>,       TensorView<int>,       Compose<Mul<int>,       Add<int>>,       cudaStream_t);
+    template void launch_apply_op<char>     (const TensorView<const char>,      TensorView<char>,      Compose<Mul<char>,      Add<char>>,      cudaStream_t);
+    template void launch_apply_op<float16_t>(const TensorView<const float16_t>, TensorView<float16_t>, Compose<Mul<float16_t>, Add<float16_t>>, cudaStream_t);
 
     // Explicit instantiations — shift_scale: Compose<Add, Mul>
-    template void launch_apply_op<float>(const TensorView<const float> src, TensorView<float> dst, Compose<Add<float>, Mul<float>> op);
-    template void launch_apply_op<int>(const TensorView<const int> src, TensorView<int> dst, Compose<Add<int>, Mul<int>> op);
-    template void launch_apply_op<char>(const TensorView<const char> src, TensorView<char> dst, Compose<Add<char>, Mul<char>> op);
-    template void launch_apply_op<float16_t>(const TensorView<const float16_t> src, TensorView<float16_t> dst, Compose<Add<float16_t>, Mul<float16_t>> op);
+    template void launch_apply_op<float>    (const TensorView<const float>,     TensorView<float>,     Compose<Add<float>,     Mul<float>>,     cudaStream_t);
+    template void launch_apply_op<int>      (const TensorView<const int>,       TensorView<int>,       Compose<Add<int>,       Mul<int>>,       cudaStream_t);
+    template void launch_apply_op<char>     (const TensorView<const char>,      TensorView<char>,      Compose<Add<char>,      Mul<char>>,      cudaStream_t);
+    template void launch_apply_op<float16_t>(const TensorView<const float16_t>, TensorView<float16_t>, Compose<Add<float16_t>, Mul<float16_t>>, cudaStream_t);
 
     // Explicit instantiations — ReLU
-    template void launch_apply_op<float>(const TensorView<const float> src, TensorView<float> dst, ReLU<float> op);
-    template void launch_apply_op<int>(const TensorView<const int> src, TensorView<int> dst, ReLU<int> op);
-    template void launch_apply_op<char>(const TensorView<const char> src, TensorView<char> dst, ReLU<char> op);
-    template void launch_apply_op<float16_t>(const TensorView<const float16_t> src, TensorView<float16_t> dst, ReLU<float16_t> op);
+    template void launch_apply_op<float>    (const TensorView<const float>,     TensorView<float>,     ReLU<float>,     cudaStream_t);
+    template void launch_apply_op<int>      (const TensorView<const int>,       TensorView<int>,       ReLU<int>,       cudaStream_t);
+    template void launch_apply_op<char>     (const TensorView<const char>,      TensorView<char>,      ReLU<char>,      cudaStream_t);
+    template void launch_apply_op<float16_t>(const TensorView<const float16_t>, TensorView<float16_t>, ReLU<float16_t>, cudaStream_t);
 
     // Explicit instantiations — Sigmoid
-    template void launch_apply_op<float>(const TensorView<const float> src, TensorView<float> dst, Sigmoid<float> op);
-    template void launch_apply_op<int>(const TensorView<const int> src, TensorView<int> dst, Sigmoid<int> op);
-    template void launch_apply_op<char>(const TensorView<const char> src, TensorView<char> dst, Sigmoid<char> op);
-    template void launch_apply_op<float16_t>(const TensorView<const float16_t> src, TensorView<float16_t> dst, Sigmoid<float16_t> op);
+    template void launch_apply_op<float>    (const TensorView<const float>,     TensorView<float>,     Sigmoid<float>,     cudaStream_t);
+    template void launch_apply_op<int>      (const TensorView<const int>,       TensorView<int>,       Sigmoid<int>,       cudaStream_t);
+    template void launch_apply_op<char>     (const TensorView<const char>,      TensorView<char>,      Sigmoid<char>,      cudaStream_t);
+    template void launch_apply_op<float16_t>(const TensorView<const float16_t>, TensorView<float16_t>, Sigmoid<float16_t>, cudaStream_t);
 }
