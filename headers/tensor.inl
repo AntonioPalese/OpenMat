@@ -373,6 +373,18 @@ om::Tensor<value_type> om::Tensor<value_type>::apply_binary(const Tensor<value_t
 }
 
 template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::relu() const
+{
+    return this->apply(ReLU<value_type>{});
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::sigmoid() const
+{
+    return this->apply(Sigmoid<value_type>{});
+}
+
+template <typename value_type>
 om::Tensor<value_type> om::Tensor<value_type>::fused_add_mul(const Tensor<value_type>& rhs, value_type scale) const
 {
     return this->apply_binary(rhs, BinaryCompose<BinaryAdd<value_type>, Mul<value_type>>{BinaryAdd<value_type>{}, Mul<value_type>{scale}});
@@ -446,6 +458,56 @@ void om::Tensor<value_type>::copyToDevice(value_type *dest) const
         m_Allocator->copyFromCurrentLoc(dest, m_Data, total_size_);
     else
         throw std::runtime_error("Tensor::copyToDevice: memory already on device");
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::transpose() const
+{
+    if (this->rank() != 2)
+        throw std::runtime_error("transpose: tensor must be rank-2 (use permute for higher ranks)");
+
+    size_t M = m_Shape[0];
+    size_t N = m_Shape[1];
+    Tensor<value_type> out({N, M}, this->device());
+
+    if (this->device_type() == DEVICE_TYPE::CPU) {
+        transpose_cpu<value_type>(this->view(), out.view());
+    } else {
+        launch_transpose<value_type>(this->view(), out.view());
+    }
+    return out;
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::permute(const std::vector<size_t>& axes) const
+{
+    size_t r = this->rank();
+    if (axes.size() != r)
+        throw std::invalid_argument("permute: axes length must match tensor rank");
+
+    // Validate: axes must be a permutation of [0, r)
+    std::vector<bool> seen(r, false);
+    for (size_t a : axes) {
+        if (a >= r)
+            throw std::out_of_range("permute: axis value out of range");
+        if (seen[a])
+            throw std::invalid_argument("permute: duplicate axis");
+        seen[a] = true;
+    }
+
+    // Build output shape
+    std::vector<size_t> out_shape(r);
+    for (size_t d = 0; d < r; ++d)
+        out_shape[d] = m_Shape[axes[d]];
+
+    Tensor<value_type> out(out_shape, this->device());
+
+    if (this->device_type() == DEVICE_TYPE::CPU) {
+        permute_cpu<value_type>(this->view(), out.view(), axes.data(), r);
+    } else {
+        launch_permute<value_type>(this->view(), out.view(), axes.data(), r);
+    }
+    return out;
 }
 
 template <typename _Ty>

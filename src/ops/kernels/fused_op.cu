@@ -289,4 +289,16 @@ namespace om {
     template void launch_apply_op<int>(const TensorView<const int> src, TensorView<int> dst, Compose<Add<int>, Mul<int>> op);
     template void launch_apply_op<char>(const TensorView<const char> src, TensorView<char> dst, Compose<Add<char>, Mul<char>> op);
     template void launch_apply_op<float16_t>(const TensorView<const float16_t> src, TensorView<float16_t> dst, Compose<Add<float16_t>, Mul<float16_t>> op);
+
+    // Explicit instantiations — ReLU
+    template void launch_apply_op<float>(const TensorView<const float> src, TensorView<float> dst, ReLU<float> op);
+    template void launch_apply_op<int>(const TensorView<const int> src, TensorView<int> dst, ReLU<int> op);
+    template void launch_apply_op<char>(const TensorView<const char> src, TensorView<char> dst, ReLU<char> op);
+    template void launch_apply_op<float16_t>(const TensorView<const float16_t> src, TensorView<float16_t> dst, ReLU<float16_t> op);
+
+    // Explicit instantiations — Sigmoid
+    template void launch_apply_op<float>(const TensorView<const float> src, TensorView<float> dst, Sigmoid<float> op);
+    template void launch_apply_op<int>(const TensorView<const int> src, TensorView<int> dst, Sigmoid<int> op);
+    template void launch_apply_op<char>(const TensorView<const char> src, TensorView<char> dst, Sigmoid<char> op);
+    template void launch_apply_op<float16_t>(const TensorView<const float16_t> src, TensorView<float16_t> dst, Sigmoid<float16_t> op);
 }

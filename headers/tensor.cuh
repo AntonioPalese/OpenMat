@@ -14,6 +14,8 @@
 #include "device_tensor_view.cuh"
 #include "kernel_launcher.h"
 #include "ops/kernels/fused_op.cuh"
+#include "ops/kernels/transpose_gpu.cuh"
+#include "ops/cpu/transpose_cpu.h"
 
 
 namespace om
@@ -106,6 +108,9 @@ namespace om
         Tensor<value_type> squeeze(size_t axis) const;
         Tensor<value_type> unsqueeze(size_t axis) const;
 
+        Tensor<value_type> transpose() const;
+        Tensor<value_type> permute(const std::vector<size_t>& axes) const;
+
         template<typename Op>
         Tensor<value_type> apply(Op op) const;
 
@@ -115,6 +120,9 @@ namespace om
         template<typename Op>
         Tensor<value_type> apply_binary(const Tensor<value_type>& rhs, Op op) const;
 
+
+        Tensor<value_type> relu() const;
+        Tensor<value_type> sigmoid() const;
 
         Tensor<value_type> fused_add_mul(const Tensor<value_type>& rhs, value_type scale) const;
 

@@ -61,6 +61,11 @@
 },
 {
   "directory": "/home/apalese/OpenMat/build",
+  "command": "/usr/bin/nvcc -forward-unknown-to-host-compiler -DOpenMat_EXPORTS -I/home/apalese/OpenMat/headers -g --generate-code=arch=compute_61,code=[compute_61,sm_61] -Xcompiler=-fPIC -x cu -dc /home/apalese/OpenMat/src/ops/kernels/transpose_gpu.cu -o CMakeFiles/OpenMat.dir/src/ops/kernels/transpose_gpu.cu.o",
+  "file": "/home/apalese/OpenMat/src/ops/kernels/transpose_gpu.cu"
+},
+{
+  "directory": "/home/apalese/OpenMat/build",
   "command": "/usr/bin/nvcc -forward-unknown-to-host-compiler -DOpenMat_EXPORTS -I/home/apalese/OpenMat/headers -g --generate-code=arch=compute_61,code=[compute_61,sm_61] -Xcompiler=-fPIC -x cu -dc /home/apalese/OpenMat/src/ops/kernels/unary_ops.cu -o CMakeFiles/OpenMat.dir/src/ops/kernels/unary_ops.cu.o",
   "file": "/home/apalese/OpenMat/src/ops/kernels/unary_ops.cu"
 },
@@ -108,6 +113,11 @@
   "directory": "/home/apalese/OpenMat/build/tests",
   "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -o CMakeFiles/test_reshape.dir/test_reshape.cpp.o -c /home/apalese/OpenMat/tests/test_reshape.cpp",
   "file": "/home/apalese/OpenMat/tests/test_reshape.cpp"
+},
+{
+  "directory": "/home/apalese/OpenMat/build/tests",
+  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -o CMakeFiles/test_transpose.dir/test_transpose.cpp.o -c /home/apalese/OpenMat/tests/test_transpose.cpp",
+  "file": "/home/apalese/OpenMat/tests/test_transpose.cpp"
 },
 {
   "directory": "/home/apalese/OpenMat/build/_deps/googletest-build/googlemock",
