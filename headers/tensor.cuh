@@ -16,6 +16,7 @@
 #include "ops/kernels/fused_op.cuh"
 #include "ops/kernels/transpose_gpu.cuh"
 #include "ops/cpu/transpose_cpu.h"
+#include "stream.h"
 
 
 namespace om
@@ -28,7 +29,8 @@ namespace om
 
         Tensor(const std::vector<size_t>& shape, const Device& dv = Device(0, DEVICE_TYPE::CPU));
         Tensor(const Tensor& rhs); // copy
-        Tensor(Tensor&& rhs); // move
+        Tensor(Tensor&& rhs);      // move
+        Tensor& operator=(Tensor&& rhs); // move-assign
         ~Tensor();
 
         static Tensor<value_type> zeros(const std::vector<size_t>& shape,
@@ -111,6 +113,31 @@ namespace om
         Tensor<value_type> transpose() const;
         Tensor<value_type> permute(const std::vector<size_t>& axes) const;
 
+        // ── Stream overloads ────────────────────────────────────────────────
+        // All return a new Tensor; the caller is responsible for synchronizing
+        // the stream before reading results.
+
+        Tensor<value_type> add(const Tensor<value_type>& rhs, const Stream& s) const;
+        Tensor<value_type> sub(const Tensor<value_type>& rhs, const Stream& s) const;
+        Tensor<value_type> mul(const Tensor<value_type>& rhs, const Stream& s) const;
+        Tensor<value_type> div(const Tensor<value_type>& rhs, const Stream& s) const;
+
+        Tensor<value_type> add(const value_type& scalar, const Stream& s) const;
+        Tensor<value_type> sub(const value_type& scalar, const Stream& s) const;
+        Tensor<value_type> mul(const value_type& scalar, const Stream& s) const;
+        Tensor<value_type> div(const value_type& scalar, const Stream& s) const;
+
+        Tensor<value_type> matmul(const Tensor<value_type>& rhs, const Stream& s) const;
+
+        Tensor<value_type> transpose(const Stream& s) const;
+        Tensor<value_type> permute(const std::vector<size_t>& axes, const Stream& s) const;
+
+        template<typename Op>
+        Tensor<value_type> apply(Op op, const Stream& s) const;
+
+        Tensor<value_type> relu(const Stream& s) const;
+        Tensor<value_type> sigmoid(const Stream& s) const;
+
         template<typename Op>
         Tensor<value_type> apply(Op op) const;
 
@@ -136,6 +163,16 @@ namespace om
         Tensor<value_type> cpu() const;
         Tensor<value_type> cuda() const;
 
+        // Async transfer overloads — caller must synchronize the stream before reading.
+        Tensor<value_type> to(const Device& target, const Stream& s) const;
+        Tensor<value_type> cpu(const Stream& s) const;
+        Tensor<value_type> cuda(const Stream& s) const;
+
+        static Tensor<value_type> from_vector(const std::vector<value_type>& data,
+                                              const std::vector<size_t>& shape,
+                                              const Device& dv,
+                                              const Stream& s);
+
         void copyToHost(value_type* dest) const;
         void copyToDevice(value_type* dest) const;
 
@@ -150,7 +187,12 @@ namespace om
         std::string dtype() const {return om::dtype<value_type>();}
         size_t size() const {return std::accumulate(m_Shape.begin(), m_Shape.end(), 1, std::multiplies<>());}
         size_t rank() const {return m_Shape.size();}
+        const Stream& stream() const {return m_Stream;}
+
     private:
+        // Internal constructor used by stream overloads to associate output
+        // tensors with the enqueuing stream for async alloc/free.
+        Tensor(const std::vector<size_t>& shape, const Device& dv, Stream stream);
 
         void _compute_strides();
         inline size_t _compute_flat_index(const std::vector<size_t>& indices) const;
@@ -159,6 +201,7 @@ namespace om
         std::vector<size_t> m_Stride;
         _Ty* m_Data;
         Device m_Device;
+        Stream m_Stream;
 
         std::unique_ptr<Allocator<_Ty>> m_Allocator;
     };

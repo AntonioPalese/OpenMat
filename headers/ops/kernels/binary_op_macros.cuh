@@ -10,7 +10,7 @@
 
 #define DEFINE_BINARY_OP_LAUNCH(OP_NAME)\
     template<typename T>\
-    void launch_##OP_NAME(const TensorView<const T> lhs, const TensorView<const T> rhs, TensorView<T> dst)\
+    void launch_##OP_NAME(const TensorView<const T> lhs, const TensorView<const T> rhs, TensorView<T> dst, cudaStream_t stream)\
     {\
         if ( !lhs.match(dst) || !rhs.match(dst) || !lhs.match(rhs) )\
         {\
@@ -22,21 +22,21 @@
             {\
                 dim3 threads(16);\
                 dim3 blocks((lhs.shape[0] + 15) / 16);\
-                OP_NAME##_kernel_rank1<<<blocks, threads>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw());\
+                OP_NAME##_kernel_rank1<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw());\
             }\
             break;\
         case 2:\
             {\
                 dim3 threads(16, 16);\
                 dim3 blocks((lhs.shape[1] + 15) / 16, (lhs.shape[0] + 15) / 16);\
-                OP_NAME##_kernel_rank2<<<blocks, threads>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw());\
+                OP_NAME##_kernel_rank2<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw());\
             }\
             break;\
         case 3:\
             {\
                 dim3 threads(8, 8, 8);\
                 dim3 blocks((lhs.shape[2] + 7) / 8, (lhs.shape[1] + 7) / 8, (lhs.shape[0] + 7) / 8);\
-                OP_NAME##_kernel_rank3<<<blocks, threads>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw());\
+                OP_NAME##_kernel_rank3<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw());\
             }\
             break;\
         case 4:\
@@ -47,7 +47,7 @@
                     (lhs.shape[2] + threads.y - 1) / threads.y,\
                     lhs.shape[0]\
                 );\
-                OP_NAME##_kernel_rank4<<<blocks, threads>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw());\
+                OP_NAME##_kernel_rank4<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw());\
             }\
             break;\
         default:\
@@ -55,12 +55,12 @@
                 size_t total_elements = lhs.size();\
                 dim3 threads(256);\
                 dim3 blocks((total_elements + threads.x - 1) / threads.x);\
-                OP_NAME##_kernel_nd<<<blocks, threads>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw());\
+                OP_NAME##_kernel_nd<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw());\
             }\
             break;\
         }\
         CUDA_CHECK;\
-        cudaDeviceSynchronize();\
+        if (stream == nullptr) cudaDeviceSynchronize();\
     }
 
 #define DEFINE_BINARY_OP_KERNEL_K1(OP_NAME, OP_EXPR)\
@@ -130,10 +130,10 @@
     }
 
 #define DEFINE_BINARY_OP_LAUNCH_FRW_DEC(OP_NAME)\
-    template void launch_##OP_NAME<float>(const TensorView<const float> lhs, const TensorView<const float> rhs, TensorView<float> dst);\
-    template void launch_##OP_NAME<int>(const TensorView<const int> lhs, const TensorView<const int> rhs, TensorView<int> dst);\
-    template void launch_##OP_NAME<char>(const TensorView<const char> lhs, const TensorView<const char> rhs, TensorView<char> dst);\
-    template void launch_##OP_NAME<float16_t>(const TensorView<const float16_t> lhs, const TensorView<const float16_t> rhs, TensorView<float16_t> dst);
+    template void launch_##OP_NAME<float>(const TensorView<const float> lhs, const TensorView<const float> rhs, TensorView<float> dst, cudaStream_t);\
+    template void launch_##OP_NAME<int>(const TensorView<const int> lhs, const TensorView<const int> rhs, TensorView<int> dst, cudaStream_t);\
+    template void launch_##OP_NAME<char>(const TensorView<const char> lhs, const TensorView<const char> rhs, TensorView<char> dst, cudaStream_t);\
+    template void launch_##OP_NAME<float16_t>(const TensorView<const float16_t> lhs, const TensorView<const float16_t> rhs, TensorView<float16_t> dst, cudaStream_t);
 
 #define DEFINE_BINARY_OP_KERNEL_H(OP_NAME)\
     template<typename T>\
@@ -149,7 +149,7 @@
 
 #define DEFINE_BINARY_OP_LAUNCH_H(OP_NAME)\
     template<typename T>\
-    void launch_##OP_NAME(const TensorView<const T> lhs, const TensorView<const T> rhs, TensorView<T> dst);                        
+    void launch_##OP_NAME(const TensorView<const T> lhs, const TensorView<const T> rhs, TensorView<T> dst, cudaStream_t stream = 0);
 
 namespace om 
 {

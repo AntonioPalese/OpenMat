@@ -283,6 +283,6 @@ static Tensor<T> load(const std::string& path); // corrispondente load
 |x| Media | 2.1 — `reshape`, `flatten` |
 |x| Media | 4.3 — `relu`, `sigmoid` |
 |x| Media | 2.2 — `transpose`, `permute` |
-| | Bassa | 6.1 — CUDA streams |
+|x| Bassa | 6.1 — CUDA streams |
 | | Bassa | 5.2 — cuBLAS integration |
 | | Bassa | 3.3 — Inizializzazione random (cuRAND) |

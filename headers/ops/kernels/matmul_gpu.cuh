@@ -15,5 +15,5 @@ namespace om
      * @param dst Output matrix C (M × N)
      */
     template<typename T>
-    void launch_matmul(const TensorView<const T> lhs, const TensorView<const T> rhs, TensorView<T> dst);
+    void launch_matmul(const TensorView<const T> lhs, const TensorView<const T> rhs, TensorView<T> dst, cudaStream_t stream = 0);
 }

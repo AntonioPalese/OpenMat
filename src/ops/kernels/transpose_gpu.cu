@@ -36,13 +36,20 @@ __global__ void transpose_kernel(
         dst(dst_row, dst_col) = tile[threadIdx.x][threadIdx.y];
 }
 
+// Trivially-copyable wrapper so the axes array is passed by value to CUDA kernels
+// (raw C arrays decay to pointers when used as kernel parameters).
+struct AxesBuf {
+    size_t v[MAX_RANK] = {};
+};
+
 // ── N-D permute kernel ───────────────────────────────────────────────────────
 // Flat thread per output element; reconstructs multi-index, applies perm.
+// axes is passed by value (AxesBuf struct) — no device allocation needed.
 template<typename T>
 __global__ void permute_kernel(
     const DeviceTensorView<const T> src,
     DeviceTensorView<T>             dst,
-    const size_t*                   d_axes,   // permutation on device
+    AxesBuf                         axes,
     size_t                          rank)
 {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -50,7 +57,7 @@ __global__ void permute_kernel(
     if (idx >= total) return;
 
     // Decompose flat dst index into dst multi-index
-    size_t dst_idx[8]; // max rank 8 should be more than enough
+    size_t dst_idx[MAX_RANK];
     size_t tmp = idx;
     for (int d = (int)rank - 1; d >= 0; --d) {
         dst_idx[d] = tmp % dst.shape[d];
@@ -59,9 +66,9 @@ __global__ void permute_kernel(
 
     // Map to src multi-index via inverse permutation:
     // dst axis d came from src axis axes[d], so src_idx[axes[d]] = dst_idx[d]
-    size_t src_idx[8];
+    size_t src_idx[MAX_RANK];
     for (size_t d = 0; d < rank; ++d)
-        src_idx[d_axes[d]] = dst_idx[d];
+        src_idx[axes.v[d]] = dst_idx[d];
 
     // Compute flat src offset
     size_t src_flat = 0;
@@ -75,7 +82,7 @@ __global__ void permute_kernel(
 
 // ── launch_transpose ─────────────────────────────────────────────────────────
 template<typename T>
-void launch_transpose(const TensorView<const T> src, TensorView<T> dst)
+void launch_transpose(const TensorView<const T> src, TensorView<T> dst, cudaStream_t stream)
 {
     if (src.rank != 2 || dst.rank != 2)
         throw std::runtime_error("launch_transpose: tensors must be rank-2");
@@ -88,43 +95,41 @@ void launch_transpose(const TensorView<const T> src, TensorView<T> dst)
     dim3 threads(TILE, TILE);
     dim3 blocks((N + TILE - 1) / TILE, (M + TILE - 1) / TILE);
 
-    transpose_kernel<T><<<blocks, threads>>>(src.as_device_tw(), dst.as_device_tw());
+    transpose_kernel<T><<<blocks, threads, 0, stream>>>(src.as_device_tw(), dst.as_device_tw());
     CUDA_CHECK;
-    cudaDeviceSynchronize();
+    if (stream == nullptr) cudaDeviceSynchronize();
 }
 
 // ── launch_permute ───────────────────────────────────────────────────────────
 template<typename T>
 void launch_permute(const TensorView<const T> src, TensorView<T> dst,
-                    const size_t* h_axes, size_t rank)
+                    const size_t* h_axes, size_t rank, cudaStream_t stream)
 {
-    // Upload axes to device
-    size_t* d_axes = nullptr;
-    CUDA_CALL(cudaMalloc(&d_axes, sizeof(size_t) * rank));
-    CUDA_CALL(cudaMemcpy(d_axes, h_axes, sizeof(size_t) * rank, cudaMemcpyHostToDevice));
+    // Copy axes into a trivially-copyable struct so the kernel receives them by
+    // value — no device allocation required.
+    AxesBuf axes_buf;
+    for (size_t i = 0; i < rank; ++i) axes_buf.v[i] = h_axes[i];
 
     size_t total = dst.size();
     dim3 threads(256);
     dim3 blocks((total + 255) / 256);
 
-    permute_kernel<T><<<blocks, threads>>>(src.as_device_tw(), dst.as_device_tw(), d_axes, rank);
+    permute_kernel<T><<<blocks, threads, 0, stream>>>(src.as_device_tw(), dst.as_device_tw(), axes_buf, rank);
     CUDA_CHECK;
-    cudaDeviceSynchronize();
-
-    cudaFree(d_axes);
+    if (stream == nullptr) cudaDeviceSynchronize();
 }
 
 // ── explicit instantiations ──────────────────────────────────────────────────
-template void launch_transpose<float>    (const TensorView<const float>,     TensorView<float>);
-template void launch_transpose<double>   (const TensorView<const double>,    TensorView<double>);
-template void launch_transpose<int>      (const TensorView<const int>,       TensorView<int>);
-template void launch_transpose<char>     (const TensorView<const char>,      TensorView<char>);
-template void launch_transpose<float16_t>(const TensorView<const float16_t>, TensorView<float16_t>);
+template void launch_transpose<float>    (const TensorView<const float>,     TensorView<float>,     cudaStream_t);
+template void launch_transpose<double>   (const TensorView<const double>,    TensorView<double>,    cudaStream_t);
+template void launch_transpose<int>      (const TensorView<const int>,       TensorView<int>,       cudaStream_t);
+template void launch_transpose<char>     (const TensorView<const char>,      TensorView<char>,      cudaStream_t);
+template void launch_transpose<float16_t>(const TensorView<const float16_t>, TensorView<float16_t>, cudaStream_t);
 
-template void launch_permute<float>    (const TensorView<const float>,     TensorView<float>,     const size_t*, size_t);
-template void launch_permute<double>   (const TensorView<const double>,    TensorView<double>,    const size_t*, size_t);
-template void launch_permute<int>      (const TensorView<const int>,       TensorView<int>,       const size_t*, size_t);
-template void launch_permute<char>     (const TensorView<const char>,      TensorView<char>,      const size_t*, size_t);
-template void launch_permute<float16_t>(const TensorView<const float16_t>, TensorView<float16_t>, const size_t*, size_t);
+template void launch_permute<float>    (const TensorView<const float>,     TensorView<float>,     const size_t*, size_t, cudaStream_t);
+template void launch_permute<double>   (const TensorView<const double>,    TensorView<double>,    const size_t*, size_t, cudaStream_t);
+template void launch_permute<int>      (const TensorView<const int>,       TensorView<int>,       const size_t*, size_t, cudaStream_t);
+template void launch_permute<char>     (const TensorView<const char>,      TensorView<char>,      const size_t*, size_t, cudaStream_t);
+template void launch_permute<float16_t>(const TensorView<const float16_t>, TensorView<float16_t>, const size_t*, size_t, cudaStream_t);
 
 } // namespace om

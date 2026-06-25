@@ -145,7 +145,7 @@ namespace om {
     constexpr int REDUCE_BLOCK = 256;
 
     template<typename T>
-    T launch_reduce_sum(const TensorView<const T> src)
+    T launch_reduce_sum(const TensorView<const T> src, cudaStream_t stream)
     {
         size_t n = src.size();
         if (n == 0) return static_cast<T>(0);
@@ -153,16 +153,29 @@ namespace om {
         int blocks = static_cast<int>((n + REDUCE_BLOCK - 1) / REDUCE_BLOCK);
 
         T* d_partial = nullptr;
+#if CUDART_VERSION >= 11020
+        CUDA_CALL(cudaMallocAsync(&d_partial, blocks * sizeof(T), stream));
+#else
         CUDA_CALL(cudaMalloc(&d_partial, blocks * sizeof(T)));
+#endif
 
-        reduce_sum_kernel<<<blocks, REDUCE_BLOCK>>>(src.data, d_partial, n);
+        reduce_sum_kernel<<<blocks, REDUCE_BLOCK, 0, stream>>>(src.data, d_partial, n);
         CUDA_CHECK;
 
-        // second pass: reduce the block partials on the CPU (blocks is small)
-        cudaDeviceSynchronize();
+        // Must sync before D→H copy
+        if (stream != nullptr)
+            cudaStreamSynchronize(stream);
+        else
+            cudaDeviceSynchronize();
+
         std::vector<T> h(blocks);
         CUDA_CALL(cudaMemcpy(h.data(), d_partial, blocks * sizeof(T), cudaMemcpyDeviceToHost));
+
+#if CUDART_VERSION >= 11020
+        CUDA_CALL(cudaFreeAsync(d_partial, stream));
+#else
         CUDA_CALL(cudaFree(d_partial));
+#endif
 
         T result = static_cast<T>(0);
         for (T v : h) result = result + v;
@@ -170,12 +183,11 @@ namespace om {
     }
 
     template<typename T>
-    T launch_reduce_min(const TensorView<const T> src)
+    T launch_reduce_min(const TensorView<const T> src, cudaStream_t stream)
     {
         size_t n = src.size();
         if (n == 0) throw std::invalid_argument("reduce_min: empty tensor");
 
-        // identity for min: +inf (or max finite for integer types)
         T identity;
         if constexpr (std::is_floating_point_v<T>)
             identity = std::numeric_limits<T>::infinity();
@@ -185,15 +197,28 @@ namespace om {
         int blocks = static_cast<int>((n + REDUCE_BLOCK - 1) / REDUCE_BLOCK);
 
         T* d_partial = nullptr;
+#if CUDART_VERSION >= 11020
+        CUDA_CALL(cudaMallocAsync(&d_partial, blocks * sizeof(T), stream));
+#else
         CUDA_CALL(cudaMalloc(&d_partial, blocks * sizeof(T)));
+#endif
 
-        reduce_min_kernel<<<blocks, REDUCE_BLOCK>>>(src.data, d_partial, n, identity);
+        reduce_min_kernel<<<blocks, REDUCE_BLOCK, 0, stream>>>(src.data, d_partial, n, identity);
         CUDA_CHECK;
 
-        cudaDeviceSynchronize();
+        if (stream != nullptr)
+            cudaStreamSynchronize(stream);
+        else
+            cudaDeviceSynchronize();
+
         std::vector<T> h(blocks);
         CUDA_CALL(cudaMemcpy(h.data(), d_partial, blocks * sizeof(T), cudaMemcpyDeviceToHost));
+
+#if CUDART_VERSION >= 11020
+        CUDA_CALL(cudaFreeAsync(d_partial, stream));
+#else
         CUDA_CALL(cudaFree(d_partial));
+#endif
 
         T result = identity;
         for (T v : h) if (v < result) result = v;
@@ -201,7 +226,7 @@ namespace om {
     }
 
     template<typename T>
-    T launch_reduce_max(const TensorView<const T> src)
+    T launch_reduce_max(const TensorView<const T> src, cudaStream_t stream)
     {
         size_t n = src.size();
         if (n == 0) throw std::invalid_argument("reduce_max: empty tensor");
@@ -215,15 +240,28 @@ namespace om {
         int blocks = static_cast<int>((n + REDUCE_BLOCK - 1) / REDUCE_BLOCK);
 
         T* d_partial = nullptr;
+#if CUDART_VERSION >= 11020
+        CUDA_CALL(cudaMallocAsync(&d_partial, blocks * sizeof(T), stream));
+#else
         CUDA_CALL(cudaMalloc(&d_partial, blocks * sizeof(T)));
+#endif
 
-        reduce_max_kernel<<<blocks, REDUCE_BLOCK>>>(src.data, d_partial, n, identity);
+        reduce_max_kernel<<<blocks, REDUCE_BLOCK, 0, stream>>>(src.data, d_partial, n, identity);
         CUDA_CHECK;
 
-        cudaDeviceSynchronize();
+        if (stream != nullptr)
+            cudaStreamSynchronize(stream);
+        else
+            cudaDeviceSynchronize();
+
         std::vector<T> h(blocks);
         CUDA_CALL(cudaMemcpy(h.data(), d_partial, blocks * sizeof(T), cudaMemcpyDeviceToHost));
+
+#if CUDART_VERSION >= 11020
+        CUDA_CALL(cudaFreeAsync(d_partial, stream));
+#else
         CUDA_CALL(cudaFree(d_partial));
+#endif
 
         T result = identity;
         for (T v : h) if (v > result) result = v;
@@ -233,24 +271,35 @@ namespace om {
     // float16_t: __shfl needs float promotion (done in warp_reduce specializations),
     // but numeric_limits<float16_t> may not exist — specialize the launchers.
     template<>
-    float16_t launch_reduce_min<float16_t>(const TensorView<const float16_t> src)
+    float16_t launch_reduce_min<float16_t>(const TensorView<const float16_t> src, cudaStream_t stream)
     {
         size_t n = src.size();
         if (n == 0) throw std::invalid_argument("reduce_min: empty tensor");
 
-        float16_t identity = float16_t(65504.0f);  // max finite fp16
+        float16_t identity = float16_t(65504.0f);
 
         int blocks = static_cast<int>((n + REDUCE_BLOCK - 1) / REDUCE_BLOCK);
         float16_t* d_partial = nullptr;
+#if CUDART_VERSION >= 11020
+        CUDA_CALL(cudaMallocAsync(&d_partial, blocks * sizeof(float16_t), stream));
+#else
         CUDA_CALL(cudaMalloc(&d_partial, blocks * sizeof(float16_t)));
+#endif
 
-        reduce_min_kernel<<<blocks, REDUCE_BLOCK>>>(src.data, d_partial, n, identity);
+        reduce_min_kernel<<<blocks, REDUCE_BLOCK, 0, stream>>>(src.data, d_partial, n, identity);
         CUDA_CHECK;
 
-        cudaDeviceSynchronize();
+        if (stream != nullptr) cudaStreamSynchronize(stream);
+        else                   cudaDeviceSynchronize();
+
         std::vector<float16_t> h(blocks);
         CUDA_CALL(cudaMemcpy(h.data(), d_partial, blocks * sizeof(float16_t), cudaMemcpyDeviceToHost));
+
+#if CUDART_VERSION >= 11020
+        CUDA_CALL(cudaFreeAsync(d_partial, stream));
+#else
         CUDA_CALL(cudaFree(d_partial));
+#endif
 
         float16_t result = identity;
         for (float16_t v : h) if (float(v) < float(result)) result = v;
@@ -258,7 +307,7 @@ namespace om {
     }
 
     template<>
-    float16_t launch_reduce_max<float16_t>(const TensorView<const float16_t> src)
+    float16_t launch_reduce_max<float16_t>(const TensorView<const float16_t> src, cudaStream_t stream)
     {
         size_t n = src.size();
         if (n == 0) throw std::invalid_argument("reduce_max: empty tensor");
@@ -267,15 +316,26 @@ namespace om {
 
         int blocks = static_cast<int>((n + REDUCE_BLOCK - 1) / REDUCE_BLOCK);
         float16_t* d_partial = nullptr;
+#if CUDART_VERSION >= 11020
+        CUDA_CALL(cudaMallocAsync(&d_partial, blocks * sizeof(float16_t), stream));
+#else
         CUDA_CALL(cudaMalloc(&d_partial, blocks * sizeof(float16_t)));
+#endif
 
-        reduce_max_kernel<<<blocks, REDUCE_BLOCK>>>(src.data, d_partial, n, identity);
+        reduce_max_kernel<<<blocks, REDUCE_BLOCK, 0, stream>>>(src.data, d_partial, n, identity);
         CUDA_CHECK;
 
-        cudaDeviceSynchronize();
+        if (stream != nullptr) cudaStreamSynchronize(stream);
+        else                   cudaDeviceSynchronize();
+
         std::vector<float16_t> h(blocks);
         CUDA_CALL(cudaMemcpy(h.data(), d_partial, blocks * sizeof(float16_t), cudaMemcpyDeviceToHost));
+
+#if CUDART_VERSION >= 11020
+        CUDA_CALL(cudaFreeAsync(d_partial, stream));
+#else
         CUDA_CALL(cudaFree(d_partial));
+#endif
 
         float16_t result = identity;
         for (float16_t v : h) if (float(v) > float(result)) result = v;
@@ -283,16 +343,16 @@ namespace om {
     }
 
     // Explicit instantiations
-    template float  launch_reduce_sum<float> (const TensorView<const float>);
-    template int    launch_reduce_sum<int>   (const TensorView<const int>);
-    template char   launch_reduce_sum<char>  (const TensorView<const char>);
-    template float16_t launch_reduce_sum<float16_t>(const TensorView<const float16_t>);
+    template float     launch_reduce_sum<float>    (const TensorView<const float>,     cudaStream_t);
+    template int       launch_reduce_sum<int>      (const TensorView<const int>,       cudaStream_t);
+    template char      launch_reduce_sum<char>     (const TensorView<const char>,      cudaStream_t);
+    template float16_t launch_reduce_sum<float16_t>(const TensorView<const float16_t>, cudaStream_t);
 
-    template float  launch_reduce_min<float> (const TensorView<const float>);
-    template int    launch_reduce_min<int>   (const TensorView<const int>);
-    template char   launch_reduce_min<char>  (const TensorView<const char>);
+    template float     launch_reduce_min<float>    (const TensorView<const float>,     cudaStream_t);
+    template int       launch_reduce_min<int>      (const TensorView<const int>,       cudaStream_t);
+    template char      launch_reduce_min<char>     (const TensorView<const char>,      cudaStream_t);
 
-    template float  launch_reduce_max<float> (const TensorView<const float>);
-    template int    launch_reduce_max<int>   (const TensorView<const int>);
-    template char   launch_reduce_max<char>  (const TensorView<const char>);
+    template float     launch_reduce_max<float>    (const TensorView<const float>,     cudaStream_t);
+    template int       launch_reduce_max<int>      (const TensorView<const int>,       cudaStream_t);
+    template char      launch_reduce_max<char>     (const TensorView<const char>,      cudaStream_t);
 }

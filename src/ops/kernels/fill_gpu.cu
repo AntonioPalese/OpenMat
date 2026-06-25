@@ -67,7 +67,7 @@ namespace om {
     }
 
     template<typename T>
-    void launch_fill(TensorView<T> tensor, T value)
+    void launch_fill(TensorView<T> tensor, T value, cudaStream_t stream)
     {
         switch (tensor.rank)
         {
@@ -75,50 +75,50 @@ namespace om {
             {
                 dim3 threads(16);
                 dim3 blocks((tensor.shape[0] + 15) / 16);
-                fill_kernel_rank1<<<blocks, threads>>>(tensor.as_device_tw(), value);
+                fill_kernel_rank1<<<blocks, threads, 0, stream>>>(tensor.as_device_tw(), value);
             }
             break;
         case 2:
             {
                 dim3 threads(16, 16);
                 dim3 blocks((tensor.shape[1] + 15) / 16, (tensor.shape[0] + 15) / 16);
-                fill_kernel_rank2<<<blocks, threads>>>(tensor.as_device_tw(), value);
+                fill_kernel_rank2<<<blocks, threads, 0, stream>>>(tensor.as_device_tw(), value);
             }
-            break;        
+            break;
         case 3:
             {
-                dim3 threads(8, 8, 8); // solo 512 thread per blocco
+                dim3 threads(8, 8, 8);
                 dim3 blocks((tensor.shape[2] + 7) / 8, (tensor.shape[1] + 7) / 8, (tensor.shape[0] + 7) / 8);
-                fill_kernel_rank3<<<blocks, threads>>>(tensor.as_device_tw(), value);
+                fill_kernel_rank3<<<blocks, threads, 0, stream>>>(tensor.as_device_tw(), value);
             }
-            break;  
+            break;
         case 4:
             {
-                dim3 threads(8, 8, tensor.shape[1] < 8 ? tensor.shape[1] : 8); // evita z troppo grandi
+                dim3 threads(8, 8, tensor.shape[1] < 8 ? tensor.shape[1] : 8);
                 dim3 blocks(
                     (tensor.shape[3] + threads.x - 1) / threads.x,
                     (tensor.shape[2] + threads.y - 1) / threads.y,
                     tensor.shape[0]
-                );                             
-                fill_kernel_rank4<<<blocks, threads>>>(tensor.as_device_tw(), value);
+                );
+                fill_kernel_rank4<<<blocks, threads, 0, stream>>>(tensor.as_device_tw(), value);
             }
-            break;            
+            break;
         default:
             {
                 size_t total_elements = tensor.size();
                 dim3 threads(256);
                 dim3 blocks((total_elements + threads.x - 1) / threads.x);
-                fill_kernel_nd<<<blocks, threads>>>(tensor.as_device_tw(), value);
+                fill_kernel_nd<<<blocks, threads, 0, stream>>>(tensor.as_device_tw(), value);
             }
             break;
         }
         CUDA_CHECK;
-        cudaDeviceSynchronize();
+        if (stream == nullptr) cudaDeviceSynchronize();
     }
 
     // Explicit instantiations
-    template void launch_fill<float>(TensorView<float>, float);
-    template void launch_fill<int>(TensorView<int>, int);
-    template void launch_fill<char>(TensorView<char>, char);
-    template void launch_fill<float16_t>(TensorView<float16_t>, float16_t);
+    template void launch_fill<float>    (TensorView<float>,     float,     cudaStream_t);
+    template void launch_fill<int>      (TensorView<int>,       int,       cudaStream_t);
+    template void launch_fill<char>     (TensorView<char>,      char,      cudaStream_t);
+    template void launch_fill<float16_t>(TensorView<float16_t>, float16_t, cudaStream_t);
 }

@@ -61,7 +61,7 @@ namespace om
     }
 
     template<typename T>
-    void launch_matmul(const TensorView<const T> lhs, const TensorView<const T> rhs, TensorView<T> dst)
+    void launch_matmul(const TensorView<const T> lhs, const TensorView<const T> rhs, TensorView<T> dst, cudaStream_t stream)
     {
 
         if (lhs.rank != 2 || rhs.rank != 2 || dst.rank != 2) {
@@ -88,7 +88,7 @@ namespace om
             (M + MATMUL_TILE_SIZE - 1) / MATMUL_TILE_SIZE
         );
 
-        matmul_kernel<T><<<blocks, threads>>>(
+        matmul_kernel<T><<<blocks, threads, 0, stream>>>(
             lhs.data, rhs.data, dst.data,
             M, K, N,
             lhs.stride[0], lhs.stride[1],
@@ -97,27 +97,27 @@ namespace om
         );
 
         CUDA_CHECK;
-        cudaDeviceSynchronize();
+        if (stream == nullptr) cudaDeviceSynchronize();
     }
 
 
     template void launch_matmul<float>(
-        const TensorView<const float> lhs, 
-        const TensorView<const float> rhs, 
-        TensorView<float> dst);
+        const TensorView<const float> lhs,
+        const TensorView<const float> rhs,
+        TensorView<float> dst, cudaStream_t);
 
     template void launch_matmul<int>(
-        const TensorView<const int> lhs, 
-        const TensorView<const int> rhs, 
-        TensorView<int> dst);
+        const TensorView<const int> lhs,
+        const TensorView<const int> rhs,
+        TensorView<int> dst, cudaStream_t);
 
     template void launch_matmul<double>(
-        const TensorView<const double> lhs, 
-        const TensorView<const double> rhs, 
-        TensorView<double> dst);
+        const TensorView<const double> lhs,
+        const TensorView<const double> rhs,
+        TensorView<double> dst, cudaStream_t);
 
     template void launch_matmul<float16_t>(
-        const TensorView<const float16_t> lhs, 
-        const TensorView<const float16_t> rhs, 
-        TensorView<float16_t> dst);
+        const TensorView<const float16_t> lhs,
+        const TensorView<const float16_t> rhs,
+        TensorView<float16_t> dst, cudaStream_t);
 }

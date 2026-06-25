@@ -2,6 +2,7 @@
 #include <cmath>
 #include "device_tensor_view.cuh"
 #include "tensor_view.cuh"
+#include <cuda_runtime.h>
 
 namespace om 
 {
@@ -40,7 +41,7 @@ namespace om
     };
 
     template<typename T, typename Op>
-    void launch_apply_op(const TensorView<const T> src, TensorView<T> dst, Op op);
+    void launch_apply_op(const TensorView<const T> src, TensorView<T> dst, Op op, cudaStream_t stream = 0);
 
     // ---------------------------------------------------------------------------
     // Binary fused functors: Op(lhs[i], rhs[i])
@@ -80,7 +81,7 @@ namespace om
 
     template<typename T, typename Op>
     void launch_apply_binary_op(const TensorView<const T> lhs, const TensorView<const T> rhs,
-                                TensorView<T> dst, Op op);
+                                TensorView<T> dst, Op op, cudaStream_t stream = 0);
 
     template <typename T>
     struct ReLU {

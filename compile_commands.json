@@ -120,6 +120,26 @@
   "file": "/home/apalese/OpenMat/tests/test_transpose.cpp"
 },
 {
+  "directory": "/home/apalese/OpenMat/build/tests",
+  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -o CMakeFiles/test_streams.dir/test_streams.cpp.o -c /home/apalese/OpenMat/tests/test_streams.cpp",
+  "file": "/home/apalese/OpenMat/tests/test_streams.cpp"
+},
+{
+  "directory": "/home/apalese/OpenMat/build/tests",
+  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -o CMakeFiles/test_allocator_stream.dir/test_allocator_stream.cpp.o -c /home/apalese/OpenMat/tests/test_allocator_stream.cpp",
+  "file": "/home/apalese/OpenMat/tests/test_allocator_stream.cpp"
+},
+{
+  "directory": "/home/apalese/OpenMat/build/tests",
+  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -o CMakeFiles/test_stress.dir/test_stress.cpp.o -c /home/apalese/OpenMat/tests/test_stress.cpp",
+  "file": "/home/apalese/OpenMat/tests/test_stress.cpp"
+},
+{
+  "directory": "/home/apalese/OpenMat/build/tests",
+  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -o CMakeFiles/test_stream_perf.dir/test_stream_perf.cpp.o -c /home/apalese/OpenMat/tests/test_stream_perf.cpp",
+  "file": "/home/apalese/OpenMat/tests/test_stream_perf.cpp"
+},
+{
   "directory": "/home/apalese/OpenMat/build/_deps/googletest-build/googlemock",
   "command": "/usr/bin/c++  -I/home/apalese/OpenMat/build/_deps/googletest-src/googlemock/include -I/home/apalese/OpenMat/build/_deps/googletest-src/googlemock -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -Wall -Wshadow -Wno-error=dangling-else -DGTEST_HAS_PTHREAD=1 -fexceptions -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -o CMakeFiles/gmock.dir/src/gmock-all.cc.o -c /home/apalese/OpenMat/build/_deps/googletest-src/googlemock/src/gmock-all.cc",
   "file": "/home/apalese/OpenMat/build/_deps/googletest-src/googlemock/src/gmock-all.cc"
