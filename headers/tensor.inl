@@ -373,6 +373,18 @@ om::Tensor<value_type> om::Tensor<value_type>::apply_binary(const Tensor<value_t
 }
 
 template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::relu() const
+{
+    return this->apply(ReLU<value_type>{});
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::sigmoid() const
+{
+    return this->apply(Sigmoid<value_type>{});
+}
+
+template <typename value_type>
 om::Tensor<value_type> om::Tensor<value_type>::fused_add_mul(const Tensor<value_type>& rhs, value_type scale) const
 {
     return this->apply_binary(rhs, BinaryCompose<BinaryAdd<value_type>, Mul<value_type>>{BinaryAdd<value_type>{}, Mul<value_type>{scale}});

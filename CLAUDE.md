@@ -17,26 +17,44 @@ make -j$(nproc)
 ```
 
 The build produces:
-- `build/OpenMat.so` — shared library
+- `build/OpenMat.so` — shared library (also the Python extension)
 - `build/OpenMat_app` — main executable
-- `build/tests/tensor_ops_test` — test binary
+- `build/tests/test_*` — per-suite test binaries
 
 CUDA architecture is hardcoded to `sm_61` in [CMakeLists.txt](CMakeLists.txt):26. Change `CMAKE_CUDA_ARCHITECTURES` if targeting a different GPU.
 
 ## Tests
 
-Uses GoogleTest (fetched automatically by CMake via FetchContent).
+Uses GoogleTest (fetched automatically by CMake via FetchContent). Each test suite is its own binary.
 
 ```bash
 # Run all tests
 cd build && ctest
 
-# Run test binary directly (shows individual test output)
-./build/tests/tensor_ops_test
+# Run a single suite directly (shows per-test output)
+./build/tests/test_arithmetic
+./build/tests/test_fused_ops
+./build/tests/test_device_transfer
+./build/tests/test_factory
+./build/tests/test_reductions
+./build/tests/test_benchmarks
+./build/tests/test_reshape
 
 # Run a single test by name
-./build/tests/tensor_ops_test --gtest_filter="TensorArithmetic.CPUOperations"
+./build/tests/test_arithmetic --gtest_filter="TensorArithmetic.CPUOperations"
 ```
+
+## Python package
+
+The Python package wraps `OpenMat.so` via ctypes/pybind. Build it after compiling the shared library:
+
+```bash
+cd python
+pip install -e .   # development install (uses build/OpenMat.so via hatch_build.py)
+# or: OPENMAT_LIB=/path/to/OpenMat.so pip install .
+```
+
+`hatch_build.py` copies `build/OpenMat.so` into `python/openmat/` before the wheel is assembled.
 
 ## Architecture
 
@@ -78,3 +96,29 @@ src/ops/kernels/        ← CUDA kernel .cu translation units
 **Adding a new op:** define the kernel body expression in `src/ops/kernels/` using `DEFINE_BINARY_OP_KERNEL_K1/K2/K3/K4/ND` and `DEFINE_BINARY_OP_LAUNCH`, add the CPU implementation in `src/ops/cpu/`, declare both in their respective headers, then register the dispatch pair in [headers/kernel_launcher.h](headers/kernel_launcher.h) with `DEFINE_DEVICE_DISPATCH_BINARY_H` and in [headers/kernel_launcher.inl](headers/kernel_launcher.inl) with `DEFINE_DEVICE_DISPATCH_BINARY_INL`.
 
 **Supported dtypes** (via `om::dtype<T>()` specializations): `float`, `double`, `int`, `char`, `float16_t`.
+
+## Fused operations
+
+[headers/ops/kernels/fused_op.cuh](headers/ops/kernels/fused_op.cuh) provides functor-based kernel fusion. Key types:
+
+- **`Add<T>`, `Mul<T>`, `Div<T>`, `Pow<T>`** — unary scalar functors (`__host__ __device__`)
+- **`Compose<F,G>`** — chains two unary functors: `g(f(x))`, no intermediate allocation. Uses `decltype` return type (C++17 compatible, not `auto` parameter).
+- **`BinaryAdd/Sub/Mul/Div<T>`** — binary element-wise functors
+- **`BinaryCompose<BinOp,UnaryOp>`** — chains a binary op with a unary post-op
+
+`launch_apply_op<T>(src, dst, op)` and `launch_apply_binary_op<T>(lhs, rhs, dst, op)` are the kernel entry points. Both dispatch by rank (1–4 dedicated kernels, ≥5 flat `_nd` fallback).
+
+**Explicit instantiations** in `fused_op.cu` must list every `(T, Op)` combination used from `.cpp` files. If you add a new functor or compose a new combination, add the instantiation or you will get a linker error. Calling `launch_apply_op` from a `.cu` file works without explicit instantiation.
+
+**`Tensor<T>` fused methods** (all in [headers/tensor.inl](headers/tensor.inl)):
+- `apply(Op op)` — applies any unary functor
+- `apply_binary(rhs, Op op)` — applies any binary functor
+- `scale_shift(scale, shift)` — `(x * scale) + shift`
+- `shift_scale(shift, scale)` — `(x + shift) * scale`
+- `fused_add_mul(rhs, scale)`, `fused_sub_mul`, `fused_mul_add`, `fused_div_add`
+
+**Known limitation:** `launch_apply_op` is CUDA-only. Calling `apply()` on a CPU tensor is undefined behavior — the `tensor.inl` path must dispatch to a CPU loop for `DEVICE_TYPE::CPU` (not yet implemented, see `docs/roadmap.md`).
+
+## Reductions
+
+GPU reductions use a two-phase shared-memory tree-reduction + warp shuffle pattern (`__shfl_down_sync`). Entry points in [headers/ops/kernels/reduce_gpu.cuh](headers/ops/kernels/reduce_gpu.cuh): `launch_reduce_sum`, `launch_reduce_min`, `launch_reduce_max`. CPU path is in [headers/ops/cpu/reduce_cpu.h](headers/ops/cpu/reduce_cpu.h). Exposed on `Tensor<T>` as `.sum()`, `.mean()`, `.min()`, `.max()`.

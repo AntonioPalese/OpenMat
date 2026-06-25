@@ -116,6 +116,9 @@ namespace om
         Tensor<value_type> apply_binary(const Tensor<value_type>& rhs, Op op) const;
 
 
+        Tensor<value_type> relu() const;
+        Tensor<value_type> sigmoid() const;
+
         Tensor<value_type> fused_add_mul(const Tensor<value_type>& rhs, value_type scale) const;
 
         Tensor<value_type> fused_sub_mul(const Tensor<value_type>& rhs, value_type scale) const;

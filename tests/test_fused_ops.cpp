@@ -280,3 +280,97 @@ TEST(FusedOps, ShapeMismatchThrows) {
     Tensor<float> b({8}, gpu); b.fill(1.0f);
     EXPECT_THROW(a.apply_binary(b, BinaryAdd<float>{}), std::invalid_argument);
 }
+
+// ============================================================================
+// ReLU
+// ============================================================================
+
+TEST(FusedOps, CPUReLU_KnownValues) {
+    Device cpu("cpu:0");
+    auto a = Tensor<float>::from_vector({-3.0f, -1.0f, 0.0f, 2.0f, 5.0f}, {5}, cpu);
+    auto r = a.relu();
+    EXPECT_FLOAT_EQ(r({0}), 0.0f);
+    EXPECT_FLOAT_EQ(r({1}), 0.0f);
+    EXPECT_FLOAT_EQ(r({2}), 0.0f);
+    EXPECT_FLOAT_EQ(r({3}), 2.0f);
+    EXPECT_FLOAT_EQ(r({4}), 5.0f);
+}
+
+TEST(FusedOps, GPUReLU_Rank1) {
+    Device gpu("cuda:0");
+    auto a = Tensor<float>::from_vector({-2.0f, -1.0f, 0.0f, 1.0f, 3.0f}, {5}, gpu);
+    auto h = to_host(a.relu());
+    EXPECT_FLOAT_EQ(h[0], 0.0f);
+    EXPECT_FLOAT_EQ(h[1], 0.0f);
+    EXPECT_FLOAT_EQ(h[2], 0.0f);
+    EXPECT_FLOAT_EQ(h[3], 1.0f);
+    EXPECT_FLOAT_EQ(h[4], 3.0f);
+}
+
+TEST(FusedOps, GPUReLU_Rank2) {
+    Device gpu("cuda:0");
+    auto a = Tensor<float>::from_vector({-1.0f, 2.0f, -3.0f, 4.0f}, {2, 2}, gpu);
+    auto h = to_host(a.relu());
+    EXPECT_FLOAT_EQ(h[0], 0.0f);
+    EXPECT_FLOAT_EQ(h[1], 2.0f);
+    EXPECT_FLOAT_EQ(h[2], 0.0f);
+    EXPECT_FLOAT_EQ(h[3], 4.0f);
+}
+
+TEST(FusedOps, GPUReLU_Rank3) {
+    Device gpu("cuda:0");
+    Tensor<float> a({2, 3, 4}, gpu);
+    a.fill(-1.0f);
+    for (float v : to_host(a.relu())) EXPECT_FLOAT_EQ(v, 0.0f);
+}
+
+TEST(FusedOps, CPUGPUReLU_Consistency) {
+    const size_t N = 8;
+    Device cpu("cpu:0");
+    Device gpu("cuda:0");
+    std::vector<float> data = {-4,-3,-2,-1,0,1,2,3};
+    auto a_cpu = Tensor<float>::from_vector(data, {N}, cpu);
+    auto a_gpu = Tensor<float>::from_vector(data, {N}, gpu);
+    auto r_cpu = a_cpu.relu();
+    auto h_gpu = to_host(a_gpu.relu());
+    for (size_t i = 0; i < N; ++i) EXPECT_FLOAT_EQ(r_cpu({i}), h_gpu[i]);
+}
+
+// ============================================================================
+// Sigmoid
+// ============================================================================
+
+TEST(FusedOps, CPUSigmoid_KnownValues) {
+    Device cpu("cpu:0");
+    auto a = Tensor<float>::from_vector({0.0f}, {1}, cpu);
+    auto r = a.sigmoid();
+    EXPECT_NEAR(r({0}), 0.5f, 1e-5f);
+}
+
+TEST(FusedOps, GPUSigmoid_Rank1) {
+    Device gpu("cuda:0");
+    auto a = Tensor<float>::from_vector({0.0f, 100.0f, -100.0f}, {3}, gpu);
+    auto h = to_host(a.sigmoid());
+    EXPECT_NEAR(h[0], 0.5f,  1e-5f);
+    EXPECT_NEAR(h[1], 1.0f,  1e-5f);
+    EXPECT_NEAR(h[2], 0.0f,  1e-5f);
+}
+
+TEST(FusedOps, GPUSigmoid_Rank2) {
+    Device gpu("cuda:0");
+    Tensor<float> a({4, 4}, gpu);
+    a.fill(0.0f);
+    for (float v : to_host(a.sigmoid())) EXPECT_NEAR(v, 0.5f, 1e-5f);
+}
+
+TEST(FusedOps, CPUGPUSigmoid_Consistency) {
+    const size_t N = 6;
+    Device cpu("cpu:0");
+    Device gpu("cuda:0");
+    std::vector<float> data = {-2.0f, -1.0f, 0.0f, 1.0f, 2.0f, 3.0f};
+    auto a_cpu = Tensor<float>::from_vector(data, {N}, cpu);
+    auto a_gpu = Tensor<float>::from_vector(data, {N}, gpu);
+    auto r_cpu = a_cpu.sigmoid();
+    auto h_gpu = to_host(a_gpu.sigmoid());
+    for (size_t i = 0; i < N; ++i) EXPECT_NEAR(r_cpu({i}), h_gpu[i], 1e-5f);
+}

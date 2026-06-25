@@ -1,4 +1,5 @@
 #pragma once
+#include <cmath>
 #include "device_tensor_view.cuh"
 #include "tensor_view.cuh"
 
@@ -80,4 +81,18 @@ namespace om
     template<typename T, typename Op>
     void launch_apply_binary_op(const TensorView<const T> lhs, const TensorView<const T> rhs,
                                 TensorView<T> dst, Op op);
+
+    template <typename T>
+    struct ReLU {
+        __host__ __device__ T operator()(T x) const {
+            return static_cast<float>(x) > 0.0f ? x : static_cast<T>(0);
+        }
+    };
+
+    template <typename T>
+    struct Sigmoid {
+        __host__ __device__ T operator()(T x) const {
+            return static_cast<T>(1) / (static_cast<T>(1) + static_cast<T>(expf(-static_cast<float>(x))));
+        }
+    };
 }
