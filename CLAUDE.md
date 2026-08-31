@@ -4,10 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build
 
-Requirements: NVIDIA GPU (compute capability ≥ 7.0), CUDA Toolkit ≥ 12.0, CMake ≥ 3.18, GCC ≥ 10.
+Requirements: NVIDIA GPU, CUDA Toolkit, CMake ≥ 3.22.1, C++17 compiler.
 
 ```bash
-# Full clean build (also regenerates compile_commands.json)
+# Full clean rebuild (also refreshes compile_commands.json at the repo root)
 ./compile.sh
 
 # Or manually:
@@ -16,76 +16,78 @@ cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON ..
 make -j$(nproc)
 ```
 
-The build produces:
-- `build/OpenMat.so` — shared library (also the Python extension)
-- `build/OpenMat_app` — main executable
-- `build/tests/test_*` — per-suite test binaries
+Notes:
+- `CMAKE_BUILD_TYPE` defaults to **Debug** ([CMakeLists.txt](CMakeLists.txt)). Pass `-DCMAKE_BUILD_TYPE=Release` before benchmarking — the numbers in the README were taken from a Release build.
+- CUDA architecture is hardcoded to `61` at [CMakeLists.txt:26](CMakeLists.txt). Change `CMAKE_CUDA_ARCHITECTURES` when targeting a different GPU. `cmake/detect_cuda_arch.cmake` / `scripts/detect_archs.py` exist for autodetection but the `include()` is commented out.
+- CMake reads the `CMAKE_LIBRARY_PATH` environment variable (colon-separated) and adds each entry via `target_link_directories`. If CUDA libs are outside the default search path, set it before configuring; otherwise CMake only emits a warning and the link may fail.
+- Sources are globbed (`file(GLOB ...)`), so **adding a new `.cpp`/`.cu` requires re-running CMake**, not just `make`.
 
-CUDA architecture is hardcoded to `sm_61` in [CMakeLists.txt](CMakeLists.txt):26. Change `CMAKE_CUDA_ARCHITECTURES` if targeting a different GPU.
+Build outputs: `build/OpenMat.so` (shared lib, no `lib` prefix), `build/OpenMat_app` (from `src/main.cpp`), `build/tests/test_*`.
 
 ## Tests
 
-Uses GoogleTest (fetched automatically by CMake via FetchContent). Each test suite is its own binary.
+GoogleTest is fetched by CMake (FetchContent). Each suite is its own binary, registered in [tests/CMakeLists.txt](tests/CMakeLists.txt) via `add_om_test`.
 
 ```bash
-# Run all tests
-cd build && ctest
+cd build && ctest                    # all suites
+cd build && ctest --output-on-failure
 
-# Run a single suite directly (shows per-test output)
-./build/tests/test_arithmetic
-./build/tests/test_fused_ops
-./build/tests/test_device_transfer
-./build/tests/test_factory
-./build/tests/test_reductions
-./build/tests/test_benchmarks
-./build/tests/test_reshape
+# Individual suites (real GPU required — most tests allocate CUDA memory)
+./build/tests/test_arithmetic       ./build/tests/test_transpose
+./build/tests/test_fused_ops        ./build/tests/test_streams
+./build/tests/test_device_transfer  ./build/tests/test_allocator_stream
+./build/tests/test_factory          ./build/tests/test_stress
+./build/tests/test_reductions       ./build/tests/test_stream_perf
+./build/tests/test_benchmarks       ./build/tests/test_reshape
 
-# Run a single test by name
+# Single test
 ./build/tests/test_arithmetic --gtest_filter="TensorArithmetic.CPUOperations"
 ```
 
-## Python package
-
-The Python package wraps `OpenMat.so` via ctypes/pybind. Build it after compiling the shared library:
-
-```bash
-cd python
-pip install -e .   # development install (uses build/OpenMat.so via hatch_build.py)
-# or: OPENMAT_LIB=/path/to/OpenMat.so pip install .
-```
-
-`hatch_build.py` copies `build/OpenMat.so` into `python/openmat/` before the wheel is assembled.
+`test_stream_perf` and `test_benchmarks` are timing suites, not correctness suites; their output is hardware-dependent (see [stream_perf_report.md](stream_perf_report.md)). Adding a suite means adding both the `.cpp` under `tests/` and an `add_om_test(...)` line.
 
 ## Architecture
 
-Everything lives under the `om` namespace. The data flow for a tensor op is:
+Everything lives under the `om` namespace. Headers are in `headers/`, template definitions in matching `.inl` files included at the bottom of each header.
+
+### Call path for a tensor op
+
+The **stream overload is the single implementation**; the no-stream method is a one-line delegate:
 
 ```
-Tensor<T>::operator+()
-  → _add(TensorView, TensorView, TensorView, DEVICE_TYPE)   [kernel_launcher.inl]
-    → add_dispatch<DEVICE_TYPE::CPU/CUDA, T>::exec()        [kernel_launcher.h]
-      → add_cpu() or launch_add()                           [ops/cpu/ or ops/kernels/]
-        → rank-specialized CUDA kernel or flat CPU loop
+Tensor<T>::operator+(rhs)
+  → Tensor<T>::add(rhs)                            [tensor.inl]
+    → Tensor<T>::add(rhs, Stream::default_stream()) ← the real implementation
+      → branch on device_type():
+          CPU  → add_cpu(lhs_view, rhs_view, dst_view)     [ops/cpu/]
+          CUDA → launch_add<T>(..., stream.get())          [ops/kernels/]
+            → rank-specialized CUDA kernel
 ```
 
-**`Tensor<T>`** ([headers/tensor.cuh](headers/tensor.cuh), [headers/tensor.inl](headers/tensor.inl)) — owning N-dimensional tensor. Stores shape, row-major strides, a raw `T*`, a `Device`, and a `unique_ptr<Allocator<T>>`. Construction allocates memory via `AllocatorFactory`. Copy deep-copies via the allocator; move transfers ownership and nulls the source pointer.
+`Stream::default_stream()` is a non-owning wrapper around `nullptr`, so the "synchronous" API is the stream API on the null stream — there is no second code path. When adding an op, implement the `(args, const Stream&)` overload and make the no-stream one delegate to it.
 
-**`Allocator<T>` / `AllocatorFactory<T>`** ([headers/allocator.h](headers/allocator.h)) — abstract base with two concrete implementations: `CpuAllocator` (malloc/free/memcpy) and `GpuAllocator` (cudaMalloc/cudaFree/cudaMemcpy). `AllocatorFactory::create(DEVICE_TYPE)` selects the right one at `Tensor` construction time.
+**Important:** the `_add` / `_sub` / `_mul` / `_div` / `_matmul` free functions and the `*_dispatch<DEVICE_TYPE, T>` structs generated by the macros in [kernel_launcher.h](headers/kernel_launcher.h)/[.inl](headers/kernel_launcher.inl) are **no longer called by `Tensor<T>`** — `tensor.inl` branches on `device_type()` and calls `add_cpu`/`launch_add` directly, because the dispatch macros have no stream parameter. Only `_fill` is still live (used by `Tensor::fill`). Don't assume adding a `DEFINE_DEVICE_DISPATCH_*` entry wires an op up; it does not.
 
-**`Device`** ([headers/mat_utils.h](headers/mat_utils.h)) — lightweight struct (`m_Id`, `m_Str`, `m_Dt`). Constructed from a string like `"cpu:0"` or `"cuda:0"`.
+### Core types
 
-**`TensorView<T>`** ([headers/tensor_view.cuh](headers/tensor_view.cuh)) — non-owning host-side view: raw pointer + shape/stride pointers + rank. `__host__`-only. Converted to `DeviceTensorView` via `.as_device_tw()` before kernel launch.
+**`Tensor<T>`** ([tensor.cuh](headers/tensor.cuh), [tensor.inl](headers/tensor.inl)) — owning N-D tensor: shape, row-major strides, raw `T*`, `Device`, an `om::Stream`, and a `unique_ptr<Allocator<T>>`. Copy deep-copies; move transfers ownership and nulls the source pointer. There is **no copy-assignment operator and no default constructor** — only move-assign.
 
-**`DeviceTensorView<T>`** ([headers/device_tensor_view.cuh](headers/device_tensor_view.cuh)) — non-owning device-side view. Its constructor allocates and uploads shape/stride arrays to GPU memory with `cudaMalloc`/`cudaMemcpy`; destructor frees them. Move-only. Operator `()` is `__device__`-only and uses `device_load` for reads.
+**`Allocator<T>` / `AllocatorFactory<T>`** ([allocator.h](headers/allocator.h)) — `CpuAllocator` (malloc/free/memcpy) and `GpuAllocator` (cudaMalloc/cudaFree/cudaMemcpy, plus `cudaMallocAsync`/`cudaFreeAsync`/`cudaMemcpyAsync` for the `*_async` overrides). The base class gives every `*_async` method a synchronous fallback, so `CpuAllocator` only overrides what it needs.
 
-**Kernel dispatch** ([headers/kernel_launcher.h](headers/kernel_launcher.h), [headers/kernel_launcher.inl](headers/kernel_launcher.inl)) — two macro families:
-- `DEFINE_DEVICE_DISPATCH_BINARY_H(OP_NAME, CPU_FUNC, CUDA_FUNC)` — declares `op_dispatch<DEVICE_TYPE, T>` template structs that call `CPU_FUNC` or `CUDA_FUNC`.
-- `DEFINE_DEVICE_DISPATCH_BINARY_INL(OP_NAME)` — defines the free function `_op(lhs, rhs, dst, DEVICE_TYPE)` that switches at runtime and calls the matching dispatch struct.
-- Unary (scalar) variants follow the same pattern with `DEFINE_DEVICE_DISPATCH_UNARY_H/INL`.
+**`om::Stream`** ([stream.h](headers/stream.h)) — RAII `cudaStream_t`. Default ctor creates and owns a stream; `Stream(cudaStream_t)` wraps without owning; `Stream::default_stream()` returns a non-owning null-stream wrapper. Move-only.
 
-**Rank-specialized CUDA kernels** ([headers/ops/kernels/binary_op_macros.cuh](headers/ops/kernels/binary_op_macros.cuh)) — `DEFINE_BINARY_OP_LAUNCH(OP_NAME)` generates a `launch_op` function that switches on `lhs.rank` (1–4) and selects a matching kernel with a rank-tuned grid/block layout. Rank ≥ 5 falls back to a flat 1D kernel (`_kernel_nd`) that reconstructs multi-indices from a linear index. Explicit template instantiations for `float`, `int`, `char`, `float16_t` are emitted by `DEFINE_BINARY_OP_LAUNCH_FRW_DEC`.
+**Stream/allocator invariant:** `cudaMallocAsync` memory is stream-ordered — freeing on a different stream than it was allocated on is a programming error that surfaces as an illegal memory access far from the call site. Every `Tensor` stores `m_Stream` and its destructor calls `deallocate_async(m_Data, m_Stream.get())`. When a stream overload constructs its output it uses the private `Tensor(shape, device, Stream)` ctor with `Stream(s.get())` (non-owning) so the output frees on the enqueuing stream. Preserve this when adding stream overloads.
 
-**Ops layout:**
+**`TensorView<T>`** ([tensor_view.cuh](headers/tensor_view.cuh)) — non-owning host-side view (pointer + shape/stride pointers + rank), `__host__`-only. `.as_device_tw()` converts to a device view. `.match(other)` compares shapes.
+
+**`DeviceTensorView<T>`** ([device_tensor_view.cuh](headers/device_tensor_view.cuh)) — shape and stride are **fixed inline arrays** (`size_t shape[MAX_RANK]`, `MAX_RANK = 8`) copied from host in the constructor. No device allocation: the struct is trivially copyable and passed **by value** into the kernel parameter block. Do not reintroduce per-view `cudaMalloc` for metadata. Rank > 8 trips an `assert`. `operator()` is `__device__`-only and uses `device_load` (`__ldg`) for const reads.
+
+**`Device`** ([mat_utils.h](headers/mat_utils.h)) — `{m_Id, m_Str, m_Dt}`, constructible from `"cpu:0"` / `"cuda:0"` or `(id, DEVICE_TYPE)`.
+
+**Supported dtypes** (`om::dtype<T>()`): `float`, `double`, `int`, `char`, `float16_t`. `float16_t` ([type_traits/types.cuh](headers/type_traits/types.cuh)) is a `__half` wrapper with host/device arithmetic operators — note `double` has a `dtype()` name but is **not** in the kernel instantiation lists.
+
+### Ops layout
+
 ```
 headers/ops/cpu/        ← CPU op declarations (macro-generated inline functions)
 src/ops/cpu/            ← CPU op .cpp translation units
@@ -93,32 +95,41 @@ headers/ops/kernels/    ← CUDA kernel declarations and launch macros (.cuh)
 src/ops/kernels/        ← CUDA kernel .cu translation units
 ```
 
-**Adding a new op:** define the kernel body expression in `src/ops/kernels/` using `DEFINE_BINARY_OP_KERNEL_K1/K2/K3/K4/ND` and `DEFINE_BINARY_OP_LAUNCH`, add the CPU implementation in `src/ops/cpu/`, declare both in their respective headers, then register the dispatch pair in [headers/kernel_launcher.h](headers/kernel_launcher.h) with `DEFINE_DEVICE_DISPATCH_BINARY_H` and in [headers/kernel_launcher.inl](headers/kernel_launcher.inl) with `DEFINE_DEVICE_DISPATCH_BINARY_INL`.
+**Rank-specialized kernels** ([binary_op_macros.cuh](headers/ops/kernels/binary_op_macros.cuh), [unary_op_macros.cuh](headers/ops/kernels/unary_op_macros.cuh)) — `DEFINE_BINARY_OP_LAUNCH(OP)` generates `launch_OP(..., cudaStream_t stream)` that switches on `rank`: 1→`dim3(16)`, 2→`dim3(16,16)`, 3→`dim3(8,8,8)`, 4→`dim3(8,8,min(shape[1],8))`, and rank ≥ 5 → flat `_kernel_nd` with linear-index reconstruction. Declarations default `stream = 0`. `DEFINE_BINARY_OP_LAUNCH_FRW_DEC` emits explicit instantiations for `float`, `int`, `char`, `float16_t`.
 
-**Supported dtypes** (via `om::dtype<T>()` specializations): `float`, `double`, `int`, `char`, `float16_t`.
+"Unary" in this codebase means **tensor-scalar** (`add_k`, `sub_k`, `mul_k`, `div_k`), not elementwise-unary math.
 
-## Fused operations
+**Adding a binary/scalar op:** kernel bodies in `src/ops/kernels/` via `DEFINE_BINARY_OP_KERNEL_K1/K2/K3/K4/ND` + `DEFINE_BINARY_OP_LAUNCH` + `DEFINE_BINARY_OP_LAUNCH_FRW_DEC`; CPU side via `DEFINE_BINARY_OPS_CPU` in `headers/ops/cpu/` and its `.cpp`; then the `Tensor<T>` stream overload in `tensor.inl` calling `op_cpu` / `launch_op` directly.
 
-[headers/ops/kernels/fused_op.cuh](headers/ops/kernels/fused_op.cuh) provides functor-based kernel fusion. Key types:
+### Fused operations
 
-- **`Add<T>`, `Mul<T>`, `Div<T>`, `Pow<T>`** — unary scalar functors (`__host__ __device__`)
-- **`Compose<F,G>`** — chains two unary functors: `g(f(x))`, no intermediate allocation. Uses `decltype` return type (C++17 compatible, not `auto` parameter).
-- **`BinaryAdd/Sub/Mul/Div<T>`** — binary element-wise functors
-- **`BinaryCompose<BinOp,UnaryOp>`** — chains a binary op with a unary post-op
+[fused_op.cuh](headers/ops/kernels/fused_op.cuh) — functor-based fusion, no intermediate allocation.
 
-`launch_apply_op<T>(src, dst, op)` and `launch_apply_binary_op<T>(lhs, rhs, dst, op)` are the kernel entry points. Both dispatch by rank (1–4 dedicated kernels, ≥5 flat `_nd` fallback).
+- Unary scalar functors: `Add<T>`, `Mul<T>`, `Div<T>`, `Pow<T>`, `ReLU<T>`, `Sigmoid<T>`
+- `Compose<F,G>` — `g(f(x))`. Uses `decltype` return types, **not** `auto` parameters (C++17 target).
+- Binary functors: `BinaryAdd/Sub/Mul/Div<T>`; `BinaryCompose<BinOp,UnaryOp>` chains a binary op with a unary post-op.
 
-**Explicit instantiations** in `fused_op.cu` must list every `(T, Op)` combination used from `.cpp` files. If you add a new functor or compose a new combination, add the instantiation or you will get a linker error. Calling `launch_apply_op` from a `.cu` file works without explicit instantiation.
+Entry points `launch_apply_op<T>(src, dst, op, stream)` and `launch_apply_binary_op<T>(lhs, rhs, dst, op, stream)` dispatch by rank the same way (1–4 dedicated, ≥5 flat `_nd`).
 
-**`Tensor<T>` fused methods** (all in [headers/tensor.inl](headers/tensor.inl)):
-- `apply(Op op)` — applies any unary functor
-- `apply_binary(rhs, Op op)` — applies any binary functor
-- `scale_shift(scale, shift)` — `(x * scale) + shift`
-- `shift_scale(shift, scale)` — `(x + shift) * scale`
-- `fused_add_mul(rhs, scale)`, `fused_sub_mul`, `fused_mul_add`, `fused_div_add`
+**Explicit instantiations in [fused_op.cu](src/ops/kernels/fused_op.cu) must list every `(T, Op)` pair used from a `.cpp`.** A new functor or a new `Compose<...>` combination without a matching instantiation is a linker error. Calls from a `.cu` file need no instantiation.
 
-**Known limitation:** `launch_apply_op` is CUDA-only. Calling `apply()` on a CPU tensor is undefined behavior — the `tensor.inl` path must dispatch to a CPU loop for `DEVICE_TYPE::CPU` (not yet implemented, see `docs/roadmap.md`).
+`Tensor<T>` fused methods: `apply(op[, stream])`, `apply_binary(rhs, op)`, `scale_shift(scale, shift)` (`(x*scale)+shift`), `shift_scale(shift, scale)` (`(x+shift)*scale`), `relu()`, `sigmoid()`, `fused_add_mul`, `fused_sub_mul`, `fused_mul_add`, `fused_div_add`. `apply` and `apply_binary` both have CPU loop paths, so calling them on a CPU tensor is safe (this was previously a documented bug and is fixed). `apply_binary` has no stream overload — it always runs on the default stream.
 
-## Reductions
+### Reductions, matmul, shape ops
 
-GPU reductions use a two-phase shared-memory tree-reduction + warp shuffle pattern (`__shfl_down_sync`). Entry points in [headers/ops/kernels/reduce_gpu.cuh](headers/ops/kernels/reduce_gpu.cuh): `launch_reduce_sum`, `launch_reduce_min`, `launch_reduce_max`. CPU path is in [headers/ops/cpu/reduce_cpu.h](headers/ops/cpu/reduce_cpu.h). Exposed on `Tensor<T>` as `.sum()`, `.mean()`, `.min()`, `.max()`.
+- **Reductions** — two-phase shared-memory tree reduction + `__shfl_down_sync` warp shuffle ([reduce_gpu.cuh](headers/ops/kernels/reduce_gpu.cuh): `launch_reduce_sum/min/max`), CPU path in [reduce_cpu.h](headers/ops/cpu/reduce_cpu.h). Exposed as `.sum()`, `.mean()`, `.min()`, `.max()` — these return a scalar and have no stream overloads (they synchronize). `.mean()` is `sum()` divided in `double`.
+- **Matmul** — rank-2 only, tiled shared-memory kernel with `MATMUL_TILE_SIZE = 16` ([matmul_gpu.cu](src/ops/kernels/matmul_gpu.cu)). Its shared tiles are declared as raw `unsigned char` arrays and reinterpret-cast to `T*` — a workaround for `__shared__ T[]` with the non-trivially-constructible `float16_t`.
+- **Transpose / permute** — `launch_transpose` (32×32 shared tile padded to `[TILE][TILE+1]` to avoid bank conflicts) and `launch_permute` ([transpose_gpu.cuh](headers/ops/kernels/transpose_gpu.cuh)); both have stream overloads on `Tensor<T>`. `launch_permute` copies the axis array into an `AxesBuf` struct before launching — a raw `size_t axes[N]` kernel parameter decays to a host pointer and silently misbehaves on device.
+- **`reshape` / `flatten` / `squeeze` / `unsqueeze`** — currently **copying**, not views: `reshape` constructs `Tensor(*this)` (deep copy) and then rewrites shape/stride. They validate element counts and throw on mismatch.
+
+### Error handling
+
+`CUDA_CHECK` (checks `cudaGetLastError()`) and `CUDA_CALL(expr)` (checks a returned `cudaError_t`) in [cuda_defines.cuh](headers/cuda_defines.cuh) throw `std::runtime_error` with file/line. Kernel errors are asynchronous, so a `CUDA_CHECK` right after a launch on a non-null stream catches launch-configuration errors only — in-kernel faults surface at the next synchronization point, often attributed to an unrelated call.
+
+## Docs
+
+- [README.md](README.md) — public overview, design-decision rationale, and measured stream benchmarks (RTX 4060).
+- [docs/roadmap.md](docs/roadmap.md) — feature backlog with per-item file lists (in Italian). Most high/medium-priority items are checked off; remaining: cuBLAS integration, cuRAND random init, comparison ops, slicing, batch matmul, `operator<<` / save-load.
+- [docs/fused_operations.md](docs/fused_operations.md), [stream_perf_report.md](stream_perf_report.md), [REPO_SUMMARY.md](REPO_SUMMARY.md).
+
+Python bindings are on the roadmap only — there is **no `python/` directory, no `hatch_build.py`, and no packaging setup** in this repository yet, despite the README's "Python FFI (in progress)" line.
