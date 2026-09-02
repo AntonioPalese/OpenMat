@@ -1,4 +1,13 @@
 cmake_minimum_required(VERSION 3.22.1 FATAL_ERROR)
+
+# Must be set BEFORE project()/enable_language(CUDA): enabling CUDA defines
+# CMAKE_CUDA_ARCHITECTURES with CMake's own default, so this guard would never
+# fire if placed any later. "native" targets the GPU in this machine
+# (CMake >= 3.24); override with -DCMAKE_CUDA_ARCHITECTURES=<sm> to cross-compile.
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+    set(CMAKE_CUDA_ARCHITECTURES native)
+endif()
+
 project(OpenMat LANGUAGES CXX CUDA)
 
 # Compile with  : cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -B build
@@ -22,8 +31,6 @@ endforeach()
 
 
 cmake_policy(SET CMP0104 NEW)
-
-set(CMAKE_CUDA_ARCHITECTURES 61)
 
 message(STATUS "Using CUDA architecture: ${CMAKE_CUDA_ARCHITECTURES}")
 
