@@ -59,6 +59,8 @@ OPENMAT_LIB=build/OpenMat.so python python/test_bindings.py   # smoke script
 cd python && pytest                                            # pytest suite (python/tests/)
 ```
 
+Python suites: `test_tensor.py` (the original surface), `test_tensor_api.py` (metadata, indexing, shape/fused ops, buffer protocols), `test_dtypes.py`, `test_streams.py`. [python/tests/conftest.py](python/tests/conftest.py) provides a `device` fixture that runs a test on both backends and a `requires_cuda` marker.
+
 [python/hatch_build.py](python/hatch_build.py) is the custom hatch hook `pyproject.toml` points at: it copies `build/OpenMat.so` (or `$OPENMAT_LIB`) into `openmat/` so the wheel bundles it, and only warns if no library is present — an sdist should not need a CUDA toolchain. The copied `openmat/OpenMat.so` is gitignored by the root `*.so` rule.
 
 Gotcha: the root [.gitignore](.gitignore) starts with `*build*`, which matches `hatch_build.py` itself — that is why the file was absent from the repo and `uv pip install -e .` failed. It is now kept by an explicit `!python/hatch_build.py`; be careful adding any other source file with "build" in its name.
@@ -154,11 +156,20 @@ GPU: two-phase shared-memory tree reduction + warp shuffle (`__shfl_down_sync`) 
 
 [src/python/openmat_capi.cpp](src/python/openmat_capi.cpp) is the C-ABI boundary, compiled into `OpenMat.so`. Conventions:
 - Tensor handles are opaque `void*` to heap `Tensor<T>`; every `om_*_create`/`_copy` must be matched by exactly one `om_*_destroy`.
-- Pointer-returning functions return `nullptr` on failure; int-returning ones return non-zero. Both write the exception message into a caller-supplied `char* errbuf, int errbuf_len` (Python passes a 512-byte buffer).
-- Arithmetic, scalar, and reduction entry points are macro-generated (`DEFINE_BINOP_TT`, `DEFINE_BINOP_TS`, `DEFINE_REDUCTION`), so `om_tensor_float_add` etc. will not grep as literal definitions.
-- **Float only.** The `TI = om::Tensor<int>` alias is declared but no int API is exported yet.
+- Pointer-returning functions return `nullptr` on failure; int-returning ones return non-zero. Both write the exception message into a caller-supplied `char* errbuf, int errbuf_len` (Python passes a 512-byte buffer). No exception crosses the boundary: every entry point is wrapped in `OM_GUARD_PTR` / `OM_GUARD_INT` / `OM_GUARD_VAL`.
+- Infallible metadata getters (`rank`, `size`, `shape`, `stride`, `on_cuda`, `device_id`, `dtype`, `itemsize`, `data_ptr`) take no errbuf.
 
-Adding a Python-visible method means three edits: the `extern "C"` function here, the `ctypes` `restype`/`argtypes` declaration in [python/openmat/_clib.py](python/openmat/_clib.py), and the wrapper in [python/openmat/tensor.py](python/openmat/tensor.py).
+**The per-dtype surface is one body included twice.** [src/python/openmat_capi_impl.inc](src/python/openmat_capi_impl.inc) holds every `om_tensor_<sfx>_*` function; `openmat_capi.cpp` includes it once with `OM_T=float, OM_SFX=float` and once with `OM_T=int, OM_SFX=int`, so `om_tensor_float_add` and `om_tensor_int_add` will not grep as literal definitions (`OM_FN(name)` pastes them). The `.inc` is not in the `file(GLOB src/python/*.cpp)` and is never compiled on its own; it `#error`s if `OM_T`/`OM_SFX` are unset. **Adding a dtype = adding one `#define`/`#include`/`#undef` block** — provided the kernels are instantiated for it (see the `INSTANTIATE_*` macros; `double` has no GPU instantiation, so it cannot be added as-is).
+
+Beyond the tensor families the library exports a dtype-independent runtime API: `om_cuda_device_count`, `om_cuda_is_available`, `om_device_synchronize`, and `om_stream_create/retain/release/destroy/synchronize/handle`.
+
+**Streams are reference-counted at the C boundary** (`StreamBox` in `openmat_capi.cpp`), not in Python. This is deliberate: `cudaMallocAsync` memory must be freed on the stream that produced it, and Python's cyclic collector finalizes a cycle's members — plus everything reachable only from them — in arbitrary order, so a `Stream` object could be torn down before the tensors it still owns memory for. Holding a Python reference is not enough; both attempts at that segfaulted under `gc.collect()`. Each `Tensor` therefore holds an integer handle plus one C-side reference (`om_stream_retain` in `Tensor._wrap`, `om_stream_release` in `__del__`, after the tensor is destroyed). `Stream.close()` is consequently safe while tensors from that stream are alive.
+
+**Float and int32.** `Tensor<double>` and `Tensor<char>` are not exported.
+
+Adding a Python-visible method means three edits: the function in [openmat_capi_impl.inc](src/python/openmat_capi_impl.inc) (once — both dtypes get it), the `ctypes` `restype`/`argtypes` in `_declare_dtype()` in [python/openmat/_clib.py](python/openmat/_clib.py), and the wrapper in [python/openmat/tensor.py](python/openmat/tensor.py). Ops with a `(args, const Stream&)` C++ overload get a `_stream` sibling in the `.inc` and a `stream=None` kwarg in Python.
+
+The Python package is `Tensor` + `Stream` + a `DType` registry ([python/openmat/_dtypes.py](python/openmat/_dtypes.py)); host tensors expose `__array_interface__` (zero-copy `np.asarray`), CUDA tensors `__cuda_array_interface__`. See [python/README.md](python/README.md) for the user-facing surface.
 
 ## Reference docs
 

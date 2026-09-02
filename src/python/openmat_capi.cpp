@@ -10,327 +10,180 @@
  *
  * Error handling: functions that can fail return an int (0 = success, non-zero
  * = error) and write a human-readable message to the provided errbuf.  Pointer-
- * returning functions return nullptr on failure.
+ * returning functions return nullptr on failure.  No exception ever crosses the
+ * ABI boundary — every entry point is wrapped in one of the OM_GUARD_* macros.
+ *
+ * The per-dtype surface lives in openmat_capi_impl.inc, which is included once
+ * per supported element type; see the OM_T / OM_SFX pairs at the bottom.
  */
 
 #include "tensor.cuh"
 #include "mat_utils.h"
-#include <cstring>
-#include <cstdio>
+#include "stream.h"
 
-// Convenience: fill errbuf (if non-null, capacity errbuf_len) from exception.
-static void set_err(char* errbuf, int errbuf_len, const char* msg) {
+#include <atomic>
+#include <cstdio>
+#include <cstring>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+namespace {
+
+// Fills errbuf (if non-null, capacity errbuf_len) with a message.
+void set_err(char* errbuf, int errbuf_len, const char* msg) {
     if (errbuf && errbuf_len > 0)
         std::snprintf(errbuf, errbuf_len, "%s", msg);
 }
 
-using TF = om::Tensor<float>;
-using TI = om::Tensor<int>;
+om::Device om_make_device(int on_cuda) {
+    return om::Device(0, on_cuda ? om::DEVICE_TYPE::CUDA : om::DEVICE_TYPE::CPU);
+}
+
+// Reference-counted stream.
+//
+// Memory a tensor got from a stream's pool must be freed on that same stream,
+// so the stream has to outlive every tensor allocated on it.  Leaving that
+// ordering to the binding language does not work: Python's cyclic collector
+// finalizes a cycle's members (and everything reachable only from them) in
+// arbitrary order, so a Stream object can be torn down before the tensors that
+// still need it.  Counting here instead makes a handle a plain integer on the
+// caller's side, with no finalization order to get wrong.
+struct StreamBox {
+    om::Stream stream;
+    // atomic because ctypes drops the GIL around every call, so two Python
+    // threads can retain/release the same stream concurrently.
+    std::atomic<long> refs{1};
+};
+
+// A stream handle of nullptr means the default (null) stream — the same trick
+// om::Stream::default_stream() plays inside the C++ API, so the synchronous and
+// asynchronous entry points share one code path.
+const om::Stream& om_deref_stream(const void* handle) {
+    static const om::Stream s_default = om::Stream::default_stream();
+    return handle ? static_cast<const StreamBox*>(handle)->stream : s_default;
+}
+
+void om_cuda_check(cudaError_t err, const char* what) {
+    if (err != cudaSuccess)
+        throw std::runtime_error(std::string(what) + ": " + cudaGetErrorString(err));
+}
+
+// Row-major offset for `n` coordinates, bounds-checked against the shape.
+size_t om_flat_index(const std::vector<size_t>& shape,
+                     const std::vector<size_t>& stride,
+                     const size_t* indices, size_t n)
+{
+    if (n != shape.size())
+        throw std::invalid_argument("index: expected " + std::to_string(shape.size()) +
+                                    " indices, got " + std::to_string(n));
+    size_t flat = 0;
+    for (size_t i = 0; i < n; ++i) {
+        if (indices[i] >= shape[i])
+            throw std::out_of_range("index " + std::to_string(indices[i]) +
+                                    " out of range for axis " + std::to_string(i) +
+                                    " with size " + std::to_string(shape[i]));
+        flat += indices[i] * stride[i];
+    }
+    return flat;
+}
+
+} // namespace
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Float tensor API
+// Exception guards.  Variadic so bodies may contain top-level commas.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#define OM_GUARD_PTR(...)                                                       \
+    try { __VA_ARGS__ }                                                         \
+    catch (const std::exception& e) { set_err(errbuf, errbuf_len, e.what()); return nullptr; } \
+    catch (...) { set_err(errbuf, errbuf_len, "OpenMat: unknown error"); return nullptr; }
+
+#define OM_GUARD_INT(...)                                                       \
+    try { __VA_ARGS__ }                                                         \
+    catch (const std::exception& e) { set_err(errbuf, errbuf_len, e.what()); return -1; } \
+    catch (...) { set_err(errbuf, errbuf_len, "OpenMat: unknown error"); return -1; }
+
+#define OM_GUARD_VAL(zero, ...)                                                 \
+    try { __VA_ARGS__ }                                                         \
+    catch (const std::exception& e) { set_err(errbuf, errbuf_len, e.what()); return zero; } \
+    catch (...) { set_err(errbuf, errbuf_len, "OpenMat: unknown error"); return zero; }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Runtime / stream API (dtype-independent)
 // ─────────────────────────────────────────────────────────────────────────────
 
 extern "C" {
 
-// --- lifecycle ---------------------------------------------------------------
-
-void* om_tensor_float_create(const size_t* shape, size_t rank,
-                              int on_cuda,
-                              char* errbuf, int errbuf_len)
-{
-    try {
-        std::vector<size_t> sh(shape, shape + rank);
-        om::Device dv(0, on_cuda ? om::DEVICE_TYPE::CUDA : om::DEVICE_TYPE::CPU);
-        return new TF(sh, dv);
-    } catch (const std::exception& e) {
-        set_err(errbuf, errbuf_len, e.what());
-        return nullptr;
-    }
+int om_cuda_device_count() {
+    int n = 0;
+    if (cudaGetDeviceCount(&n) != cudaSuccess) return 0;
+    return n;
 }
 
-void* om_tensor_float_zeros(const size_t* shape, size_t rank,
-                             int on_cuda,
-                             char* errbuf, int errbuf_len)
-{
-    try {
-        std::vector<size_t> sh(shape, shape + rank);
-        om::Device dv(0, on_cuda ? om::DEVICE_TYPE::CUDA : om::DEVICE_TYPE::CPU);
-        return new TF(TF::zeros(sh, dv));
-    } catch (const std::exception& e) {
-        set_err(errbuf, errbuf_len, e.what());
-        return nullptr;
-    }
+int om_cuda_is_available() {
+    return om_cuda_device_count() > 0 ? 1 : 0;
 }
 
-void* om_tensor_float_ones(const size_t* shape, size_t rank,
-                            int on_cuda,
-                            char* errbuf, int errbuf_len)
-{
-    try {
-        std::vector<size_t> sh(shape, shape + rank);
-        om::Device dv(0, on_cuda ? om::DEVICE_TYPE::CUDA : om::DEVICE_TYPE::CPU);
-        return new TF(TF::ones(sh, dv));
-    } catch (const std::exception& e) {
-        set_err(errbuf, errbuf_len, e.what());
-        return nullptr;
-    }
-}
-
-void* om_tensor_float_full(const size_t* shape, size_t rank,
-                            float value, int on_cuda,
-                            char* errbuf, int errbuf_len)
-{
-    try {
-        std::vector<size_t> sh(shape, shape + rank);
-        om::Device dv(0, on_cuda ? om::DEVICE_TYPE::CUDA : om::DEVICE_TYPE::CPU);
-        return new TF(TF::full(sh, value, dv));
-    } catch (const std::exception& e) {
-        set_err(errbuf, errbuf_len, e.what());
-        return nullptr;
-    }
-}
-
-// from_buffer: copies `n` floats from host buffer `data` into tensor on `device`.
-void* om_tensor_float_from_buffer(const float* data, size_t n,
-                                   const size_t* shape, size_t rank,
-                                   int on_cuda,
-                                   char* errbuf, int errbuf_len)
-{
-    try {
-        std::vector<size_t> sh(shape, shape + rank);
-        std::vector<float> v(data, data + n);
-        om::Device dv(0, on_cuda ? om::DEVICE_TYPE::CUDA : om::DEVICE_TYPE::CPU);
-        return new TF(TF::from_vector(v, sh, dv));
-    } catch (const std::exception& e) {
-        set_err(errbuf, errbuf_len, e.what());
-        return nullptr;
-    }
-}
-
-void om_tensor_float_destroy(void* handle)
-{
-    delete static_cast<TF*>(handle);
-}
-
-void* om_tensor_float_copy(const void* handle,
-                            char* errbuf, int errbuf_len)
-{
-    try {
-        return new TF(*static_cast<const TF*>(handle));
-    } catch (const std::exception& e) {
-        set_err(errbuf, errbuf_len, e.what());
-        return nullptr;
-    }
-}
-
-// --- metadata ----------------------------------------------------------------
-
-size_t om_tensor_float_rank(const void* handle) {
-    return static_cast<const TF*>(handle)->rank();
-}
-
-size_t om_tensor_float_size(const void* handle) {
-    return static_cast<const TF*>(handle)->size();
-}
-
-// Writes rank() values into `out` (caller must provide enough space).
-void om_tensor_float_shape(const void* handle, size_t* out) {
-    const auto& sh = static_cast<const TF*>(handle)->shape();
-    std::memcpy(out, sh.data(), sh.size() * sizeof(size_t));
-}
-
-int om_tensor_float_on_cuda(const void* handle) {
-    return static_cast<const TF*>(handle)->device_type() == om::DEVICE_TYPE::CUDA ? 1 : 0;
-}
-
-// --- data access -------------------------------------------------------------
-
-// Copies all elements to a host buffer (cudaMemcpy if on GPU).
-int om_tensor_float_to_host(const void* handle, float* out,
-                             char* errbuf, int errbuf_len)
-{
-    try {
-        static_cast<const TF*>(handle)->copyToHost(out);
+int om_device_synchronize(char* errbuf, int errbuf_len) {
+    OM_GUARD_INT(
+        om_cuda_check(cudaDeviceSynchronize(), "om_device_synchronize");
         return 0;
-    } catch (const std::exception& e) {
-        set_err(errbuf, errbuf_len, e.what());
-        return -1;
-    }
+    )
 }
 
-void om_tensor_float_fill(void* handle, float value) {
-    static_cast<TF*>(handle)->fill(value);
+// Creates a stream with a reference count of 1.  Pass nullptr anywhere a
+// stream handle is expected to use the default stream instead.
+void* om_stream_create(char* errbuf, int errbuf_len) {
+    OM_GUARD_PTR( return new StreamBox(); )
 }
 
-// --- device transfer ---------------------------------------------------------
-
-void* om_tensor_float_cpu(const void* handle,
-                           char* errbuf, int errbuf_len)
-{
-    try {
-        return new TF(static_cast<const TF*>(handle)->cpu());
-    } catch (const std::exception& e) {
-        set_err(errbuf, errbuf_len, e.what());
-        return nullptr;
-    }
+// Adds a reference.  Every tensor allocated on a stream must hold one for as
+// long as it lives, or its deallocation will target a destroyed stream.
+void om_stream_retain(void* handle) {
+    if (handle)
+        static_cast<StreamBox*>(handle)->refs.fetch_add(1, std::memory_order_relaxed);
 }
 
-void* om_tensor_float_cuda(const void* handle,
-                            char* errbuf, int errbuf_len)
-{
-    try {
-        return new TF(static_cast<const TF*>(handle)->cuda());
-    } catch (const std::exception& e) {
-        set_err(errbuf, errbuf_len, e.what());
-        return nullptr;
-    }
+// Drops a reference, destroying the stream when the last one goes.
+void om_stream_release(void* handle) {
+    if (!handle) return;
+    StreamBox* box = static_cast<StreamBox*>(handle);
+    if (box->refs.fetch_sub(1, std::memory_order_acq_rel) <= 1)
+        delete box;
 }
 
-// --- arithmetic (tensor × tensor) -------------------------------------------
-
-#define DEFINE_BINOP_TT(name, method) \
-void* om_tensor_float_##name(const void* lhs, const void* rhs, \
-                              char* errbuf, int errbuf_len) \
-{ \
-    try { \
-        return new TF(static_cast<const TF*>(lhs)->method(*static_cast<const TF*>(rhs))); \
-    } catch (const std::exception& e) { \
-        set_err(errbuf, errbuf_len, e.what()); \
-        return nullptr; \
-    } \
+void om_stream_destroy(void* handle) {
+    om_stream_release(handle);
 }
 
-DEFINE_BINOP_TT(add,  add)
-DEFINE_BINOP_TT(sub,  sub)
-DEFINE_BINOP_TT(mul,  mul)
-DEFINE_BINOP_TT(div,  div)
-DEFINE_BINOP_TT(matmul, matmul)
-
-// --- arithmetic (tensor × scalar) -------------------------------------------
-
-#define DEFINE_BINOP_TS(name, method) \
-void* om_tensor_float_##name##_scalar(const void* handle, float scalar, \
-                                       char* errbuf, int errbuf_len) \
-{ \
-    try { \
-        return new TF(static_cast<const TF*>(handle)->method(scalar)); \
-    } catch (const std::exception& e) { \
-        set_err(errbuf, errbuf_len, e.what()); \
-        return nullptr; \
-    } \
+int om_stream_synchronize(void* handle, char* errbuf, int errbuf_len) {
+    OM_GUARD_INT(
+        om_deref_stream(handle).synchronize();
+        return 0;
+    )
 }
 
-DEFINE_BINOP_TS(add, add)
-DEFINE_BINOP_TS(sub, sub)
-DEFINE_BINOP_TS(mul, mul)
-DEFINE_BINOP_TS(div, div)
-
-// --- reductions --------------------------------------------------------------
-
-#define DEFINE_REDUCTION(name, method) \
-float om_tensor_float_##name(const void* handle, \
-                              char* errbuf, int errbuf_len) \
-{ \
-    try { \
-        return static_cast<const TF*>(handle)->method(); \
-    } catch (const std::exception& e) { \
-        set_err(errbuf, errbuf_len, e.what()); \
-        return 0.0f; \
-    } \
-}
-
-DEFINE_REDUCTION(sum,  sum)
-DEFINE_REDUCTION(mean, mean)
-DEFINE_REDUCTION(min,  min)
-DEFINE_REDUCTION(max,  max)
-
-// --- shape manipulation ------------------------------------------------------
-
-void* om_tensor_float_reshape(const void* handle,
-                               const size_t* new_shape, size_t new_rank,
-                               char* errbuf, int errbuf_len)
-{
-    try {
-        std::vector<size_t> sh(new_shape, new_shape + new_rank);
-        return new TF(static_cast<const TF*>(handle)->reshape(sh));
-    } catch (const std::exception& e) {
-        set_err(errbuf, errbuf_len, e.what());
-        return nullptr;
-    }
-}
-
-void* om_tensor_float_flatten(const void* handle,
-                               char* errbuf, int errbuf_len)
-{
-    try {
-        return new TF(static_cast<const TF*>(handle)->flatten());
-    } catch (const std::exception& e) {
-        set_err(errbuf, errbuf_len, e.what());
-        return nullptr;
-    }
-}
-
-void* om_tensor_float_squeeze(const void* handle, size_t axis,
-                               char* errbuf, int errbuf_len)
-{
-    try {
-        return new TF(static_cast<const TF*>(handle)->squeeze(axis));
-    } catch (const std::exception& e) {
-        set_err(errbuf, errbuf_len, e.what());
-        return nullptr;
-    }
-}
-
-void* om_tensor_float_unsqueeze(const void* handle, size_t axis,
-                                 char* errbuf, int errbuf_len)
-{
-    try {
-        return new TF(static_cast<const TF*>(handle)->unsqueeze(axis));
-    } catch (const std::exception& e) {
-        set_err(errbuf, errbuf_len, e.what());
-        return nullptr;
-    }
-}
-
-// --- fused ops ---------------------------------------------------------------
-
-void* om_tensor_float_scale_shift(const void* handle,
-                                   float scale, float shift,
-                                   char* errbuf, int errbuf_len)
-{
-    try {
-        return new TF(static_cast<const TF*>(handle)->scale_shift(scale, shift));
-    } catch (const std::exception& e) {
-        set_err(errbuf, errbuf_len, e.what());
-        return nullptr;
-    }
-}
-
-void* om_tensor_float_fused_add_mul(const void* lhs, const void* rhs,
-                                     float scale,
-                                     char* errbuf, int errbuf_len)
-{
-    try {
-        return new TF(static_cast<const TF*>(lhs)->fused_add_mul(
-            *static_cast<const TF*>(rhs), scale));
-    } catch (const std::exception& e) {
-        set_err(errbuf, errbuf_len, e.what());
-        return nullptr;
-    }
-}
-
-void* om_tensor_float_fused_mul_add(const void* lhs, const void* rhs,
-                                     float shift,
-                                     char* errbuf, int errbuf_len)
-{
-    try {
-        return new TF(static_cast<const TF*>(lhs)->fused_mul_add(
-            *static_cast<const TF*>(rhs), shift));
-    } catch (const std::exception& e) {
-        set_err(errbuf, errbuf_len, e.what());
-        return nullptr;
-    }
+// Borrowed cudaStream_t behind the handle (nullptr for the default stream) —
+// useful for interop with other CUDA libraries.
+void* om_stream_handle(void* handle) {
+    return static_cast<void*>(om_deref_stream(handle).get());
 }
 
 } // extern "C"
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-dtype tensor APIs
+// ─────────────────────────────────────────────────────────────────────────────
+
+#define OM_T   float
+#define OM_SFX float
+#include "openmat_capi_impl.inc"
+#undef OM_T
+#undef OM_SFX
+
+#define OM_T   int
+#define OM_SFX int
+#include "openmat_capi_impl.inc"
+#undef OM_T
+#undef OM_SFX

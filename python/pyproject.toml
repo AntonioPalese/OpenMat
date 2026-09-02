@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openmat"
-version = "0.1.0"
+version = "0.2.0"
 description = "Python bindings for OpenMat — a CUDA tensor library"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -18,7 +18,7 @@ dev   = ["numpy>=1.21", "pytest>=7"]
 
 [tool.hatch.build.targets.wheel]
 # Include the compiled shared library alongside the Python sources.
-# The hook (build_hook.py) copies OpenMat.so into openmat/ before packaging.
+# The hook (hatch_build.py) copies OpenMat.so into openmat/ before packaging.
 packages = ["openmat"]
 artifacts = ["openmat/OpenMat.so"]
 hooks-only = false
