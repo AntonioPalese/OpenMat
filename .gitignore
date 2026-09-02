@@ -1,4 +1,7 @@
 *build*
+# ...but this is a source file, not a build artifact: the `*build*` glob above
+# is why it went missing from the repo before.
+!python/hatch_build.py
 *.out
 *.cache*
 *.bin

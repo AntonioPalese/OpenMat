@@ -59,7 +59,9 @@ OPENMAT_LIB=build/OpenMat.so python python/test_bindings.py   # smoke script
 cd python && pytest                                            # pytest suite (python/tests/)
 ```
 
-Caveat: [python/pyproject.toml](python/pyproject.toml) declares a custom hatch hook at `hatch_build.py`, but that file is **not in the repo** — the packaging build (`uv pip install -e .`) fails until it is restored or the `[tool.hatch.build.hooks.custom]` block is removed. Prefer the `OPENMAT_LIB` / dev-fallback path for local work.
+[python/hatch_build.py](python/hatch_build.py) is the custom hatch hook `pyproject.toml` points at: it copies `build/OpenMat.so` (or `$OPENMAT_LIB`) into `openmat/` so the wheel bundles it, and only warns if no library is present — an sdist should not need a CUDA toolchain. The copied `openmat/OpenMat.so` is gitignored by the root `*.so` rule.
+
+Gotcha: the root [.gitignore](.gitignore) starts with `*build*`, which matches `hatch_build.py` itself — that is why the file was absent from the repo and `uv pip install -e .` failed. It is now kept by an explicit `!python/hatch_build.py`; be careful adding any other source file with "build" in its name.
 
 ## Architecture
 
