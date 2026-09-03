@@ -1,60 +1,67 @@
 # OpenMat — Roadmap delle implementazioni future
 
-Questo documento elenca le funzionalità da aggiungere al framework, ordinate per priorità e raggruppate per area. Ogni voce include una breve descrizione tecnica e i file coinvolti.
+Questo documento elenca le funzionalità del framework, il loro stato attuale e il lavoro ancora da fare, raggruppate per area. Ogni voce include una breve descrizione tecnica e i file coinvolti.
+
+**Legenda:** ✅ implementato · ⚠️ implementato parzialmente o con divergenze rispetto al progetto originale · ❌ da fare
+
+Ultimo allineamento al codice: settembre 2025.
 
 ---
 
-## 1. Operazioni matematiche mancanti
+## 1. Operazioni matematiche
 
-### 1.1 Operazioni element-wise
+### 1.1 Operazioni element-wise aggiuntive ❌
 
-Le seguenti operazioni seguono esattamente lo stesso pattern di `add`, `sub`, `mul`, `div` già esistenti in `binary_op_macros.cuh` / `binary_op_macros.h`. Per ognuna basta definire kernel + CPU functor + dispatch.
+`add`, `sub`, `mul`, `div` (tensore⊕tensore e tensore⊕scalare) e `matmul` esistono. Mancano le seguenti, che seguono esattamente lo stesso pattern dei macro in `binary_op_macros.cuh` / `binary_op_macros.h`. Per ognuna basta definire kernel + functor CPU + metodo su `Tensor`.
 
 | Operazione | Espressione | Note |
 |---|---|---|
 | `pow(rhs)` | `lhs[i] ^ rhs[i]` | Usare `powf` per float, `pow` per double |
-| `min(rhs)` | `min(lhs[i], rhs[i])` | Usare `fminf` su GPU |
-| `max(rhs)` | `max(lhs[i], rhs[i])` | Usare `fmaxf` su GPU |
-| `abs()` | `|x[i]|` | Unaria, usare `fabsf` su GPU |
+| `min(rhs)` | `min(lhs[i], rhs[i])` | Usare `fminf` su GPU. Attenzione: il nome collide con `min()` riduzione già esistente — servirà un overload su `const Tensor&` |
+| `max(rhs)` | `max(lhs[i], rhs[i])` | Come sopra |
+| `abs()` | `\|x[i]\|` | Unaria, usare `fabsf` su GPU |
 | `sqrt()` | `√x[i]` | Unaria, usare `sqrtf` su GPU |
 | `exp()` | `e^x[i]` | Unaria, usare `expf` su GPU |
 | `log()` | `ln(x[i])` | Unaria, usare `logf` su GPU |
 
-**File da modificare:**
-- `headers/ops/kernels/binary_op_macros.cuh` — aggiungere `DEFINE_BINARY_OP_KERNEL_K1/K2/K3/K4/ND` + `DEFINE_BINARY_OP_LAUNCH` + `DEFINE_BINARY_OP_LAUNCH_FRW_DEC`
-- `src/ops/kernels/binary_ops.cu` — translation unit per i nuovi kernel
-- `headers/ops/cpu/binary_op_macros.h` — `DEFINE_BINARY_OPS_CPU`
-- `src/ops/cpu/binary_ops.cpp` — implementazione CPU
-- `headers/kernel_launcher.h` — `DEFINE_DEVICE_DISPATCH_BINARY_H` per ognuno
-- `headers/kernel_launcher.inl` — `DEFINE_DEVICE_DISPATCH_BINARY_INL`
-- `headers/tensor.cuh` / `headers/tensor.inl` — metodi pubblici `pow()`, `min()`, ecc.
+Nota: le unarie (`abs`, `sqrt`, `exp`, `log`) **non** richiedono il macchinario dei binary op — conviene implementarle come functor in `fused_op.cuh` esposti via `Tensor::apply`, esattamente come `relu` e `sigmoid`. Il costo è un functor più quattro istanziazioni esplicite, contro cinque file da toccare. Esiste già un functor `Pow<T>` in `fused_op.cuh`, ma non è istanziato né esposto su `Tensor`.
+
+**File da modificare (via `apply`, percorso consigliato):**
+- `headers/ops/kernels/fused_op.cuh` — il nuovo functor
+- `src/ops/kernels/fused_op.cu` — le istanziazioni esplicite per `float`, `int`, `char`, `float16_t`
+- `headers/tensor.cuh` / `headers/tensor.inl` — l'overload `(const Stream&)` più il delegate senza stream
+
+**File da modificare (via binary op, per le binarie):**
+- `headers/ops/kernels/binary_op_macros.cuh` — `DEFINE_BINARY_OP_KERNEL_H` / `DEFINE_BINARY_OP_LAUNCH_H`
+- `src/ops/kernels/binary_ops.cu` — `DEFINE_BINARY_OP_KERNEL_K1/K2/K3/K4/ND` + `DEFINE_BINARY_OP_LAUNCH` + `DEFINE_BINARY_OP_LAUNCH_FRW_DEC`
+- `headers/ops/cpu/binary_op_macros.h` + `src/ops/cpu/binary_ops.cpp` — lato CPU
+- `headers/tensor.cuh` / `headers/tensor.inl` — metodi pubblici
+- `headers/kernel_launcher.h` / `.inl` — **solo** se serve anche la free function senza stream (il dispatch è ormai legacy: `Tensor` chiama i launcher direttamente)
 
 ---
 
-### 1.2 Operazioni di riduzione
+### 1.2 Operazioni di riduzione ⚠️
 
-Oggi non esiste nessuna operazione che riduca un tensore a un singolo scalare o a un tensore di dimensione inferiore.
+Le riduzioni a scalare sono implementate; le riduzioni lungo un asse no.
 
-| Operazione | Risultato | Descrizione |
+| Operazione | Risultato | Stato |
 |---|---|---|
-| `sum()` | scalare | Somma tutti gli elementi |
-| `mean()` | scalare | Media di tutti gli elementi |
-| `min()` | scalare | Elemento minimo |
-| `max()` | scalare | Elemento massimo |
-| `sum(axis)` | tensore rank-1 | Somma lungo una dimensione |
-| `mean(axis)` | tensore rank-1 | Media lungo una dimensione |
+| `sum()` | scalare | ✅ |
+| `mean()` | scalare | ✅ |
+| `min()` | scalare | ✅ |
+| `max()` | scalare | ✅ |
+| `sum(axis)` | tensore rank-1 | ❌ |
+| `mean(axis)` | tensore rank-1 | ❌ |
 
-Le riduzioni su GPU richiedono un pattern a due fasi (riduzione in shared memory per blocco, poi riduzione tra blocchi). Il pattern classico usa `__shared__` con tree-reduction e warp shuffle (`__shfl_down_sync`).
+Implementate in [`headers/ops/kernels/reduce_gpu.cuh`](../headers/ops/kernels/reduce_gpu.cuh) (riduzione a due fasi: tree-reduction in shared memory per blocco + warp shuffle con `__shfl_down_sync`) e [`headers/ops/cpu/reduce_cpu.h`](../headers/ops/cpu/reduce_cpu.h). Suite di test: `test_reductions`.
 
-**File da creare:**
-- `headers/ops/kernels/reduce_gpu.cuh`
-- `src/ops/kernels/reduce_gpu.cu`
-- `headers/ops/cpu/reduce_cpu.h`
-- `src/ops/cpu/reduce_cpu.cpp`
+**Limite noto:** le riduzioni sono **sincrone** e restituiscono uno scalare host — non hanno overload `(const Stream&)`, a differenza di quasi tutto il resto della libreria. Aggiungerli richiede una variante che scriva il risultato in un `Tensor` di dimensione 1 sul device, lasciando la copia su host al chiamante.
+
+Le riduzioni per asse richiedono un kernel diverso da quello attuale: una griglia in cui ogni blocco riduce una "colonna" lungo l'asse scelto, con gli stride del tensore a determinare il passo.
 
 ---
 
-### 1.3 Operazioni di confronto element-wise
+### 1.3 Operazioni di confronto element-wise ❌
 
 | Operazione | Espressione |
 |---|---|
@@ -63,226 +70,252 @@ Le riduzioni su GPU richiedono un pattern a due fasi (riduzione in shared memory
 | `gt(rhs)` | `lhs[i] > rhs[i]` |
 | `clamp(min, max)` | `min ≤ x[i] ≤ max` |
 
-Seguono il pattern binario esistente ma restituiscono `Tensor<int>` (maschera booleana).
+Seguono il pattern binario esistente ma restituiscono `Tensor<int>` (maschera booleana). Questo è il primo caso nella libreria di un'operazione il cui tipo di ritorno differisce da quello degli operandi: `launch_apply_binary_op` è templato su un solo `T` per tutti e tre i view, quindi servirà un launcher separato con `T` in ingresso e `int` in uscita.
+
+`clamp` invece è unaria e ricade direttamente su `Tensor::apply` con un functor `Clamp<T>{lo, hi}`.
 
 ---
 
 ## 2. Operazioni sulle dimensioni
 
-### 2.1 Reshape e view
+### 2.1 Reshape e view ⚠️
 
 ```cpp
-Tensor<T> reshape(const std::vector<size_t>& new_shape) const;
-Tensor<T> flatten() const;   // reshape({size()})
-Tensor<T> squeeze(size_t axis) const;   // rimuove una dimensione di size 1
-Tensor<T> unsqueeze(size_t axis) const; // aggiunge una dimensione di size 1
+Tensor<T> reshape(const std::vector<size_t>& new_shape) const;  // ✅
+Tensor<T> flatten() const;    // ✅ reshape({size()})
+Tensor<T> squeeze(size_t axis) const;    // ✅
+Tensor<T> unsqueeze(size_t axis) const;  // ✅
 ```
 
-`reshape` è zero-copy se il tensore è contiguo in memoria (i.e., i stride sono row-major standard): basta costruire un nuovo `TensorView` con la nuova shape. Se non è contiguo, occorre copiare.
+**Divergenza rispetto al progetto originale.** Il piano era di renderle zero-copy per tensori contigui. L'implementazione in [`headers/tensor.inl`](../headers/tensor.inl) fa invece una **deep copy**: `reshape` costruisce `Tensor out(*this)` (il copy-ctor alloca e copia) e poi riscrive `m_Shape`/`m_Stride`. Gli altri tre delegano a `reshape`.
 
-**File da modificare:** `headers/tensor.cuh`, `headers/tensor.inl`.
+Questa è una scelta deliberata, non un bug: `Tensor<T>` possiede il proprio buffer tramite un `unique_ptr<Allocator<T>>` e non esiste nella libreria alcun meccanismo di ownership condivisa. Una view zero-copy richiederebbe che `Tensor` sappia di non possedere i dati, il che significa introdurre un `shared_ptr` sul buffer o un tipo `TensorRef` distinto. Conseguenza pratica: a differenza di NumPy/PyTorch, una scrittura su un tensore reshaped **non** è visibile attraverso l'originale.
+
+Sono operazioni host-only: nessun kernel, nessun overload con stream. `squeeze` dell'ultimo asse rimasto produce shape `{1}`, non uno scalare.
+
+Suite di test: `test_reshape`.
+
+**Lavoro residuo:** decidere se introdurre view aliasing (e con quale modello di ownership) oppure documentare definitivamente la semantica a copia. È il prerequisito di 2.3.
 
 ---
 
-### 2.2 Transpose
+### 2.2 Transpose e permute ✅
 
 ```cpp
-Tensor<T> transpose() const;               // solo per rank 2
-Tensor<T> permute(std::vector<size_t> axes) const; // ordine arbitrario degli assi
+Tensor<T> transpose() const;                        // solo rank 2, altrimenti throw
+Tensor<T> permute(const std::vector<size_t>& axes) const;
+Tensor<T> transpose(const Stream& s) const;
+Tensor<T> permute(const std::vector<size_t>& axes, const Stream& s) const;
 ```
 
-`transpose` di una matrice 2D può essere implementata come permutazione degli stride (vista logica) senza copiare dati. `permute` generalizza questo a rank N.
+Implementate in [`headers/ops/cpu/transpose_cpu.h`](../headers/ops/cpu/transpose_cpu.h) e [`src/ops/kernels/transpose_gpu.cu`](../src/ops/kernels/transpose_gpu.cu), entrambe con percorso CPU e GPU reali e con overload sullo stream.
 
-**File da creare:** `headers/ops/kernels/transpose_gpu.cuh`, `src/ops/kernels/transpose_gpu.cu`.
+**Divergenza:** il piano prevedeva una permutazione dei soli stride (vista logica, zero-copy). Come per 2.1, l'implementazione **sposta i dati**. Il vantaggio non è banale: il risultato resta contiguo in row-major, quindi ogni operazione successiva conserva accessi coalescenti invece di ereditare uno stride pattern degenere.
+
+`permute` valida gli assi sull'host (lunghezza == rank, in range, nessun duplicato) prima del dispatch. `launch_permute` riceve gli assi come `const size_t*` **host** e li copia in un `AxesBuf`, struct trivially-copyable passata **per valore** nel parameter block del kernel — stessa regola di `DeviceTensorView`: niente allocazioni device per metadati piccoli, e nessun membro puntatore, che sul device decadrebbe in un puntatore host inutilizzabile.
+
+Suite di test: `test_transpose`.
 
 ---
 
-### 2.3 Slice e indexing
+### 2.3 Slice e indexing ❌
 
 ```cpp
 Tensor<T> slice(size_t axis, size_t start, size_t end) const;
 Tensor<T> operator[](size_t index) const; // selezione lungo il primo asse
 ```
 
-Uno slice è un `TensorView` con pointer offset e shape/stride aggiornati, zero-copy per tensori contigui.
+Non implementate in C++. Esiste l'accesso a singolo elemento tramite `operator()(std::initializer_list<size_t>)`, che valida rank e bounds ma funziona **solo su tensori host** (dereferenzia `m_Data` direttamente). Sul lato Python, `__getitem__` / `__setitem__` accettano un indice completo e restituiscono uno scalare, non una sotto-vista.
+
+Uno slice sarebbe naturalmente un view con pointer offset e shape/stride aggiornati — quindi dipende dalla decisione presa in 2.1 sul modello di ownership. Finché `Tensor` è strettamente owning, `slice` può solo essere una copia.
 
 ---
 
 ## 3. Gestione della memoria
 
-### 3.1 Trasferimento CPU ↔ GPU come metodi `Tensor`
-
-Oggi `copyToHost` e `copyToDevice` scrivono su un buffer raw (`T*`) passato dall'utente. Mancano metodi che restituiscano un nuovo `Tensor` sul device di destinazione:
+### 3.1 Trasferimento CPU ↔ GPU come metodi `Tensor` ✅
 
 ```cpp
-Tensor<T> to(const Device& target) const;
-Tensor<T> cpu() const;   // shorthand per to(Device("cpu:0"))
-Tensor<T> cuda() const;  // shorthand per to(Device("cuda:0"))
+Tensor<T> to(const Device& target) const;   // ✅
+Tensor<T> cpu() const;                      // ✅
+Tensor<T> cuda() const;                     // ✅
+Tensor<T> to(const Device& target, const Stream& s) const;  // ✅
+Tensor<T> cpu(const Stream& s) const;                       // ✅
+Tensor<T> cuda(const Stream& s) const;                      // ✅
 ```
 
-**File da modificare:** `headers/tensor.cuh`, `headers/tensor.inl`.
+`copyToHost` / `copyToDevice` restano disponibili per scrivere su un buffer raw fornito dal chiamante. Suite di test: `test_device_transfer`.
 
 ---
 
-### 3.2 Inizializzazione dei tensori
-
-Oggi l'unico modo per inizializzare i valori è `fill(value)` o assegnare elemento per elemento dal host. Mancano:
+### 3.2 Inizializzazione dei tensori ⚠️
 
 ```cpp
-static Tensor<T> zeros(const std::vector<size_t>& shape, const Device& dv);
-static Tensor<T> ones(const std::vector<size_t>& shape, const Device& dv);
-static Tensor<T> full(const std::vector<size_t>& shape, T value, const Device& dv);
-static Tensor<T> arange(T start, T stop, T step, const Device& dv);
-static Tensor<T> linspace(T start, T stop, size_t n, const Device& dv);
-static Tensor<T> from_vector(const std::vector<T>& data, const std::vector<size_t>& shape, const Device& dv);
+static Tensor<T> zeros(const std::vector<size_t>& shape, const Device& dv);    // ✅
+static Tensor<T> ones(const std::vector<size_t>& shape, const Device& dv);     // ✅
+static Tensor<T> full(const std::vector<size_t>& shape, T value, const Device& dv);  // ✅
+static Tensor<T> from_vector(const std::vector<T>& data, const std::vector<size_t>& shape, const Device& dv);  // ✅
+static Tensor<T> from_vector(..., const Device& dv, const Stream& s);          // ✅
+static Tensor<T> arange(T start, T stop, T step, const Device& dv);            // ❌
+static Tensor<T> linspace(T start, T stop, size_t n, const Device& dv);        // ❌
 ```
 
-`zeros`, `ones`, `full` sono triviali sopra `fill`. `arange` e `linspace` richiedono un kernel dedicato (o un loop CPU).
+`zeros`, `ones`, `full` sono costruite sopra `fill` — l'unico consumatore rimasto del vecchio percorso di dispatch `_fill` in `kernel_launcher.inl`.
+
+`arange` e `linspace` mancano in C++. **Nota:** `Tensor.arange` esiste sul lato Python ([`python/openmat/tensor.py`](../python/openmat/tensor.py)), ma è implementata costruendo la lista in Python e passandola a `from_list` — quindi è O(n) sull'host e non ha equivalente nativo. Una `arange` C++ richiede un kernel dedicato (o un loop CPU) e renderebbe la versione Python un semplice wrapper.
+
+Suite di test: `test_factory`.
 
 ---
 
-### 3.3 Inizializzazione random
+### 3.3 Inizializzazione random ❌
 
 ```cpp
 static Tensor<T> rand_uniform(const std::vector<size_t>& shape, T low, T high, const Device& dv);
 static Tensor<T> rand_normal(const std::vector<size_t>& shape, T mean, T std, const Device& dv);
 ```
 
-Su GPU si usa cuRAND (`curandGenerateUniform`, `curandGenerateNormal`). Aggiunge una dipendenza da `libcurand`.
+Su GPU si usa cuRAND (`curandGenerateUniform`, `curandGenerateNormal`). Aggiunge una dipendenza da `libcurand` in `CMakeLists.txt`.
+
+Da valutare: cuRAND ha un proprio concetto di stream (`curandSetStream`), che va allineato all'`om::Stream` del tensore di destinazione perché la memoria allocata con `cudaMallocAsync` resti coerente con lo stream che la possiede. Serve inoltre una decisione sulla gestione del seed (generatore globale vs. per chiamata).
 
 ---
 
-## 4. Fused operations — estensioni
+## 4. Fused operations
 
-### 4.1 Test per le nuove API
+Area sostanzialmente completata. Il documento di riferimento è [`docs/fused_operations.md`](fused_operations.md).
 
-Le API `apply`, `scale_shift`, `shift_scale`, `apply_binary`, `fused_add_mul`, ecc. non hanno test in `tests/tensor_ops_test.cpp`. Aggiungere:
+### 4.1 Test per le API fused ✅
 
-- Correttezza numerica su valori noti (CPU non applicabile — `launch_apply_op` è solo CUDA)
-- Verifica che il risultato di `a.fused_add_mul(b, 2.0f)` sia identico a `(a + b) * 2.0f` calcolato in due passi separati
-- Test per rank 1, 2, 3 per coprire i kernel rank-specializzati
+[`tests/test_fused_ops.cpp`](../tests/test_fused_ops.cpp) contiene 36 test: correttezza CPU su valori noti, correttezza GPU per rank 1/2/3, consistenza CPU↔GPU e equivalenza rispetto al calcolo non fuso in due passi (`FusedAddMulEquivalent`, `FusedMulAddEquivalent`, `ScaleShiftEquivalent`), più `ShapeMismatchThrows`.
 
----
+### 4.2 Fused operations su CPU ✅
 
-### 4.2 Fused operations su CPU
+Il bug latente è risolto. `apply` e `apply_binary` in [`headers/tensor.inl`](../headers/tensor.inl) fanno branch su `device_type()` ed eseguono un loop host quando il tensore è su CPU. Non c'è una seconda implementazione da mantenere allineata: tutti i functor sono annotati `__host__ __device__`, quindi **lo stesso oggetto `op` guida sia il kernel sia il loop CPU**.
 
-`launch_apply_op` e `launch_apply_binary_op` esistono solo come kernel CUDA. Se il tensore è su CPU, chiamarli causa undefined behavior (il kernel viene lanciato su dati host). Aggiungere un path CPU:
+### 4.3 Functor `ReLU`, `Sigmoid`, `Tanh` ⚠️
 
-```cpp
-// In tensor.inl — apply():
-if (this->device_type() == DEVICE_TYPE::CPU) {
-    size_t n = out.size();
-    for (size_t i = 0; i < n; ++i)
-        out_view[i] = op(src_view[i]);
-} else {
-    launch_apply_op<value_type>(this->view(), out.view(), op);
-}
-```
+`ReLU<T>` e `Sigmoid<T>` sono implementati, istanziati per `float`/`int`/`char`/`float16_t`, esposti come `Tensor::relu()` / `Tensor::sigmoid()` con i rispettivi overload sullo stream, e disponibili da Python. `Tanh` non è implementato.
 
----
+Entrambi passano per `float` internamente (`static_cast<float>(x) > 0.0f`, `expf(-static_cast<float>(x))`): è ciò che li fa funzionare senza modifiche su `float16_t`.
 
-### 4.3 Functor `ReLU`, `Sigmoid`, `Tanh`
+### 4.4 Overload sullo stream per `apply_binary` ❌
 
-Aggiungere i functor unari più comuni in `fused_op.cuh` e le relative istanziazioni esplicite:
+Asimmetria residua: `apply` ha l'overload `(Op, const Stream&)`, `apply_binary` no. Di conseguenza `scale_shift`, `shift_scale` e i quattro `fused_*_*` sono chiamate sincrone sullo stream di default, mentre `relu` e `sigmoid` no.
 
-```cpp
-template <typename T>
-struct ReLU {
-    __device__ T operator()(T x) const { return x > static_cast<T>(0) ? x : static_cast<T>(0); }
-};
-
-template <typename T>
-struct Sigmoid {
-    __device__ T operator()(T x) const { return static_cast<T>(1) / (static_cast<T>(1) + expf(-float(x))); }
-};
-```
-
-E i metodi corrispondenti su `Tensor<T>`:
-```cpp
-Tensor<value_type> relu() const;
-Tensor<value_type> sigmoid() const;
-```
+Il lavoro è meccanico e segue `apply`: accettare `const Stream& s`, costruire l'output con il costruttore privato `Tensor(shape, device, Stream)` e passare `s.get()` al launcher — `launch_apply_binary_op` accetta già un `cudaStream_t`.
 
 ---
 
 ## 5. Matmul — estensioni
 
-### 5.1 Batch matmul
+Stato attuale: `matmul` è **2D-only** in entrambi i backend. Rank != 2 o dimensioni interne incompatibili sollevano un'eccezione da `Tensor::matmul` e di nuovo dentro `matmul_cpu`. Nessun batching, nessun broadcasting. Ha l'overload `(const Tensor&, const Stream&)`.
+
+### 5.1 Batch matmul ❌
 
 ```cpp
 // A: (B, M, K), B: (B, K, N) → C: (B, M, N)
 Tensor<T> bmm(const Tensor<T>& rhs) const;
 ```
 
-Il kernel batched esegue `B` matmul indipendenti in parallelo usando la dimensione `blockIdx.z` per il batch index. In alternativa si può usare `cublasGemmStridedBatchedEx`.
+Il kernel batched esegue `B` matmul indipendenti in parallelo usando `blockIdx.z` come batch index. In alternativa si può usare `cublasGemmStridedBatchedEx`.
 
----
+### 5.2 Integrazione con cuBLAS (opzionale) ❌
 
-### 5.2 Integrazione con cuBLAS (opzionale)
-
-Per matrici grandi (≥ 512×512) cuBLAS è significativamente più veloce del kernel tiled attuale. Introdurre un path cuBLAS condizionale:
+Per matrici grandi (≥ 512×512) cuBLAS è significativamente più veloce del kernel tiled attuale. Introdurre un path condizionale:
 
 ```cpp
-// In kernel_launcher.h — matmul_dispatch<CUDA>:
 // se min(M,N,K) >= CUBLAS_THRESHOLD → cublasSgemm
 // altrimenti → launch_matmul (kernel tiled attuale)
 ```
 
-Aggiunge la dipendenza `cublas` in `CMakeLists.txt`.
+Aggiunge la dipendenza `cublas` in `CMakeLists.txt`. Da tenere presente: cuBLAS è **column-major**, quindi la convenzione row-major della libreria va gestita scambiando gli operandi (`C^T = B^T · A^T`) invece di trasporre i dati. Inoltre `cublasSetStream` va allineato all'`om::Stream` passato, e cuBLAS copre solo `float`/`double`/`__half` — `int` e `char` restano sul kernel tiled.
 
 ---
 
 ## 6. Infrastruttura
 
-### 6.1 Stream CUDA
+### 6.1 Stream CUDA ✅
 
-Tutti i kernel oggi chiamano `cudaDeviceSynchronize()` dopo ogni lancio — questo serializza l'intera GPU dopo ogni operazione. Introdurre il supporto a CUDA streams per permettere overlapping di operazioni:
+Implementato e diventato **il percorso di esecuzione canonico** della libreria, non un'aggiunta opzionale.
 
 ```cpp
-class Stream {
-    cudaStream_t m_stream;
-public:
-    Stream();
-    ~Stream();
-    void synchronize() const;
-    cudaStream_t get() const { return m_stream; }
-};
+auto c = a + b;         // delega a a.add(b, Stream::default_stream())
+auto c = a.add(b, s);   // enqueue su s; il chiamante deve fare s.synchronize()
 ```
 
-Ogni `launch_*` accetterebbe un parametro `cudaStream_t stream = 0` opzionale. La sincronizzazione diventerebbe responsabilità dell'utente o di un contesto.
+[`om::Stream`](../headers/stream.h) è un wrapper RAII move-only: il costruttore di default chiama `cudaStreamCreate` e possiede l'handle; `Stream(cudaStream_t)` avvolge un handle esistente senza possederlo; `Stream::default_stream()` restituisce un wrapper non-owning su `nullptr` — ed è così che l'API sincrona riusa il percorso asincrono con zero duplicazione.
 
----
+**Invariante di ownership dello stream:** la memoria di `cudaMallocAsync` appartiene a un pool stream-ordered e va liberata sullo stream su cui è stata allocata. Per questo ogni `Tensor` memorizza `m_Stream` e il distruttore chiama `deallocate_async(m_Data, m_Stream.get())`. La violazione si manifesta come illegal memory access lontano dal punto di chiamata reale.
 
-### 6.2 Gestione degli errori CUDA
+Regola per chi aggiunge operazioni: **implementare l'overload `(args, const Stream&)` e rendere quello senza stream un delegate di una riga.** Farlo al contrario rompe l'invariante su cui è costruito tutto `tensor.inl`.
 
-`CUDA_CHECK` in `cuda_defines.cuh` controlla solo dopo il lancio del kernel. Gli errori asincroni nei kernel (out-of-bounds in debug, divisione per zero, ecc.) vengono catturati solo al `cudaDeviceSynchronize()` successivo e il messaggio di errore non include stack trace. Miglioramento: usare `cudaGetLastError()` + `cudaPeekAtLastError()` e lanciare eccezioni con file/line.
+Suite di test: `test_streams`, `test_allocator_stream`, `test_stress`, `test_stream_perf`. Numeri misurati in [`README.md`](../README.md) e [`stream_perf_report.md`](../stream_perf_report.md) (build Release — in Debug i numeri non significano nulla).
 
----
+### 6.2 Gestione degli errori CUDA ⚠️
 
-### 6.3 Stampa e serializzazione
+Migliorato ma non completo. `CUDA_CHECK` in [`headers/cuda_defines.cuh`](../headers/cuda_defines.cuh) ora include **file e riga** nel messaggio, ed è affiancato da `CUDA_CALL(expr)` che controlla il valore di ritorno di una singola chiamata riportando anche l'espressione fallita.
+
+Resta il limite di fondo: `CUDA_CHECK` usa `cudaGetLastError()` dopo il lancio, quindi intercetta solo gli errori **sincroni** di lancio (configurazione di griglia non valida, argomenti errati). Gli errori asincroni dentro il kernel — accessi fuori dai limiti, illegal address — emergono al successivo punto di sincronizzazione, che con gli stream può essere arbitrariamente lontano dal kernel colpevole. Questo è esattamente lo scenario in cui una violazione dell'invariante di 6.1 diventa difficile da diagnosticare.
+
+Miglioramenti possibili: una modalità debug che forzi `cudaStreamSynchronize` dopo ogni lancio, e la cattura di uno stack trace al punto di lancio da riportare quando l'errore emerge dopo.
+
+### 6.3 Stampa e serializzazione ❌
 
 ```cpp
 std::ostream& operator<<(std::ostream& os, const Tensor<T>& t);
 void save(const std::string& path) const;       // formato binario raw
-static Tensor<T> load(const std::string& path); // corrispondente load
+static Tensor<T> load(const std::string& path); // load corrispondente
 ```
 
-`operator<<` deve copiare i dati su host se il tensore è su GPU prima di stampare.
+Nessuno dei tre esiste in C++. `operator<<` deve copiare i dati su host se il tensore è su GPU prima di stampare — cosa oggi già possibile con `.cpu()`.
+
+Sul lato Python la lacuna è parzialmente coperta: `Tensor` ha `__repr__` / `__str__`, `tolist()`, `numpy()` e i buffer protocol (`__array_interface__` per i tensori host, `__cuda_array_interface__` per quelli CUDA), quindi la serializzazione è delegabile a NumPy.
+
+---
+
+## 7. Layer Python ✅
+
+Area non presente nella roadmap originale, completata dopo di essa.
+
+Il package è un binding **ctypes** (non pybind) sopra il layer C-ABI compilato dentro `OpenMat.so`. Il confine è [`src/python/openmat_capi.cpp`](../src/python/openmat_capi.cpp); la superficie per-dtype vive in [`src/python/openmat_capi_impl.inc`](../src/python/openmat_capi_impl.inc), **un solo corpo incluso due volte** con `OM_T`/`OM_SFX` diversi. Aggiungere un dtype = aggiungere un blocco `#define`/`#include`/`#undef`, a patto che i kernel siano istanziati per quel tipo.
+
+Coperto oggi: `float32` e `int32`, l'intera superficie tensoriale (metadati, indexing, factory, aritmetica, riduzioni, shape ops, transpose/permute, fused ops), gli stream, e la API runtime dtype-independent (`om_cuda_device_count`, `om_cuda_is_available`, `om_device_synchronize`, `om_stream_*`).
+
+**Gli stream sono reference-counted al confine C** (`StreamBox`), non in Python. È deliberato: il collector ciclico di Python finalizza i membri di un ciclo in ordine arbitrario, quindi un oggetto `Stream` potrebbe essere distrutto prima dei tensori la cui memoria appartiene ancora a quello stream. Tenere una reference Python non basta — due tentativi in quel senso hanno prodotto segfault sotto `gc.collect()`.
+
+Suite di test: `python/tests/test_tensor.py`, `test_tensor_api.py`, `test_dtypes.py`, `test_streams.py`.
+
+**Lavoro residuo:**
+- `Tensor<double>` e `Tensor<char>` non sono esportati. `char` è immediato (i kernel ci sono); `double` richiede prima le istanziazioni GPU, che oggi non esistono per nessuna operazione.
+- `__getitem__` restituisce solo scalari — lo slicing dipende da 2.3.
+- Le riduzioni non accettano `stream` (dipende da 1.2).
 
 ---
 
 ## Priorità suggerite
 
-|Done| Priorità | Item |
+| Done | Priorità | Item |
 |---|---|---|
-|x| Alta | 4.2 — CPU path per fused ops (bug latente) |
-|x| Alta | 4.1 — Test per le API fused |
-|x| Alta | 3.1 — `.to()` / `.cpu()` / `.cuda()` |
-|x| Alta | 3.2 — `zeros`, `ones`, `from_vector` |
-|x| Media | 1.2 — Riduzioni (`sum`, `mean`, `max`) |
-|x| Media | 2.1 — `reshape`, `flatten` |
-|x| Media | 4.3 — `relu`, `sigmoid` |
-|x| Media | 2.2 — `transpose`, `permute` |
-|x| Bassa | 6.1 — CUDA streams |
-| | Bassa | 5.2 — cuBLAS integration |
+| ✅ | Alta | 4.2 — CPU path per fused ops (bug latente) |
+| ✅ | Alta | 4.1 — Test per le API fused |
+| ✅ | Alta | 3.1 — `.to()` / `.cpu()` / `.cuda()` |
+| ✅ | Alta | 3.2 — `zeros`, `ones`, `full`, `from_vector` |
+| ✅ | Media | 1.2 — Riduzioni a scalare (`sum`, `mean`, `min`, `max`) |
+| ✅ | Media | 2.1 — `reshape`, `flatten`, `squeeze`, `unsqueeze` (a copia) |
+| ✅ | Media | 4.3 — `relu`, `sigmoid` |
+| ✅ | Media | 2.2 — `transpose`, `permute` |
+| ✅ | Bassa | 6.1 — CUDA streams |
+| ✅ | — | 7 — Layer Python (ctypes, float32 + int32, stream) |
+| ⚠️ | — | 6.2 — Errori CUDA: file/riga e `CUDA_CALL` fatti; errori asincroni ancora tardivi |
+| | **Alta** | 4.4 — Overload stream per `apply_binary` (chiude l'asimmetria di 6.1) |
+| | **Alta** | 1.1 — Unarie `abs`, `sqrt`, `exp`, `log` via `apply` (costo basso, alto valore) |
+| | Media | 6.3 — `operator<<`, `save`, `load` |
+| | Media | 1.2b — Riduzioni per asse `sum(axis)`, `mean(axis)` |
+| | Media | 3.2b — `arange` / `linspace` nativi in C++ |
+| | Media | 1.3 — Operazioni di confronto (richiede un launcher con tipo di uscita diverso) |
+| | Bassa | 2.1b — Decisione sul modello di ownership per le view (sblocca 2.3) |
+| | Bassa | 2.3 — `slice`, `operator[]` |
+| | Bassa | 5.1 — Batch matmul (`bmm`) |
+| | Bassa | 5.2 — Integrazione cuBLAS |
 | | Bassa | 3.3 — Inizializzazione random (cuRAND) |
