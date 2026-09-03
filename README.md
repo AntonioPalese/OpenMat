@@ -26,7 +26,7 @@ The goal is not to beat PyTorch. The goal is to understand exactly what PyTorch 
 
 ## Performance
 
-Timing lives in three GoogleTest suites, not in a separate benchmark script:
+Timing lives in three GoogleTest suites plus one cross-framework script:
 
 ```bash
 cmake -DCMAKE_BUILD_TYPE=Release ..   # Debug numbers are meaningless
@@ -34,12 +34,60 @@ make -j$(nproc)
 ./tests/test_benchmarks     # matmul (fp32/fp16), elementwise, reductions
 ./tests/test_stream_perf    # the stream experiments tabulated below
 ./tests/test_stress         # soak / leak checking
+
+# vs NumPy and PyTorch — needs both installed, see benchmark_report.md
+OPENMAT_LIB=build/OpenMat.so PYTHONPATH=python python scripts/bench_vs.py
 ```
 
-There is no cross-framework comparison against NumPy or PyTorch yet — see the
-[roadmap](#roadmap). The measured stream results below are the numbers this project
-actually stands behind, on two GPUs that disagree with each other; raw output and the
-per-test analysis are in [stream_perf_report.md](stream_perf_report.md).
+### vs NumPy and PyTorch
+
+Measured on **NVIDIA GB10 (DGX Spark, `sm_121`) · CUDA 13.0 · 20× ARMv9**, Release build,
+`float32`, against **NumPy 2.5.2** and **PyTorch 2.14.0+cu130**. Minimum per-op time over
+seven calibrated batches; every op out-of-place, as all three libraries are by default.
+Full tables, root-cause analysis and reproduction steps in
+[benchmark_report.md](benchmark_report.md).
+
+| | OpenMat vs the faster reference |
+|---|---|
+| GPU fused `(a+b)*s`, 16 M elem | **1.66× faster than PyTorch** — 858 µs vs 1420 µs |
+| CPU fused `x*s+t`, 16 M elem | **2.31× faster than NumPy**, 1.24× faster than PyTorch |
+| GPU `transpose`, 2048² | **1.16× faster than PyTorch** — 206 µs vs 240 µs |
+| CPU elementwise, 16 M elem | parity with NumPy — *once the allocator is corrected*, see below |
+| H2D / D2H transfer | parity, within 5 % |
+| GPU `sum`, 16 M elem | 1.15× slower — 320 µs vs 278 µs |
+| GPU elementwise `add`, 16 M elem | 1.47× slower — 159 GB/s vs 234 GB/s |
+| Per-op dispatch floor | 1.7 µs on CPU, 8.7 µs on CUDA (PyTorch: 0.8 / 3.2 µs) |
+| CPU `sum`, 16 M elem | 4.1× slower — 7.7 GB/s vs ~93 GB/s |
+| CPU `matmul`, 1024³ | **421× slower** — 1.81 GFLOP/s vs 756 GFLOP/s |
+| GPU `matmul`, 1024³ | 10.5× slower — 1.58 TFLOP/s vs cuBLAS' 16.6 TFLOP/s |
+
+**The fusion bet pays off.** At 16 M elements PyTorch's `(a + b) * 2.5` materialises a
+64 MB intermediate and reads it back; `fused_add_mul` writes one buffer once and hits
+235 GB/s — the highest effective bandwidth any op reached in the run. The same argument
+runs in reverse on the CPU, where NumPy's `a * 2.0 + 1.0` is two passes over 64 MB and
+`scale_shift` beats both references outright.
+
+**Three of the remaining gaps have a single, local cause.**
+
+- *The CPU gap above 128 KB is the allocator, not the loop.* `add` at 16 M measures
+  25.2 ms against NumPy's 6.1 ms; re-run under `MALLOC_MMAP_MAX_=0` it becomes
+  **4.48 ms against 4.40 ms — parity**. `CpuAllocator` calls `malloc` directly, so past
+  glibc's mmap threshold every out-of-place op faults in all 16 384 pages of its own
+  result. NumPy and PyTorch cache host blocks. This is also the whole of the 25× D2H
+  anomaly (27.1 ms → 1.13 ms corrected, matching PyTorch's 1.14 ms).
+- *Rank-1 CUDA kernels launch 16-thread blocks*, occupying a warp with half its lanes
+  idle — see [Design decisions](#design-decisions).
+- *`sum` accumulates into one serial register.* The loop-carried FP dependency in
+  `reduce_sum_cpu` blocks auto-vectorisation, so it runs at one add per FP latency.
+  Independent partial accumulators would recover most of it. The GPU reduction is fine.
+
+`matmul` is the one structural gap rather than a tuning gap: `matmul_cpu` is the textbook
+`ijk` triple loop indexing `rhs(k, j)` down a column, against OpenBLAS. Reordering to
+`ikj` would be worth roughly an order of magnitude for one line.
+
+Caveat on the CPU column: PyTorch runs 20 intraop threads while OpenMat's CPU backend is
+single-threaded scalar, so PyTorch-vs-OpenMat on CPU measures *what a user gets*, not
+comparable algorithms. NumPy is the like-for-like reference there.
 
 ---
 
@@ -133,7 +181,7 @@ Overlapped:  [H2D -------]
 
 The theoretical maximum speedup is ~2× (total time drops to `max(H2D, compute)` instead of `H2D + compute`). The observed 12% is lower because H2D and compute are similar in duration on this workload, leaving limited asymmetry to exploit. In inference pipelines that alternate between data loading and computation the gain is more pronounced.
 
-GB10's 4× exceeds that ceiling, which means the ratio is measuring a bad baseline rather than good overlap: the serialized path is *slower* there than on the 4060 (47.9 ms vs 37.21 ms) because the H2D leg dominates. `test_stress` puts H2D+D2H round-trips at only 4.3–4.8 GB/s on a coherent-memory part, which points at transfers going through pageable host memory with a staging copy. Fixing that would improve the absolute time and shrink this speedup.
+GB10's 4× exceeds that ceiling, which means the ratio is measuring a bad baseline rather than good overlap: the serialized path is *slower* there than on the 4060 (47.9 ms vs 37.21 ms) because the H2D leg dominates. `test_stress` puts H2D+D2H round-trips at only 4.3–4.8 GB/s on a coherent-memory part. The cross-framework benchmark since identified the cause, and it is not a staging copy: a bare transfer into a reused buffer runs at ~57 GB/s, level with PyTorch, while one that allocates its destination each round-trip collapses to 2.3 GB/s — the host allocator page-faulting in the destination, the same effect described under [vs NumPy and PyTorch](#vs-numpy-and-pytorch). Fixing that would improve the absolute time and shrink this speedup.
 
 #### Stream creation overhead — negligible
 
@@ -204,8 +252,28 @@ These are the non-obvious choices made during development, and why.
 **Rank-specialized kernels over a single generic kernel**
 A single flat kernel must reconstruct multi-dimensional indices from a linear offset at runtime, which adds per-thread division and modulo overhead and prevents rank-aware grid/block tuning. For rank 1–4, dedicated kernels use grid shapes matched to the tensor dimensions (e.g. a 2D `dim3(16,16)` block for rank-2), avoiding that overhead. Rank ≥ 5 falls back to `_kernel_nd`, which does the index reconstruction generically.
 
+> **The benchmark partly contradicts this.** The rank-1 launchers use `dim3(16)` — a
+> 16-thread block occupies a warp with half its lanes idle. Reshaping the same 16 M-element
+> buffer so the launcher picks a 256-thread path makes `add` go **149 → 187 GB/s** and
+> `relu` **118 → 174 GB/s**; the generic `_kernel_nd` path, at `dim3(256)`, beats the
+> "specialized" rank-1 one. The single exception is `apply_binary_op_rank1`
+> ([src/ops/kernels/fused_op.cu:205](src/ops/kernels/fused_op.cu)), which already launches
+> 256 threads — and it is the only op in the whole GPU run that reaches the machine's
+> bandwidth roofline. Reshaping a vector to a matrix should not make elementwise addition
+> 25 % faster. The two remaining `threads(16)` sites are
+> [binary_op_macros.cuh:23](headers/ops/kernels/binary_op_macros.cuh) and
+> [fused_op.cu:79](src/ops/kernels/fused_op.cu). Rank specialization is still the right
+> idea for indexing; the block sizes chosen for it were not.
+
 **RAII for GPU memory via `Tensor<T>` + `Allocator<T>`**
 Rather than pairing raw `cudaMalloc`/`cudaFree` calls at each use site, every `Tensor` owns a polymorphic `Allocator` chosen at construction time by `AllocatorFactory`. The destructor delegates to `allocator->deallocate`, making GPU memory lifetime deterministic regardless of exceptions or early returns — the same pattern used in PyTorch's `at::DataPtr`.
+
+`CpuAllocator` deliberately stayed a thin `malloc`/`free` pair, on the reasoning that the
+host path is not the interesting one. The benchmark priced that decision: above glibc's
+128 KB mmap threshold every out-of-place op faults in its entire output buffer from the
+kernel, which is a 5.6× penalty on a 16 M-element `add` and 24× on a 64 MB device-to-host
+copy. Both vanish under `MALLOC_MMAP_MAX_=0`. A caching allocator is not an optimization
+here, it is the difference between parity with NumPy and 4× behind it.
 
 **`DeviceTensorView` inline metadata instead of per-launch device allocations**
 The original design allocated `shape[]` and `stride[]` in device memory on every `DeviceTensorView` construction (2×`cudaMalloc` + 2×`cudaMemcpy` per object; 6 allocations for a single binary op). Replacing those with fixed inline arrays (`size_t shape[MAX_RANK]`) eliminates all per-launch metadata allocations. The struct is now trivially copyable and passed by value into the kernel parameter block — the same pattern used by cuDNN and CUTLASS. `MAX_RANK = 8` covers practical use without wasting register space.
@@ -390,7 +458,7 @@ cd python && pytest        # test_tensor, test_tensor_api, test_dtypes, test_str
 - [x] `matmul` (2D, CPU + GPU)
 - [x] Python bindings via C-ABI FFI layer (ctypes, float32 + int32, streams included)
 - [x] `float16_t` support in kernels and `test_benchmarks`
-- [ ] Benchmark suite comparing against NumPy / PyTorch
+- [x] Benchmark suite comparing against NumPy / PyTorch (`scripts/bench_vs.py`)
 - [ ] cuBLAS integration as an optional matmul backend
 - [ ] Random initialization (cuRAND)
 - [ ] Broadcasting and batched matmul
@@ -413,6 +481,9 @@ Building this from scratch exposed a set of problems that high-level frameworks 
 - **Streams only help when you stop synchronizing — and how much they help is not portable** — the biggest win on the RTX 4060 (2.68×) came not from running kernels faster but from removing 99 out of 100 host/device sync barriers in a chain. Re-running the same suite on a GB10 returned 1.03× for that case, because a sync round-trip there costs almost nothing, while the parallel fan-out that was a wash on the 4060 became a 3.3× win. Same code, same test, opposite conclusions.
 - **Raw arrays decay in CUDA kernel parameters** — passing `size_t axes[MAX_RANK]` as a kernel argument silently becomes a host pointer on the device side. The fix is a trivially-copyable struct wrapper so CUDA copies the data by value into the kernel parameter block.
 - **A Python reference is not a lifetime guarantee** — the first two attempts at keeping a CUDA stream alive from Python both segfaulted under `gc.collect()`. The cyclic collector finalizes a cycle's members, plus everything reachable only from them, in arbitrary order, so a `Stream` could be torn down while tensors still owed it a stream-ordered free. Reference counting had to move to the C side of the boundary.
+- **Half a warp is half the bandwidth** — the rank-1 elementwise kernels launch `dim3(16)` blocks, so 16 of 32 lanes in the warp sit idle. It cost 20–32% of memory bandwidth and went unnoticed for as long as there was nothing to compare against: the kernels *were* faster than the CPU path, which is all the internal benchmarks could tell me. It took reshaping the same buffer to a different rank, and watching `add` jump from 149 to 187 GB/s, to see it.
+- **A benchmark is a measurement of the whole program, not the code you were looking at** — OpenMat's CPU `add` looked 4× slower than NumPy's at 16 M elements. The loop was not the problem; `malloc` was. Past glibc's 128 KB threshold every result buffer is a fresh `mmap`, and the op pays 16 384 page faults before it computes anything. One environment variable (`MALLOC_MMAP_MAX_=0`) closed the entire gap. The same cause was quietly making a 64 MB device-to-host copy look 24× slower than PyTorch's, in what appeared to be an unrelated part of the library.
+- **Fusion is worth more than kernel tuning** — the ops where OpenMat beats PyTorch and NumPy are not the ones with the best kernels, they are the ones that avoid a memory round-trip. `fused_add_mul` wins by 1.66× against a mature library with better kernels, purely because `(a + b) * s` costs PyTorch a 64 MB intermediate. Arithmetic is nearly free at this scale; every avoided traversal of memory is not.
 - **`cudaMallocAsync` is not a drop-in replacement** — it uses a stream-ordered memory pool. Freeing on a different stream than the one used for allocation is a programming error that manifests as an illegal memory access with no obvious call site. Storing `m_Stream` in each `Tensor` and using it in the destructor is the invariant that keeps this safe.
 
 ---
