@@ -70,6 +70,12 @@ jobs:
   gpu:
     name: GPU (full suite + compute-sanitizer)
     runs-on: [self-hosted, linux, gpu]
+    # The repo is public and this runner is a real machine, not a throwaway VM.
+    # A pull request from a fork would otherwise execute its own workflow code
+    # here. Restrict the job to pushes and to PRs opened from this repo.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     # One GPU, one job: two of these at once would contend for device memory and
     # make the stress/perf suites report nonsense.
     concurrency:
@@ -77,6 +83,14 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
+
+      # A runner started as a systemd service gets systemd's minimal PATH, which
+      # has neither the CUDA bin dir (nvcc, compute-sanitizer) nor /snap/bin (uv).
+      # $GITHUB_PATH prepends, so this does not clobber what the runner already has.
+      - name: Extend PATH
+        run: |
+          echo "/usr/local/cuda/bin" >> "$GITHUB_PATH"
+          echo "/snap/bin" >> "$GITHUB_PATH"
 
       - name: Configure
         run: |
