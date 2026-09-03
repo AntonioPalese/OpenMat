@@ -426,7 +426,7 @@ om::Tensor<value_type> om::Tensor<value_type>::from_vector(const std::vector<val
 template <typename value_type>
 void om::Tensor<value_type>::copyToHost(value_type *dest) const
 {            
-    size_t total_size_ = std::accumulate(m_Shape.begin(), m_Shape.end(), 1, std::multiplies<>());
+    size_t total_size_ = std::accumulate(m_Shape.begin(), m_Shape.end(), size_t{1}, std::multiplies<>());
     if(device_type() == DEVICE_TYPE::CUDA)
         m_Allocator->copyFromCurrentLoc(dest, m_Data, total_size_);
     else
@@ -436,7 +436,7 @@ void om::Tensor<value_type>::copyToHost(value_type *dest) const
 template <typename value_type>
 void om::Tensor<value_type>::copyToDevice(value_type *dest) const
 {
-    size_t total_size_ = std::accumulate(m_Shape.begin(), m_Shape.end(), 1, std::multiplies<>());
+    size_t total_size_ = std::accumulate(m_Shape.begin(), m_Shape.end(), size_t{1}, std::multiplies<>());
     if(device_type() == DEVICE_TYPE::CPU)
         m_Allocator->copyFromCurrentLoc(dest, m_Data, total_size_);
     else

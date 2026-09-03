@@ -2,7 +2,7 @@
 #include "tensor_view.cuh"
 #include "type_traits/types.cuh"
 #include <stdexcept>
-#include <limits>
+#include "ops/div_policy.h"
 
 #define DEFINE_UNARY_OPS_CPU(OP_NAME, OP_EXPR)\
     template<typename T>\
@@ -18,5 +18,5 @@ namespace om
     DEFINE_UNARY_OPS_CPU(add_k, lhs[idx] + value)
     DEFINE_UNARY_OPS_CPU(sub_k, lhs[idx] - value)
     DEFINE_UNARY_OPS_CPU(mul_k, lhs[idx] * value)
-    DEFINE_UNARY_OPS_CPU(div_k, ( static_cast<double>(value) != 0.0 ? lhs[idx] / value : std::numeric_limits<T>::infinity()))
+    DEFINE_UNARY_OPS_CPU(div_k, div_elem(lhs[idx], value))
 }

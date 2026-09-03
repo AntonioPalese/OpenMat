@@ -2,6 +2,7 @@
 #include <cmath>
 #include "device_tensor_view.cuh"
 #include "tensor_view.cuh"
+#include "ops/div_policy.h"
 #include <cuda_runtime.h>
 
 namespace om 
@@ -22,7 +23,7 @@ namespace om
     template <typename T>
     struct Div {
         T b;
-        __host__ __device__ T operator()(T x) const { return x / b; }
+        __host__ __device__ T operator()(T x) const { return div_elem(x, b); }
     };
 
     template <typename T>
@@ -64,7 +65,7 @@ namespace om
 
     template <typename T>
     struct BinaryDiv {
-        __host__ __device__ T operator()(T x, T y) const { return x / y; }
+        __host__ __device__ T operator()(T x, T y) const { return div_elem(x, y); }
     };
 
     // Compose a binary op with a unary post-op: dst[i] = post(bin(lhs[i], rhs[i]))

@@ -46,7 +46,7 @@ set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
 # ----------------------------------------
 # CPU files
 # ----------------------------------------
-file(GLOB HEADERS "headers/*.h" "headers/*.cuh" "headers/*.inl" "headers/ops/cpu/*.h")
+file(GLOB HEADERS "headers/*.h" "headers/*.cuh" "headers/*.inl" "headers/ops/*.h" "headers/ops/cpu/*.h")
 
 file(GLOB SRC "src/*.cpp" "src/ops/cpu/*.cpp" "src/python/*.cpp")
 list(REMOVE_ITEM SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")

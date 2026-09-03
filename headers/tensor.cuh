@@ -185,7 +185,7 @@ namespace om
 
         DEVICE_TYPE device_type() const {return m_Device.m_Dt;}
         std::string dtype() const {return om::dtype<value_type>();}
-        size_t size() const {return std::accumulate(m_Shape.begin(), m_Shape.end(), 1, std::multiplies<>());}
+        size_t size() const {return std::accumulate(m_Shape.begin(), m_Shape.end(), size_t{1}, std::multiplies<>());}
         size_t rank() const {return m_Shape.size();}
         const Stream& stream() const {return m_Stream;}
 

@@ -133,6 +133,8 @@ src/ops/kernels/        ← CUDA kernel .cu translation units
 4. `headers/tensor.cuh` / `.inl` — the `(rhs, const Stream&)` method plus the one-line no-stream delegate.
 5. Only if a stream-less free function is wanted: register in `kernel_launcher.h`/`.inl`.
 
+**Division goes through one policy.** [headers/ops/div_policy.h](headers/ops/div_policy.h) defines `om::div_elem`, used by `div`, `div_k` and the `Div`/`BinaryDiv` fused functors on both backends. Floating point divides unguarded — IEEE 754 already gives ±inf with the dividend's sign and NaN for 0/0, which is what NumPy and PyTorch return; integer types return 0 for `x / 0` (UB otherwise, and NumPy's answer). Do not reintroduce a `rhs != 0 ? … : INFINITY` guard: it loses the sign, disagrees between CPU and GPU for `int`, and the `static_cast<double>` it needs lands on the 1:64 fp64 unit.
+
 **Supported dtypes** (`om::dtype<T>()`): `float`, `double`, `int`, `char`, `float16_t`. Kernel instantiations cover `float`, `int`, `char`, `float16_t` — `double` has no GPU instantiation.
 
 `float16_t` ([headers/type_traits/types.cuh](headers/type_traits/types.cuh)) is a hand-rolled `__half` wrapper, not a CUDA type: it carries `__host__ __device__` conversions plus free `+ - * /` operators that use `__hadd`/`__hsub`/... on `__CUDA_ARCH__ >= 530` and fall back to `float` math otherwise. Generic code gates on `is_extended_arithmetic<T>` (same file) — `std::is_arithmetic` plus a `float16_t` specialization — so a `static_assert` on `std::is_arithmetic` alone will reject half precision.

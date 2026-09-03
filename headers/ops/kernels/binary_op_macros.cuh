@@ -1,5 +1,6 @@
 #pragma once
 #include "type_traits/types.cuh"
+#include "ops/div_policy.h"
 #include "tensor_view.cuh"
 #include "device_tensor_view.cuh"
 #include "cuda_defines.cuh"

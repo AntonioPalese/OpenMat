@@ -30,10 +30,10 @@ namespace om
 
 
     DEFINE_UNARY_OP_LAUNCH(div_k)
-    DEFINE_UNARY_OP_KERNEL_K1(div_k, ( static_cast<double>(value) != 0.0 ? lhs(x) / value : T{INFINITY} ))
-    DEFINE_UNARY_OP_KERNEL_K2(div_k, ( static_cast<double>(value) != 0.0 ? lhs(y, x) / value : T{INFINITY} ))
-    DEFINE_UNARY_OP_KERNEL_K3(div_k, ( static_cast<double>(value) != 0.0 ? lhs(z, y, x) / value : T{INFINITY} ))
-    DEFINE_UNARY_OP_KERNEL_K4(div_k, ( static_cast<double>(value) != 0.0 ? lhs(n, c, h, w) / value : T{INFINITY} ))
-    DEFINE_UNARY_OP_KERNEL_ND(div_k, ( static_cast<double>(value) != 0.0 ? lhs[offset] / value : T{INFINITY} ))
+    DEFINE_UNARY_OP_KERNEL_K1(div_k, div_elem(lhs(x), value))
+    DEFINE_UNARY_OP_KERNEL_K2(div_k, div_elem(lhs(y, x), value))
+    DEFINE_UNARY_OP_KERNEL_K3(div_k, div_elem(lhs(z, y, x), value))
+    DEFINE_UNARY_OP_KERNEL_K4(div_k, div_elem(lhs(n, c, h, w), value))
+    DEFINE_UNARY_OP_KERNEL_ND(div_k, div_elem(lhs[offset], value))
     DEFINE_UNARY_OP_LAUNCH_FRW_DEC(div_k)
 }

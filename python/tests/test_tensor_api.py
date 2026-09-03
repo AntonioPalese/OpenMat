@@ -2,6 +2,8 @@
 The rest of the om::Tensor surface exposed through the FFI: metadata,
 element access, shape ops, fused ops and the buffer protocols.
 """
+import math
+
 import pytest
 
 import openmat as om
@@ -169,6 +171,22 @@ def test_div_tensor(device):
     a = Tensor.from_list([10, 20, 30], [3], device=device)
     b = Tensor.from_list([2, 4, 5], [3], device=device)
     assert (a / b).tolist() == [5.0, 5.0, 6.0]
+
+
+def test_float_div_by_zero_is_ieee(device):
+    # IEEE 754, same on both backends and matching NumPy/PyTorch: the sign of
+    # the dividend is kept and 0/0 is NaN — not a blanket +inf.
+    a = Tensor.from_list([1, -1, 0], [3], device=device)
+    z = Tensor.from_list([0, 0, 0], [3], device=device)
+    x, y, n = (a / z).tolist()
+    assert x == math.inf
+    assert y == -math.inf
+    assert math.isnan(n)
+
+    x, y, n = (a / 0.0).tolist()
+    assert x == math.inf
+    assert y == -math.inf
+    assert math.isnan(n)
 
 
 def test_matmul_shape_mismatch(device):

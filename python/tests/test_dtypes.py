@@ -53,6 +53,16 @@ def test_int_division_truncates(device):
     assert (a / 2).tolist() == [3, 4, 4]
 
 
+def test_int_division_by_zero_yields_zero(device):
+    # Integer division by zero is UB in C++ and CUDA, so the library picks a
+    # policy explicitly and applies it identically on CPU and GPU: x / 0 == 0,
+    # as NumPy's integer division does.
+    a = Tensor.from_list([7, -8, 0], [3], device=device, dtype="int32")
+    z = Tensor.from_list([0, 0, 0], [3], device=device, dtype="int32")
+    assert (a / z).tolist() == [0, 0, 0]
+    assert (a / 0).tolist() == [0, 0, 0]
+
+
 def test_dtype_mismatch_rejected():
     f = Tensor.ones([3])
     i = Tensor.ones([3], dtype="int32")
