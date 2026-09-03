@@ -22,6 +22,20 @@ om::Tensor<value_type>::Tensor(const std::vector<size_t>& shape, const Device& d
 }
 
 template<typename value_type>
+om::Tensor<value_type>::Tensor(const std::vector<size_t>& shape, const Device& dv, Stream stream, bool pinned)
+    : m_Shape(shape), m_Device(dv), m_Stream(std::move(stream)),
+      m_Allocator(pinned ? AllocatorFactory<value_type>::create_pinned()
+                          : AllocatorFactory<value_type>::create(dv.m_Dt))
+{
+    if (pinned && dv.m_Dt != DEVICE_TYPE::CPU)
+        throw std::invalid_argument("Tensor: pinned memory is host-only");
+
+    _compute_strides();
+    size_t n = std::accumulate(shape.begin(), shape.end(), size_t{1}, std::multiplies<>());
+    m_Data = m_Allocator->allocate_async(n, m_Stream.get());
+}
+
+template<typename value_type>
 om::Tensor<value_type>::Tensor(const Tensor& rhs)
     : m_Shape(rhs.m_Shape), m_Stride(rhs.m_Stride), m_Device(rhs.m_Device),
       m_Stream(Stream::default_stream()),
@@ -348,17 +362,20 @@ om::Tensor<value_type> om::Tensor<value_type>::to(const Device& target) const
         return Tensor<value_type>(*this);
     }
 
-    Tensor<value_type> out(this->shape(), target);
     size_t n = this->size();
 
     if (this->device_type() == DEVICE_TYPE::CPU && target.m_Dt == DEVICE_TYPE::CUDA) {
+        Tensor<value_type> out(this->shape(), target);
         CUDA_CALL(cudaMemcpy(out.m_Data, m_Data, sizeof(value_type) * n, cudaMemcpyHostToDevice));
+        return out;
     } else {
-        // CUDA → CPU
+        // CUDA → CPU: pin the destination. It is allocated right here for the
+        // sole purpose of receiving this copy, so — unlike an ordinary CPU
+        // tensor — there is no guessing about whether it crosses the bus.
+        Tensor<value_type> out(this->shape(), target, Stream::default_stream(), /*pinned=*/true);
         CUDA_CALL(cudaMemcpy(out.m_Data, m_Data, sizeof(value_type) * n, cudaMemcpyDeviceToHost));
+        return out;
     }
-
-    return out;
 }
 
 template <typename value_type>
@@ -379,17 +396,23 @@ om::Tensor<value_type> om::Tensor<value_type>::to(const Device& target, const St
     if (target.m_Dt == this->device_type())
         return Tensor<value_type>(*this);
 
-    Tensor<value_type> out(this->shape(), target);
     size_t n = this->size();
 
     if (this->device_type() == DEVICE_TYPE::CPU && target.m_Dt == DEVICE_TYPE::CUDA) {
+        Tensor<value_type> out(this->shape(), target);
         m_Allocator->copy_host_to_device_async(out.m_Data, m_Data, n, s.get());
+        return out;
     } else {
-        // CUDA → CPU
+        // CUDA → CPU: pin the destination for the same reason as the
+        // synchronous to() above — this buffer's only purpose is to receive
+        // this exact copy, so pinning it is not a guess about future use.
+        // copy_device_to_host_async() is unchanged by this; the driver is
+        // what turns the same cudaMemcpyAsync call into a real DMA once the
+        // destination is page-locked.
+        Tensor<value_type> out(this->shape(), target, Stream::default_stream(), /*pinned=*/true);
         m_Allocator->copy_device_to_host_async(out.m_Data, m_Data, n, s.get());
+        return out;
     }
-
-    return out;
 }
 
 template <typename value_type>
@@ -402,6 +425,18 @@ template <typename value_type>
 om::Tensor<value_type> om::Tensor<value_type>::cuda(const Stream& s) const
 {
     return this->to(Device(0, DEVICE_TYPE::CUDA), s);
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::pinned(const std::vector<size_t>& shape)
+{
+    return Tensor<value_type>(shape, Device(0, DEVICE_TYPE::CPU), Stream::default_stream(), /*pinned=*/true);
+}
+
+template <typename value_type>
+bool om::Tensor<value_type>::is_pinned() const
+{
+    return dynamic_cast<PinnedCpuAllocator<value_type>*>(m_Allocator.get()) != nullptr;
 }
 
 template <typename value_type>

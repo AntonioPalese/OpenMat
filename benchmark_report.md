@@ -130,11 +130,46 @@ mutex and hash lookup do not register against the ctypes crossing.
 
 H2D is the one number the cache does not move, and it is not supposed to: its
 destination is device memory, and its source is pageable host memory, which
-makes `cudaMemcpyAsync` synchronous. `cudaHostAlloc` for host buffers that
-participate in transfers would fix that, but pinning is not free and nothing in
-the API tells `CpuAllocator` which tensors will ever cross the bus — it would
-have to page-lock every host tensor, and it cannot fall back gracefully on a
-machine with no driver. Left as a separate change.
+makes `cudaMemcpyAsync` synchronous.
+
+**Implemented since:** `PinnedCpuAllocator` (`headers/allocator.h`) allocates
+through `om::detail::PinnedHostPool` — `cudaHostAlloc` recycled the same way
+`HostPool` recycles pageable blocks, with its own smaller cap
+(`OPENMAT_PINNED_CACHE_BYTES`, default 64 MB; page-locking is one to two
+orders of magnitude slower than a pageable allocation, so recycling matters
+even more here). Two call sites use it without guessing which host tensors
+will ever cross the bus: `Tensor::to()` allocates the destination of a
+device-to-host copy pinned, because at that call site the buffer's only
+purpose *is* to receive that exact copy; and `Tensor::pinned(shape)` lets a
+caller pin a buffer explicitly when it knows it will be a repeated H2D
+*source*, which `to()` cannot do retroactively for a tensor that already
+exists. Neither path page-locks a tensor nobody asked to have pinned, and
+neither is reachable without a working CUDA driver already in use, so the
+CPU-only CI job is untouched (`PinnedHostPool` still has to compile there,
+against the stub `libcuda.so` it links against, but nothing exercises it).
+
+Measured on this machine (isolating the copy itself — same
+`cudaMemcpyAsync` call, only the destination/source allocator differs — at
+64 MB, 50 rounds, warmed):
+
+| direction | pageable | pinned |
+|---|---|---|
+| D2H | 1.137 ms (59.0 GB/s) | 1.139 ms (58.9 GB/s) |
+| H2D | 1.143 ms (58.7 GB/s) | 1.143 ms (58.7 GB/s) |
+
+No measurable difference here — consistent with GB10 being the
+"coherent-memory part" already noted in [README.md](README.md)'s stream
+section: NVLink-C2C unified host/device memory means the driver has no
+PCIe-bound bounce-buffer stage to skip by pinning, which is the mechanism
+this was meant to remove. The fix is real and does what it says (verified:
+`cudaPointerGetAttributes` reports `cudaMemoryTypeHost` on the allocated
+block, and `test_host_pool`'s `PinnedHostPoolTensor` suite checks the
+automatic and opt-in paths end to end), but on *this* GPU it is not the
+lever — pinning should still matter on a discrete, PCIe-attached part like
+the RTX 4060 in [stream_perf_report.md](stream_perf_report.md), where a
+pageable-memory transfer really does route through the driver's internal
+pinned staging buffer; that machine was not available to re-measure this
+change against.
 
 ## 4. Small sizes are FFI-bound
 

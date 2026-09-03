@@ -6,6 +6,7 @@
 #include <new>
 #include <unordered_map>
 #include <vector>
+#include <cuda_runtime.h>
 
 namespace om {
 namespace detail {
@@ -162,6 +163,180 @@ namespace detail {
             while (v >>= 1) ++p;
             return p;
 #endif
+        }
+
+        static void* user_ptr(void* base) { return static_cast<char*>(base) + kAlign; }
+        static void* base_ptr(void* ptr)  { return static_cast<char*>(ptr) - kAlign; }
+
+        std::mutex                                     m_Mutex;
+        std::unordered_map<size_t, std::vector<void*>> m_Free;
+        size_t                                         m_Cached   = 0;
+        const size_t                                   m_Capacity;
+    };
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Pinned (page-locked) host block cache
+    //
+    // HostPool fixed every allocator-bound number except one: H2D/D2H transfer
+    // into a pageable buffer still makes cudaMemcpyAsync synchronous, because
+    // the driver has to stage the copy through its own internal pinned bounce
+    // buffer rather than DMA'ing straight to/from the buffer HostPool handed
+    // out. cudaHostAlloc/cudaFreeHost page-lock memory so that staging step is
+    // skipped — see benchmark_report.md §3 and stream_perf_report.md.
+    //
+    // Page-locking is a page-table operation, not a malloc — a bare
+    // cudaHostAlloc runs one to two orders of magnitude slower than the
+    // equivalent pageable allocation. So recycling matters even more here than
+    // in HostPool: without it, a repeated transfer of the same shape would pay
+    // that cost on every call. Same size-class scheme as HostPool (reused via
+    // HostPool::size_class, so the two can never drift apart); a smaller
+    // default cap, since pinned pages are a scarcer resource the OS cannot
+    // reclaim under memory pressure the way it reclaims ordinary pages.
+    //
+    // Deliberately not the allocator behind ordinary CPU tensors: nothing here
+    // decides on its own which host tensors will cross the bus. This pool only
+    // ever backs a PinnedCpuAllocator (headers/allocator.h), and a Tensor gets
+    // one of those only when a caller explicitly asks (Tensor::pinned()) or
+    // when Tensor::to() allocates the destination of a device-to-host copy,
+    // where the answer is not a guess — that exact buffer is a transfer
+    // destination right now. Both call sites already require a working CUDA
+    // driver, so unlike HostPool this pool is never touched by the CPU-only
+    // build/test job — it still has to compile there (against the stub
+    // libcuda.so the cpu CI job links against), but nothing exercises it.
+    //
+    // One more difference from HostPool: its cached blocks are plain malloc,
+    // invisible to compute-sanitizer's CUDA allocation tracking, so a
+    // never-destroyed singleton is a non-issue for --leak-check. cudaHostAlloc
+    // blocks are tracked, so the same design here would flag every cached (not
+    // live) block as leaked at process exit — which is what the CI gpu job's
+    // `--error-exitcode 1` treats as a hard failure. The constructor registers
+    // an atexit hook that empties the free list on the way out. This does not
+    // reintroduce the destruction-order hazard the comment above is guarding
+    // against: it only calls release_all(), never deletes `pool`, so the
+    // singleton itself is exactly as immortal as before — a deallocate() that
+    // lands after this hook runs (from a Tensor with static storage duration,
+    // say) still finds a live pool and simply repopulates its free list.
+    // ─────────────────────────────────────────────────────────────────────────
+    class PinnedHostPool
+    {
+    public:
+        static PinnedHostPool& instance()
+        {
+            // Deliberately never destroyed, for the same reason as HostPool::
+            // a Tensor with static storage duration must not outlive the pool
+            // it frees pinned blocks into.
+            static PinnedHostPool* pool = new PinnedHostPool();
+            return *pool;
+        }
+
+        void* allocate(size_t bytes)
+        {
+            const size_t cls = HostPool::size_class(bytes);
+
+            if (m_Capacity != 0) {
+                std::lock_guard<std::mutex> lock(m_Mutex);
+                auto it = m_Free.find(cls);
+                if (it != m_Free.end() && !it->second.empty()) {
+                    void* base = it->second.back();
+                    it->second.pop_back();
+                    m_Cached -= cls;
+                    return user_ptr(base);
+                }
+            }
+
+            void* base = alloc_block(cls);
+            if (!base) {
+                // Out of pinned memory while the cache holds blocks of the
+                // wrong size classes: give them back and try once more.
+                release_all();
+                base = alloc_block(cls);
+                if (!base)
+                    throw std::bad_alloc();
+            }
+            *static_cast<size_t*>(base) = cls;
+            return user_ptr(base);
+        }
+
+        void deallocate(void* ptr)
+        {
+            if (!ptr)
+                return;
+
+            void* base = base_ptr(ptr);
+            const size_t cls = *static_cast<size_t*>(base);
+
+            if (m_Capacity != 0) {
+                std::lock_guard<std::mutex> lock(m_Mutex);
+                if (m_Cached + cls <= m_Capacity) {
+                    m_Free[cls].push_back(base);
+                    m_Cached += cls;
+                    return;
+                }
+            }
+            cudaFreeHost(base);
+        }
+
+        // Returns every cached block to the driver. Live allocations untouched.
+        void release_all()
+        {
+            std::lock_guard<std::mutex> lock(m_Mutex);
+            for (auto& entry : m_Free) {
+                for (void* base : entry.second)
+                    cudaFreeHost(base);
+                entry.second.clear();
+            }
+            m_Cached = 0;
+        }
+
+        size_t cached_bytes()
+        {
+            std::lock_guard<std::mutex> lock(m_Mutex);
+            return m_Cached;
+        }
+
+        size_t capacity() const { return m_Capacity; }
+
+    private:
+        static constexpr size_t kAlign      = 64;             // header size too
+        static constexpr size_t kDefaultCap = 64ull << 20;     // 64 MB
+
+        PinnedHostPool() : m_Capacity(env_capacity())
+        {
+            std::atexit(&PinnedHostPool::release_cached_at_exit);
+        }
+
+        static void release_cached_at_exit()
+        {
+            instance().release_all();
+        }
+
+        static void* alloc_block(size_t cls)
+        {
+            void* base = nullptr;
+            // Errors here are reported to the caller (allocate() retries once,
+            // then throws) rather than via CUDA_CALL: a missing driver — the
+            // cpu CI job — must never reach this function in the first place
+            // (see the class comment), so throwing std::runtime_error instead
+            // of pulling in cuda_defines.cuh's CUDA_CALL keeps this header
+            // free of a dependency the HostPool half of the file doesn't need.
+            cudaError_t err = cudaHostAlloc(&base, kAlign + cls, cudaHostAllocDefault);
+            if (err != cudaSuccess) {
+                (void)cudaGetLastError();   // clear the sticky error, mirrors CUDA_CALL sites
+                return nullptr;
+            }
+            return base;
+        }
+
+        static size_t env_capacity()
+        {
+            const char* env = std::getenv("OPENMAT_PINNED_CACHE_BYTES");
+            if (!env || !*env)
+                return kDefaultCap;
+            char* end = nullptr;
+            const unsigned long long v = std::strtoull(env, &end, 10);
+            if (end == env)
+                return kDefaultCap;
+            return static_cast<size_t>(v);
         }
 
         static void* user_ptr(void* base) { return static_cast<char*>(base) + kAlign; }

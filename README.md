@@ -186,6 +186,8 @@ The theoretical maximum speedup is ~2× (total time drops to `max(H2D, compute)`
 
 GB10's 4× exceeds that ceiling, which means the ratio is measuring a bad baseline rather than good overlap: the serialized path is *slower* there than on the 4060 (47.9 ms vs 37.21 ms) because the H2D leg dominates. `test_stress` puts H2D+D2H round-trips at only 4.3–4.8 GB/s on a coherent-memory part. The cross-framework benchmark since identified the cause, and it is not a staging copy: a bare transfer into a reused buffer runs at ~57 GB/s, level with PyTorch, while one that allocates its destination each round-trip collapses to 2.3 GB/s — the host allocator page-faulting in the destination, the same effect described under [vs NumPy and PyTorch](#vs-numpy-and-pytorch). Fixing that would improve the absolute time and shrink this speedup.
 
+"Not a staging copy" is now confirmed rather than inferred: `Tensor::to()` pins the destination of a device-to-host transfer (`cudaHostAlloc` via `PinnedCpuAllocator`, [benchmark_report.md §3](benchmark_report.md#3-the-cpu-gap-above-128-kb-was-the-allocator-not-the-loop--fixed)), which is exactly what would skip a pinned bounce-buffer stage if one were in the way — and it moves nothing on GB10 (58-59 GB/s either way, isolating the copy itself), because NVLink-C2C's unified host/device memory has no such stage to skip in the first place. The lever here really is the allocator, not pinning.
+
 #### Stream creation overhead — negligible
 
 | Variant | RTX 4060 (256 KB mul, 1000 iters) | GB10 |

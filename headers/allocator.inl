@@ -44,9 +44,27 @@ namespace om
         // copy on many drivers, but is safe to call unconditionally.
         CUDA_CALL(cudaMemcpyAsync(dst, src, sizeof(T) * count, cudaMemcpyHostToDevice, stream));
     }
-    
 
-    
+    // Same allocate()/deallocate() as CpuAllocator, backed by PinnedHostPool
+    // instead of HostPool. See allocator.h and host_pool.h for why this is a
+    // separate, opt-in allocator rather than what CPU tensors get by default.
+    template<typename T>
+    T* PinnedCpuAllocator<T>::allocate(size_t count) {
+        if (count == 0)
+            return nullptr;
+        if (count > static_cast<size_t>(-1) / sizeof(T))
+            throw std::bad_alloc();
+
+        return static_cast<T*>(detail::PinnedHostPool::instance().allocate(sizeof(T) * count));
+    }
+
+    template<typename T>
+    void PinnedCpuAllocator<T>::deallocate(T* ptr) {
+        detail::PinnedHostPool::instance().deallocate(ptr);
+    }
+
+
+
     template <typename T>
     T *GpuAllocator<T>::allocate(size_t count)
     {

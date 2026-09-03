@@ -54,6 +54,25 @@ namespace om
         virtual void copy_host_to_device_async(T* dst, const T* src, size_t count, cudaStream_t stream) override;
     };
 
+    // Page-locked host memory, recycled through om::detail::PinnedHostPool.
+    // Everything but allocate/deallocate is inherited from CpuAllocator
+    // unchanged: copy()/copyFromCurrentLoc() are plain memcpy/cudaMemcpy and
+    // don't care how the buffer was obtained, and copy_host_to_device_async()
+    // is the same cudaMemcpyAsync call either way — pinning changes what the
+    // driver does with that call (a real DMA instead of staging through its
+    // own bounce buffer), not what OpenMat has to pass it.
+    //
+    // Never created by AllocatorFactory::create() / device_type() — a Tensor
+    // gets this allocator only via Tensor::pinned() or as the destination
+    // Tensor::to() allocates for a device-to-host copy. See host_pool.h.
+    template<typename T>
+    class PinnedCpuAllocator : public CpuAllocator<T>
+    {
+    public:
+        virtual T* allocate(size_t count) override;
+        virtual void deallocate(T* ptr) override;
+    };
+
     template<typename T>
     class GpuAllocator : public Allocator<T>
     {
@@ -80,11 +99,20 @@ namespace om
         {
             switch (devType)
             {
-                case DEVICE_TYPE::CPU : return std::make_unique<CpuAllocator<T>>();           
-                case DEVICE_TYPE::CUDA : return std::make_unique<GpuAllocator<T>>();           
+                case DEVICE_TYPE::CPU : return std::make_unique<CpuAllocator<T>>();
+                case DEVICE_TYPE::CUDA : return std::make_unique<GpuAllocator<T>>();
             default:
                 throw std::invalid_argument("Unknown AllocatorType");
             }
+        }
+
+        // Not reached through device_type() — there is no DEVICE_TYPE for
+        // pinned memory, deliberately: it stays host memory in every other
+        // respect (device_type() still reports CPU), it just isn't handed out
+        // by default. See PinnedCpuAllocator.
+        static std::unique_ptr<Allocator<T>> create_pinned()
+        {
+            return std::make_unique<PinnedCpuAllocator<T>>();
         }
     };
 }

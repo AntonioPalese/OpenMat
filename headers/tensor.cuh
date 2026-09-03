@@ -42,7 +42,22 @@ namespace om
         static Tensor<value_type> from_vector(const std::vector<value_type>& data,
                                               const std::vector<size_t>& shape,
                                               const Device& dv = Device(0, DEVICE_TYPE::CPU));
-        
+
+        // A CPU tensor backed by page-locked (cudaHostAlloc) memory instead of
+        // HostPool's ordinary pageable blocks. Use it for a host tensor you
+        // know will repeatedly cross the bus as the *source* of an H2D
+        // transfer (Tensor::to()/cuda()) — pinning turns that cudaMemcpyAsync
+        // into a genuine DMA instead of one staged through the driver's own
+        // pinned bounce buffer. The destination side of a D2H transfer is
+        // pinned automatically by Tensor::to(); there is no equivalent
+        // automatic case on the H2D side because to() cannot retroactively
+        // pin a source tensor that already exists — see host_pool.h.
+        static Tensor<value_type> pinned(const std::vector<size_t>& shape);
+
+        // True iff this is a CPU tensor allocated via Tensor::pinned() or as
+        // the destination of a device-to-host Tensor::to().
+        bool is_pinned() const;
+
         const value_type& operator()(std::initializer_list<size_t> indices) const
         {
             return m_Data[_compute_flat_index(indices)];
@@ -193,6 +208,11 @@ namespace om
         // Internal constructor used by stream overloads to associate output
         // tensors with the enqueuing stream for async alloc/free.
         Tensor(const std::vector<size_t>& shape, const Device& dv, Stream stream);
+
+        // Same, plus an explicit choice of PinnedCpuAllocator over the
+        // device-default allocator. `dv` must be CPU when `pinned` is true —
+        // there is no such thing as pinned device memory.
+        Tensor(const std::vector<size_t>& shape, const Device& dv, Stream stream, bool pinned);
 
         void _compute_strides();
         inline size_t _compute_flat_index(const std::vector<size_t>& indices) const;

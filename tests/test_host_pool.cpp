@@ -182,3 +182,130 @@ TEST(HostPoolTensor, RepeatedOpsDoNotGrowTheCacheWithoutBound) {
     EXPECT_LE(pool.cached_bytes(), 4u * HostPool::size_class(256 * 256 * sizeof(float)));
     pool.release_all();
 }
+
+// ── PinnedHostPool ────────────────────────────────────────────────────────────
+// Page-locked counterpart of HostPool, backing PinnedCpuAllocator. Every test
+// here touches the driver (cudaHostAlloc/cudaFreeHost), so — unlike the plain
+// HostPool tests above — they all require a real device.
+
+using om::detail::PinnedHostPool;
+
+#define OM_REQUIRE_PINNED_CACHE(bytes)                                        \
+    do {                                                                      \
+        if (PinnedHostPool::instance().capacity() < (bytes))                  \
+            GTEST_SKIP() << "pinned block cache disabled or smaller than "    \
+                         << (bytes) << " bytes";                              \
+    } while (0)
+
+TEST(PinnedHostPoolRecycle, FreedBlockComesBack) {
+    OM_REQUIRE_CUDA();
+    OM_REQUIRE_PINNED_CACHE(1u << 20);
+    om::PinnedCpuAllocator<float> alloc;
+    const size_t n = 1u << 18;
+
+    float* a = alloc.allocate(n);
+    alloc.deallocate(a);
+    float* b = alloc.allocate(n);
+
+    EXPECT_EQ(a, b) << "the block should have been recycled, not re-pinned";
+    alloc.deallocate(b);
+}
+
+TEST(PinnedHostPoolRecycle, CacheStaysUnderItsCap) {
+    OM_REQUIRE_CUDA();
+    PinnedHostPool& pool = PinnedHostPool::instance();
+    pool.release_all();
+
+    om::PinnedCpuAllocator<char> alloc;
+    std::vector<char*> blocks;
+    const size_t block = 4u << 20;
+    const size_t count = pool.capacity() / block + 4;   // deliberately overshoot
+
+    for (size_t i = 0; i < count; ++i)
+        blocks.push_back(alloc.allocate(block));
+    for (char* p : blocks)
+        alloc.deallocate(p);
+
+    EXPECT_LE(pool.cached_bytes(), pool.capacity());
+    pool.release_all();
+}
+
+TEST(PinnedHostPoolContract, ZeroCountIsNullAndFreeingNullIsSafe) {
+    OM_REQUIRE_CUDA();
+    om::PinnedCpuAllocator<float> alloc;
+    EXPECT_EQ(alloc.allocate(0), nullptr);
+    alloc.deallocate(nullptr);                  // must not crash
+}
+
+TEST(PinnedHostPoolContract, BlockIsPageLockedAndWritable) {
+    OM_REQUIRE_CUDA();
+    om::PinnedCpuAllocator<float> alloc;
+    const size_t n = 1024;
+
+    float* p = alloc.allocate(n);
+    for (size_t i = 0; i < n; ++i) p[i] = static_cast<float>(i);
+
+    cudaPointerAttributes attrs{};
+    CUDA_CALL(cudaPointerGetAttributes(&attrs, p));
+    EXPECT_EQ(attrs.type, cudaMemoryTypeHost) << "allocate() must hand out page-locked memory";
+
+    EXPECT_FLOAT_EQ(p[0], 0.f);
+    EXPECT_FLOAT_EQ(p[n - 1], static_cast<float>(n - 1));
+    alloc.deallocate(p);
+}
+
+// ── through a Tensor ─────────────────────────────────────────────────────────
+
+TEST(PinnedHostPoolTensor, PinnedFactoryProducesAPinnedCpuTensor) {
+    OM_REQUIRE_CUDA();
+    auto t = Tensor<float>::pinned({64});
+    EXPECT_EQ(t.device_type(), DEVICE_TYPE::CPU);
+    EXPECT_TRUE(t.is_pinned());
+
+    // Ordinary CPU allocation still isn't pinned.
+    Tensor<float> plain({64}, Device("cpu:0"));
+    EXPECT_FALSE(plain.is_pinned());
+}
+
+TEST(PinnedHostPoolTensor, PinnedTensorComputesCorrectly) {
+    OM_REQUIRE_CUDA();
+    auto a = Tensor<float>::pinned({64});
+    Tensor<float> b({64}, Device("cpu:0"));
+    a.fill(2.f);
+    b.fill(3.f);
+
+    Tensor<float> c = a + b;   // pinned memory is ordinary host-addressable memory
+    EXPECT_FLOAT_EQ(c({0}), 5.f);
+    EXPECT_FLOAT_EQ(c({63}), 5.f);
+}
+
+TEST(PinnedHostPoolTensor, D2HDestinationIsPinnedSyncAndAsync) {
+    OM_REQUIRE_CUDA();
+    Tensor<float> g({16}, Device("cuda:0"));
+    g.fill(9.f);
+
+    auto c1 = g.cpu();
+    EXPECT_TRUE(c1.is_pinned());
+    EXPECT_FLOAT_EQ(c1({0}), 9.f);
+
+    om::Stream s;
+    auto c2 = g.cpu(s);
+    s.synchronize();
+    EXPECT_TRUE(c2.is_pinned());
+    EXPECT_FLOAT_EQ(c2({0}), 9.f);
+}
+
+TEST(PinnedHostPoolTensor, H2DSourceUnaffectedButCopyIsCorrect) {
+    OM_REQUIRE_CUDA();
+    // The H2D side has no automatic pinning (the source tensor already
+    // exists), but Tensor::pinned() lets a caller opt in explicitly, and
+    // either way the copy must still be correct.
+    auto pinned_src = Tensor<float>::pinned({4});
+    pinned_src({0}) = 1.f; pinned_src({1}) = 2.f; pinned_src({2}) = 3.f; pinned_src({3}) = 4.f;
+
+    auto gpu_t = pinned_src.cuda();
+    EXPECT_EQ(gpu_t.device_type(), DEVICE_TYPE::CUDA);
+    auto back = to_host(gpu_t);
+    EXPECT_FLOAT_EQ(back[0], 1.f);
+    EXPECT_FLOAT_EQ(back[3], 4.f);
+}

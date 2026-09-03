@@ -223,10 +223,20 @@ Il rapporto sembra ottimo, però il guadagno viene soprattutto dal fatto che il 
 è peggiore: la variante serializzata impiega 47.9 ms su GB10 contro 37.2 ms sulla 4060,
 mentre quella sovrapposta scende a 11.9 ms. È il ramo H2D a dominare, e infatti
 `Stress.AsyncTransferBandwidth` misura solo **4.3–4.8 GB/s** su round-trip da 64 MB — una
-cifra bassa per una piattaforma a memoria coerente. L'ipotesi più probabile è che i
-trasferimenti passino da memoria host pageable con staging intermedio invece che da memoria
-pinned. Se confermato, sistemare il path di trasferimento migliorerebbe il tempo assoluto e
-al tempo stesso **ridurrebbe** questo 4×.
+cifra bassa per una piattaforma a memoria coerente.
+
+**Ipotesi verificata, e smentita.** `Tensor::to()` ora pina la destinazione di un
+trasferimento device-to-host (`PinnedCpuAllocator`, `cudaHostAlloc` riciclato via
+`PinnedHostPool` — vedi [benchmark_report.md §3](benchmark_report.md#3-the-cpu-gap-above-128-kb-was-the-allocator-not-the-loop--fixed)),
+esattamente ciò che salterebbe uno staging intermedio se ce ne fosse uno. Isolando la sola
+`cudaMemcpyAsync` (stessa chiamata, cambia solo l'allocatore della destinazione) la banda
+misurata è **58–59 GB/s sia pageable sia pinned** — nessuna differenza, e già in linea con
+NVLink-C2C. Lo staging non era la causa: coerentemente con quanto già notato in
+[README.md](README.md#stream-overlap-in-isolation), il collo di bottiglia di
+`Stress.AsyncTransferBandwidth` è l'allocazione della destinazione a ogni round-trip, non il
+tipo di memoria che la riceve. Sistemare *quello* — riusare il buffer invece di riallocarlo
+ogni round, come già fa il resto della libreria dietro `HostPool` — resta l'unica leva reale
+su questo numero.
 
 ---
 
