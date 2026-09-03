@@ -16,6 +16,7 @@ project(OpenMat LANGUAGES CXX CUDA)
 #include("${CMAKE_SOURCE_DIR}/cmake/detect_cuda_arch.cmake")
 enable_language(CUDA)
 find_package(CUDAToolkit REQUIRED)
+find_package(OpenMP REQUIRED)
 
 if(DEFINED ENV{CMAKE_LIBRARY_PATH})
     message(STATUS "Custom flag (CMAKE_LIBRARY_PATH) is set: $ENV{CMAKE_LIBRARY_PATH}")
@@ -90,6 +91,14 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
 )
 
 target_include_directories(${PROJECT_NAME} PUBLIC headers/)
+
+# matmul_cpu.h (headers/ops/cpu/matmul_cpu.h) parallelizes its outer loop with
+# #pragma omp. PUBLIC so every consumer that includes tensor.cuh and therefore
+# re-instantiates the header-only template (tests, src/main.cpp, the Python
+# capi TU) compiles that instantiation with the same -fopenmp flags — mixing a
+# -fopenmp and a non--fopenmp instantiation of the same weak symbol across TUs
+# is an ODR violation, not just a missed optimization.
+target_link_libraries(${PROJECT_NAME} PUBLIC OpenMP::OpenMP_CXX)
 
 if(OM_DEBUG_SYNC)
     target_compile_definitions(${PROJECT_NAME} PRIVATE OM_DEBUG_SYNC=1)
