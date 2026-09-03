@@ -37,6 +37,13 @@ namespace om
         if (src.size() == 0) throw std::invalid_argument("reduce_min: empty tensor");
         T acc = src[0];
         size_t n = src.size();
+        // No "omp simd reduction(min:)" here: measured, it is a regression on
+        // GCC 13/aarch64 (~1.6x slower at 16M elements, reproducibly), because
+        // -O3 alone already idiom-recognizes this exact branch-and-select loop
+        // and auto-vectorizes it (confirmed with -fopt-info-vec-optimized) —
+        // the explicit reduction clause forces a different, less efficient
+        // lowering on top of an already-vectorized loop. Left as the plain
+        // scalar form as a result; see the OpenMP CPU benchmark notes.
         for (size_t i = 1; i < n; ++i) if (src[i] < acc) acc = src[i];
         return acc;
     }

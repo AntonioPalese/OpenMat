@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build
 
-Requirements: NVIDIA GPU, CUDA Toolkit ≥ 11.2 (for `cudaMallocAsync`), CMake ≥ 3.24 (for `CMAKE_CUDA_ARCHITECTURES=native`), C++17/CUDA 17 compiler. Verified building and passing all 13 suites on CUDA 13.0 / GCC 13.3 / CMake 3.28 / GB10 (sm_121).
+Requirements: NVIDIA GPU, CUDA Toolkit ≥ 11.2 (for `cudaMallocAsync`), CMake ≥ 3.24 (for `CMAKE_CUDA_ARCHITECTURES=native`), C++17/CUDA 17 compiler, OpenMP (`find_package(OpenMP REQUIRED)` in `CMakeLists.txt`; bundled as `libgomp` with a stock GCC install, nothing extra to install on most systems). Verified building and passing all 13 suites on CUDA 13.0 / GCC 13.3 / CMake 3.28 / GB10 (sm_121).
 
 ```bash
 # Full clean rebuild (also refreshes compile_commands.json in the repo root)
@@ -169,6 +169,10 @@ src/ops/kernels/        ← CUDA kernel .cu translation units
 4. `headers/tensor.cuh` / `.inl` — the `(rhs, const Stream&)` method plus the one-line no-stream delegate.
 5. Only if a stream-less free function is wanted: register in `kernel_launcher.h`/`.inl`.
 
+**CPU binary/unary elementwise ops parallelize above a size threshold.** `DEFINE_BINARY_OPS_CPU` ([headers/ops/cpu/binary_op_macros.h](headers/ops/cpu/binary_op_macros.h)) and `DEFINE_UNARY_OPS_CPU` ([headers/ops/cpu/unary_op_macros.h](headers/ops/cpu/unary_op_macros.h)) — the CPU side of `add`/`sub`/`mul`/`div`, both tensor⊕tensor and tensor⊕scalar — wrap their loop in `#pragma omp parallel for schedule(static) if(_total > 65536)`. Since every op generated from these two macros shares the one loop, all of them benefit together. `_Pragma` is used instead of a bare `#pragma` because the pragma sits inside a macro replacement list — `#pragma` cannot appear mid-macro, `_Pragma` can, and it is expanded at the same point. Below the threshold the loop is measurably untouched (within ~2% of the single-thread time — no fork/join tax paid on the hot path for small tensors); above it, `add`/`sub`/`mul`/`div` measured 1.7–10.6× faster on a 20-thread reference machine and beat NumPy outright at ≥1M elements. See [benchmark_report.md §7](benchmark_report.md#7-cpu-elementwise-ops-were-single-threaded--openmp-closes-most-of-it) for the numbers. `matmul_cpu` ([headers/ops/cpu/matmul_cpu.h](headers/ops/cpu/matmul_cpu.h)) is parallelized the same way (`#pragma omp parallel for` over the outer row loop, on top of `ikj`-order/L2-tiled inner loops) and predates this.
+
+Every consumer that includes `tensor.cuh` — and therefore re-instantiates these header-only templates — must compile with `-fopenmp` for exactly this reason: `CMakeLists.txt` does `find_package(OpenMP REQUIRED)` and links the `OpenMat` target `PUBLIC` against `OpenMP::OpenMP_CXX`, so the flag propagates to every TU that consumes the headers (tests, `src/main.cpp`, the Python capi TU). Compiling one instantiation with `-fopenmp` and another without is an ODR violation on the same weak symbol, not just a missed optimization.
+
 **Division goes through one policy.** [headers/ops/div_policy.h](headers/ops/div_policy.h) defines `om::div_elem`, used by `div`, `div_k` and the `Div`/`BinaryDiv` fused functors on both backends. Floating point divides unguarded — IEEE 754 already gives ±inf with the dividend's sign and NaN for 0/0, which is what NumPy and PyTorch return; integer types return 0 for `x / 0` (UB otherwise, and NumPy's answer). Do not reintroduce a `rhs != 0 ? … : INFINITY` guard: it loses the sign, disagrees between CPU and GPU for `int`, and the `static_cast<double>` it needs lands on the 1:64 fp64 unit.
 
 **Supported dtypes** (`om::dtype<T>()`): `float`, `double`, `int`, `char`, `float16_t`. Kernel instantiations cover `float`, `int`, `char`, `float16_t` — `double` has no GPU instantiation.
@@ -191,6 +195,8 @@ src/ops/kernels/        ← CUDA kernel .cu translation units
 ## Reductions
 
 GPU: two-phase shared-memory tree reduction + warp shuffle (`__shfl_down_sync`) — `launch_reduce_sum/min/max` in [headers/ops/kernels/reduce_gpu.cuh](headers/ops/kernels/reduce_gpu.cuh). CPU: [headers/ops/cpu/reduce_cpu.h](headers/ops/cpu/reduce_cpu.h). Exposed as `.sum()`, `.mean()`, `.min()`, `.max()`; these are synchronous and return a host scalar (no stream overloads).
+
+`reduce_sum_cpu` splits the accumulation across 8 independent lanes (a source-level restructuring, commented inline) to break the loop-carried FP dependency chain. `reduce_min_cpu`/`reduce_max_cpu` deliberately do **not** carry an OpenMP pragma of any kind — no `parallel for` (too little work per element for fork/join to pay for itself) and, less obviously, no `#pragma omp simd reduction(min:)/(max:)` either, even though that looks like the natural counterpart to the sum-lane trick above. It was tried and measured: isolated A/B, identical loop body, same `-O3 -march=native -fopenmp` flags, ~1.6× *slower* than the plain scalar loop at 16M elements on GCC 13/aarch64, reproducibly regardless of call order. `-fopt-info-vec-optimized` explains why — GCC already auto-vectorizes the branch-and-select idiom (`if (x < acc) acc = x`) under `-O3` alone, and the explicit `reduction(min:)` clause forces a different, worse lowering on top of an already-vectorized loop rather than improving on it. Left as the plain scalar form as a result. Do not re-add that pragma without re-measuring on the target compiler/architecture first — see [benchmark_report.md §7](benchmark_report.md#7-cpu-elementwise-ops-were-single-threaded--openmp-closes-most-of-it) for the isolated numbers.
 
 ## Shape ops, transpose, matmul
 

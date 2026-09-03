@@ -30,7 +30,9 @@ out-of-place and allocates its result, as all three libraries do by default.
 | GPU fused `(a+b)*s`, 16 M elem | **1.66× faster than PyTorch** (858 µs vs 1420 µs) |
 | GPU elementwise `add`, 16 M elem | 1.47× slower (159 GB/s vs 234 GB/s) |
 | GPU transpose, 2048² | **1.16× faster than PyTorch** (206 µs vs 240 µs) |
-| CPU elementwise, 16 M elem | parity with NumPy — 4.50 ms vs 6.13 ms on `add` (§3) |
+| CPU elementwise, 16 M elem, single-thread | parity with NumPy — 4.50 ms vs 6.13 ms on `add` (§3) |
+| CPU elementwise (`add`/`sub`/`mul`/`div`), ≥1 M elem, OpenMP | **now faster than NumPy outright** — up to 10.6× over single-thread at 1M elem (§7) |
+| CPU `min`/`max`, `omp simd reduction` | tried, **reverted** — measured 1.6× *slower*, not faster (§7) |
 | CPU fused `x*s+t`, 16 M elem | **2.31× faster than NumPy, 1.24× faster than PyTorch** |
 | `sum`, CPU | 4–12× slower (§5) |
 | `matmul`, CPU 1024³ | 421× slower — 1.81 GFLOP/s vs 756 GFLOP/s (§6) |
@@ -239,6 +241,105 @@ shape allows it.
 The CPU path at 421× off is not a tuning gap; it is a different algorithm class.
 Loop reordering to `ikj` alone would win roughly an order of magnitude for one
 line of change.
+
+## 7. CPU elementwise ops were single-threaded — OpenMP closes most of it
+
+Everything above this point predates a separate pass: `DEFINE_BINARY_OPS_CPU`
+and `DEFINE_UNARY_OPS_CPU` — the CPU side of `add`/`sub`/`mul`/`div`, tensor⊕tensor
+and tensor⊕scalar, in [headers/ops/cpu/binary_op_macros.h](headers/ops/cpu/binary_op_macros.h)
+and [headers/ops/cpu/unary_op_macros.h](headers/ops/cpu/unary_op_macros.h) — were a
+single-thread scalar `for` loop, full stop. PyTorch on the same machine uses 20.
+Since both macros are a single point of generation, one `#pragma omp parallel for
+schedule(static) if(_total > 65536)` in each covers every op they generate at once.
+
+**Methodology note:** this section is *not* a `scripts/bench_vs.py` run — measured
+with a standalone before/after harness instead (same Release binary, same code
+path, `OMP_NUM_THREADS` toggled between invocations as the single/multi-thread
+proxy), NumPy 2.5.0, no PyTorch installed in this pass. Same machine and date as
+the rest of this report (see Environment above).
+
+### 7.1 `add`/`sub`/`mul`/`div` — the threshold does its job
+
+`OMP_NUM_THREADS=1` vs unset (20 threads), same binary:
+
+| op | N | 1 thread | 20 threads | speedup |
+|---|---|---|---|---|
+| `add` (tensor) | 4096 | 0.0020 ms | 0.0021 ms | 1.0× (below threshold — untouched) |
+| `add` (tensor) | 65536 | 0.0065 ms | 0.0065 ms | 1.0× (at the threshold — `>`, not `≥`, still scalar) |
+| `add` (tensor) | 1 048 576 | 0.110 ms | 0.016 ms | **6.9×** |
+| `add` (tensor) | 16 777 216 | 4.16 ms | 2.01 ms | **2.1×** |
+| `div` (tensor) | 1 048 576 | 0.270 ms | 0.026 ms | **10.6×** |
+| `div` (tensor) | 16 777 216 | 4.35 ms | 2.01 ms | **2.2×** |
+| `add` (scalar) | 1 048 576 | 0.070 ms | 0.013 ms | **5.2×** |
+| `add` (scalar) | 16 777 216 | 2.35 ms | 1.36 ms | **1.7×** |
+
+`sub`/`mul` track `add`; `mul` (scalar) tracks `add` (scalar) — omitted for space, same
+shape. Below 65536 elements the `if()` clause means fork/join is never paid: every
+row there sits within ~2% of the single-thread number. Above it, the win ranges
+1.7–10.6× depending on op and size, largest exactly where the pre-existing bottleneck
+(§3's allocator fix) had already removed the memory-fault tax and left the scalar
+loop as the ceiling.
+
+Against NumPy, on the same 20-thread run:
+
+| op | N | OpenMat | NumPy | OpenMat vs NumPy |
+|---|---|---|---|---|
+| `add` (tensor) | 1 048 576 | 0.016 ms | 0.144 ms | **9.1× faster** |
+| `div` (tensor) | 1 048 576 | 0.026 ms | 0.273 ms | **10.7× faster** |
+| `add` (tensor) | 16 777 216 | 2.01 ms | 5.75 ms | **2.9× faster** |
+| `div` (tensor) | 16 777 216 | 2.01 ms | 6.16 ms | **3.1× faster** |
+
+At ≥1M elements `add`/`sub`/`mul`/`div` now beat NumPy outright instead of merely
+reaching parity, which is what §3 alone bought.
+
+### 7.2 `min`/`max` — the same trick, tried and reverted
+
+The natural next step looked like `#pragma omp simd reduction(min:acc)` /
+`reduction(max:acc)` on `reduce_min_cpu`/`reduce_max_cpu`
+([headers/ops/cpu/reduce_cpu.h](headers/ops/cpu/reduce_cpu.h)): too little work per
+element for a thread team, but exactly the branch-and-select idiom the clause is
+meant to recognize. Measured, it made things worse.
+
+Isolated A/B — identical loop body, only the pragma differs, both compiled
+`-O3 -march=native -fopenmp` in the same translation unit so it is the pragma's
+effect being measured and not a flags difference:
+
+```
+N              before(ms)      after(ms)  speedup
+4096              0.00150        0.00290    0.52x
+65536             0.02341        0.04667    0.50x
+1048576           0.42398        0.74877    0.57x
+16777216          4.81557        7.58425    0.63x
+```
+
+Reproduced with call order swapped (`after` timed first, `before` second) to rule
+out a warm-cache bias — same ~0.62× result across 15 trials, three separate runs.
+`-fopt-info-vec-optimized` explains it: **both** loops report `optimized: loop
+vectorized using 16 byte vectors` — GCC 13 already auto-vectorizes the plain
+`if (x < acc) acc = x` idiom under `-O3` alone, and the explicit `reduction(min:)`
+clause forces a different, less efficient lowering on top of a loop that was
+already vectorized, rather than improving on it.
+
+Reverted. `reduce_min_cpu`/`reduce_max_cpu` are back to the plain scalar loop, and
+`min`/`max` measure identically under `OMP_NUM_THREADS=1` and 20 threads (no
+`parallel for` was ever added there — a single compare-and-select per element is
+too little work for fork/join to pay for itself):
+
+| op | N | 1 thread | 20 threads |
+|---|---|---|---|
+| `min` | 16 777 216 | 4.754 ms | 4.745 ms |
+| `max` | 16 777 216 | 4.754 ms | 4.749 ms |
+
+Still 2.7–6.7× slower than NumPy's `min`/`max` across the sizes measured — a real
+gap, but a pre-existing one this pass did not create and did not close. `reduce_sum_cpu`
+was not touched here: its earlier fix (8 independent accumulator lanes, breaking the
+loop-carried FP dependency chain) is a source-level restructuring, not a pragma, and
+is unaffected by any of the above.
+
+`apply`/`apply_binary` (the CPU path behind `relu`, `sigmoid`, `scale_shift`,
+`shift_scale`, and the four `fused_*` methods — [docs/fused_operations.md](docs/fused_operations.md))
+were not part of this pass and remain single-threaded on CPU regardless of size;
+the same `if(_total > N)` treatment as §7.1 would apply there unchanged.
 
 ## Full results
 

@@ -47,6 +47,8 @@ if (this->device_type() == DEVICE_TYPE::CPU) {
 
 There is no second CPU implementation to keep in sync — which is why the `CPUGPUConsistency_*` tests in [`tests/test_fused_ops.cpp`](../tests/test_fused_ops.cpp) are meaningful rather than tautological.
 
+**Unlike the raw binary ops, this CPU loop is not OpenMP-parallelized.** `DEFINE_BINARY_OPS_CPU`/`DEFINE_UNARY_OPS_CPU` (the CPU side of `add`/`sub`/`mul`/`div`, in [`headers/ops/cpu/binary_op_macros.h`](../headers/ops/cpu/binary_op_macros.h)/[`unary_op_macros.h`](../headers/ops/cpu/unary_op_macros.h)) gained a size-gated `#pragma omp parallel for` — see [`CLAUDE.md`](../CLAUDE.md) and [`benchmark_report.md` §7](../benchmark_report.md#7-cpu-elementwise-ops-were-single-threaded--openmp-closes-most-of-it). The `apply`/`apply_binary` loop above did not get the same treatment in that pass, so `relu`, `sigmoid`, `scale_shift`, `shift_scale` and the four `fused_*` methods stay single-threaded on CPU regardless of tensor size. The same `if(_total > N)` gating would apply here unchanged, since the loop shape is identical; it is simply not done yet.
+
 ---
 
 ## The functors
@@ -252,6 +254,7 @@ The equivalence tests are the ones that matter when adding a functor: they pin t
 | CPU execution path | ✅ Same functors, no duplicate implementation |
 | Integration in `Tensor<T>` | ✅ `apply`, `apply_binary` + 8 named methods |
 | Stream overloads | ⚠️ `apply` / `relu` / `sigmoid` only — `apply_binary` and the `fused_*` family are default-stream |
+| CPU loop parallelism (OpenMP) | ❌ Not done — the raw binary ops got a size-gated `#pragma omp parallel for` this pass, `apply`/`apply_binary`'s CPU loop did not |
 | `Pow<T>` | ⚠️ Defined, not instantiated, not exposed on `Tensor` |
 | `double` support | ❌ No GPU instantiation anywhere in the library |
 | Python bindings | ✅ `relu`, `sigmoid`, `scale_shift`, `shift_scale`, `fused_*` |

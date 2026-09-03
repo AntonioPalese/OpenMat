@@ -52,7 +52,8 @@ Full tables, root-cause analysis and reproduction steps in
 | GPU fused `(a+b)*s`, 16 M elem | **1.66× faster than PyTorch** — 858 µs vs 1420 µs |
 | CPU fused `x*s+t`, 16 M elem | **2.31× faster than NumPy**, 1.24× faster than PyTorch |
 | GPU `transpose`, 2048² | **1.16× faster than PyTorch** — 206 µs vs 240 µs |
-| CPU elementwise, 16 M elem | parity with NumPy — 4.50 ms vs 6.13 ms on `add` |
+| CPU elementwise, 16 M elem, single-thread | parity with NumPy — 4.50 ms vs 6.13 ms on `add` |
+| CPU elementwise (`add`/`sub`/`mul`/`div`), ≥1 M elem, OpenMP | **now faster than NumPy** — up to 10.6× over single-thread at 1 M elem |
 | H2D / D2H transfer | parity, within 5 % |
 | GPU `sum`, 16 M elem | 1.15× slower — 320 µs vs 278 µs |
 | GPU elementwise `add`, 16 M elem | 1.47× slower — 159 GB/s vs 234 GB/s |
@@ -76,6 +77,23 @@ and the 25× D2H anomaly — the same page faults, paid inside `cudaMemcpy` — 
 18.2 ms to **1.14 ms**, matching PyTorch. Setting `OPENMAT_HOST_CACHE_BYTES=0` turns the
 cache off and reproduces the old numbers.
 
+**The CPU backend was single-threaded scalar — `add`/`sub`/`mul`/`div` no longer are.**
+`DEFINE_BINARY_OPS_CPU`/`DEFINE_UNARY_OPS_CPU` (the CPU side of those four ops, both
+tensor⊕tensor and tensor⊕scalar) now wrap their loop in a size-gated
+`#pragma omp parallel for schedule(static) if(_total > 65536)` — one change to each of
+two macros, and every op either generates benefits together. Below the threshold nothing
+changes (measured within ~2% of the old single-thread time — no fork/join tax on small
+tensors); above it, 1.7–10.6× faster on a 20-thread reference machine, enough to beat
+NumPy outright rather than merely match it. `matmul_cpu` had already been parallelized
+the same way. The attempt to do the analogous thing for `min`/`max` —
+`#pragma omp simd reduction(min:)/(max:)` — was tried and **reverted**: isolated
+measurement showed it 1.6× *slower*, because GCC 13 already auto-vectorizes that loop
+shape under `-O3` alone and the explicit reduction clause forces a worse lowering on top
+of it. Full numbers in [benchmark_report.md §7](benchmark_report.md#7-cpu-elementwise-ops-were-single-threaded--openmp-closes-most-of-it).
+`apply`/`apply_binary` (`relu`, `sigmoid`, `scale_shift`, the `fused_*` family) did not
+get this pass and are still single-threaded on CPU regardless of size — same loop shape,
+same fix, just not done yet.
+
 **Two of the remaining gaps have a single, local cause.**
 
 - *Rank-1 CUDA kernels launch 16-thread blocks*, occupying a warp with half its lanes
@@ -88,8 +106,10 @@ cache off and reproduces the old numbers.
 `ijk` triple loop indexing `rhs(k, j)` down a column, against OpenBLAS. Reordering to
 `ikj` would be worth roughly an order of magnitude for one line.
 
-Caveat on the CPU column: PyTorch runs 20 intraop threads while OpenMat's CPU backend is
-single-threaded scalar, so PyTorch-vs-OpenMat on CPU measures *what a user gets*, not
+Caveat on the CPU column: PyTorch runs 20 intraop threads. OpenMat's CPU backend is
+threaded via OpenMP for `add`/`sub`/`mul`/`div` and `matmul` (see above) but still
+single-threaded scalar everywhere else — `sum`, `min`, `max`, and the whole fused-op
+family — so PyTorch-vs-OpenMat on CPU still measures *what a user gets* on those ops, not
 comparable algorithms. NumPy is the like-for-like reference there.
 
 ---
@@ -357,8 +377,9 @@ result never shows up in the original.
 ## Build
 
 Requirements: NVIDIA GPU, CUDA Toolkit ≥ 11.2 (for `cudaMallocAsync`), CMake ≥ 3.24 (for
-`CMAKE_CUDA_ARCHITECTURES=native`), a C++17/CUDA 17 compiler. Verified on CUDA 13.0 /
-GCC 13.3 / CMake 3.28 / GB10 (sm_121), all 12 suites passing.
+`CMAKE_CUDA_ARCHITECTURES=native`), a C++17/CUDA 17 compiler, OpenMP (`find_package(OpenMP REQUIRED)`;
+bundled as `libgomp` with a stock GCC install, nothing extra to install on most systems).
+Verified on CUDA 13.0 / GCC 13.3 / CMake 3.28 / GB10 (sm_121), all 12 suites passing.
 
 ```bash
 git clone https://github.com/AntonioPalese/OpenMat.git
@@ -468,6 +489,8 @@ cd python && pytest        # test_tensor, test_tensor_api, test_dtypes, test_str
 - [x] Python bindings via C-ABI FFI layer (ctypes, float32 + int32, streams included)
 - [x] `float16_t` support in kernels and `test_benchmarks`
 - [x] Benchmark suite comparing against NumPy / PyTorch (`scripts/bench_vs.py`)
+- [x] OpenMP parallelism for CPU `add`/`sub`/`mul`/`div` and `matmul` (size-gated `parallel for`)
+- [ ] Same OpenMP treatment for `apply`/`apply_binary` (`relu`, `sigmoid`, `fused_*`)
 - [ ] cuBLAS integration as an optional matmul backend
 - [ ] Random initialization (cuRAND)
 - [ ] Broadcasting and batched matmul
@@ -493,6 +516,16 @@ Building this from scratch exposed a set of problems that high-level frameworks 
 - **Half a warp is half the bandwidth** — the rank-1 elementwise kernels launch `dim3(16)` blocks, so 16 of 32 lanes in the warp sit idle. It cost 20–32% of memory bandwidth and went unnoticed for as long as there was nothing to compare against: the kernels *were* faster than the CPU path, which is all the internal benchmarks could tell me. It took reshaping the same buffer to a different rank, and watching `add` jump from 149 to 187 GB/s, to see it.
 - **A benchmark is a measurement of the whole program, not the code you were looking at** — OpenMat's CPU `add` looked 4× slower than NumPy's at 16 M elements. The loop was not the problem; `malloc` was. Past glibc's 128 KB threshold every result buffer is a fresh `mmap`, and the op pays 16 384 page faults before it computes anything. One environment variable (`MALLOC_MMAP_MAX_=0`) closed the entire gap, and a size-classed free list in `CpuAllocator` made it permanent. The same cause was quietly making a 64 MB device-to-host copy look 24× slower than PyTorch's, in what appeared to be an unrelated part of the library.
 - **Fusion is worth more than kernel tuning** — the ops where OpenMat beats PyTorch and NumPy are not the ones with the best kernels, they are the ones that avoid a memory round-trip. `fused_add_mul` wins by 1.66× against a mature library with better kernels, purely because `(a + b) * s` costs PyTorch a 64 MB intermediate. Arithmetic is nearly free at this scale; every avoided traversal of memory is not.
+- **An OpenMP pragma is a request, not a guarantee — measure it like any other change.**
+  `reduce_min_cpu`/`reduce_max_cpu` got a `#pragma omp simd reduction(min:)/(max:)`
+  because it looked like the natural counterpart to the `#pragma omp parallel for` that
+  sped up `add`/`sub`/`mul`/`div` elsewhere in the same pass. Isolated before/after timing
+  — same loop body, same compiler flags, only the pragma differing — showed it 1.6×
+  *slower*, not faster. `-fopt-info-vec-optimized` explained why: GCC 13 already
+  auto-vectorizes that exact branch-and-select idiom under `-O3` alone, and the explicit
+  reduction clause forced a worse lowering on top of a loop that was already vectorized.
+  Reverted, and left as a comment in the code rather than a silent diff, so it does not
+  get re-added on the assumption that it obviously must have helped.
 - **`cudaMallocAsync` is not a drop-in replacement** — it uses a stream-ordered memory pool. Freeing on a different stream than the one used for allocation is a programming error that manifests as an illegal memory access with no obvious call site. Storing `m_Stream` in each `Tensor` and using it in the destructor is the invariant that keeps this safe.
 
 ---
