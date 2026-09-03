@@ -66,6 +66,10 @@ namespace om {
         dst[offset] = op(src[offset]);
     }
 
+    // Rank-specialized launch. Each rank maps tensor axes onto grid axes, and
+    // gridDim.y/z stop at 65535: when the specialized grid does not fit, fall
+    // back to the flat _nd kernel (gridDim.x only) instead of failing the
+    // launch with "invalid configuration argument".
     template <typename T, typename Op>
     void launch_apply_op(const TensorView<const T> src, TensorView<T> dst, Op op, cudaStream_t stream)
     {
@@ -73,53 +77,76 @@ namespace om {
             throw std::invalid_argument("Source and destination must have the same shape");
 
         const char* om_kernel = nullptr;
+        bool om_use_nd = true;
         switch (dst.rank)
         {
         case 1:
             {
                 dim3 threads(16);
-                dim3 blocks((dst.shape[0] + 15) / 16);
-                om_kernel = "apply_op_rank1";
-                apply_op_rank1<<<blocks, threads, 0, stream>>>(src.as_device_tw(), dst.as_device_tw(), op);
+                const size_t gx = (dst.shape[0] + 15) / 16;
+                if (detail::grid_fits(gx, 1, 1))
+                {
+                    dim3 blocks(static_cast<unsigned int>(gx));
+                    om_kernel = "apply_op_rank1";
+                    om_use_nd = false;
+                    apply_op_rank1<<<blocks, threads, 0, stream>>>(src.as_device_tw(), dst.as_device_tw(), op);
+                }
             }
             break;
         case 2:
             {
                 dim3 threads(16, 16);
-                dim3 blocks((dst.shape[1] + 15) / 16, (dst.shape[0] + 15) / 16);
-                om_kernel = "apply_op_rank2";
-                apply_op_rank2<<<blocks, threads, 0, stream>>>(src.as_device_tw(), dst.as_device_tw(), op);
+                const size_t gx = (dst.shape[1] + 15) / 16;
+                const size_t gy = (dst.shape[0] + 15) / 16;
+                if (detail::grid_fits(gx, gy, 1))
+                {
+                    dim3 blocks(static_cast<unsigned int>(gx), static_cast<unsigned int>(gy));
+                    om_kernel = "apply_op_rank2";
+                    om_use_nd = false;
+                    apply_op_rank2<<<blocks, threads, 0, stream>>>(src.as_device_tw(), dst.as_device_tw(), op);
+                }
             }
             break;
         case 3:
             {
                 dim3 threads(8, 8, 8);
-                dim3 blocks((dst.shape[2] + 7) / 8, (dst.shape[1] + 7) / 8, (dst.shape[0] + 7) / 8);
-                om_kernel = "apply_op_rank3";
-                apply_op_rank3<<<blocks, threads, 0, stream>>>(src.as_device_tw(), dst.as_device_tw(), op);
+                const size_t gx = (dst.shape[2] + 7) / 8;
+                const size_t gy = (dst.shape[1] + 7) / 8;
+                const size_t gz = (dst.shape[0] + 7) / 8;
+                if (detail::grid_fits(gx, gy, gz))
+                {
+                    dim3 blocks(static_cast<unsigned int>(gx), static_cast<unsigned int>(gy), static_cast<unsigned int>(gz));
+                    om_kernel = "apply_op_rank3";
+                    om_use_nd = false;
+                    apply_op_rank3<<<blocks, threads, 0, stream>>>(src.as_device_tw(), dst.as_device_tw(), op);
+                }
             }
             break;
         case 4:
             {
                 dim3 threads(8, 8, dst.shape[1] < 8 ? dst.shape[1] : 8);
-                dim3 blocks(
-                    (dst.shape[3] + threads.x - 1) / threads.x,
-                    (dst.shape[2] + threads.y - 1) / threads.y,
-                    dst.shape[0]
-                );
-                om_kernel = "apply_op_rank4";
-                apply_op_rank4<<<blocks, threads, 0, stream>>>(src.as_device_tw(), dst.as_device_tw(), op);
+                const size_t gx = (dst.shape[3] + threads.x - 1) / threads.x;
+                const size_t gy = (dst.shape[2] + threads.y - 1) / threads.y;
+                const size_t gz = dst.shape[0];
+                if (detail::grid_fits(gx, gy, gz))
+                {
+                    dim3 blocks(static_cast<unsigned int>(gx), static_cast<unsigned int>(gy), static_cast<unsigned int>(gz));
+                    om_kernel = "apply_op_rank4";
+                    om_use_nd = false;
+                    apply_op_rank4<<<blocks, threads, 0, stream>>>(src.as_device_tw(), dst.as_device_tw(), op);
+                }
             }
             break;
         default:
-            {
-                size_t total_elements = dst.size();
-                dim3 threads(256);
-                dim3 blocks((total_elements + threads.x - 1) / threads.x);
-                om_kernel = "apply_op_nd";
-                apply_op_nd<<<blocks, threads, 0, stream>>>(src.as_device_tw(), dst.as_device_tw(), op);
-            }
             break;
+        }
+        if (om_use_nd)
+        {
+            size_t total_elements = dst.size();
+            dim3 threads(256);
+            dim3 blocks(static_cast<unsigned int>((total_elements + 255) / 256));
+            om_kernel = "apply_op_nd";
+            apply_op_nd<<<blocks, threads, 0, stream>>>(src.as_device_tw(), dst.as_device_tw(), op);
         }
         CUDA_CHECK_LAUNCH(om_kernel, stream);
         if (stream == nullptr) cudaDeviceSynchronize();
@@ -197,6 +224,10 @@ namespace om {
         dst[offset] = op(lhs[offset], rhs[offset]);
     }
 
+    // Rank-specialized launch. Each rank maps tensor axes onto grid axes, and
+    // gridDim.y/z stop at 65535: when the specialized grid does not fit, fall
+    // back to the flat _nd kernel (gridDim.x only) instead of failing the
+    // launch with "invalid configuration argument".
     template <typename T, typename Op>
     void launch_apply_binary_op(const TensorView<const T> lhs, const TensorView<const T> rhs,
                                 TensorView<T> dst, Op op, cudaStream_t stream)
@@ -205,53 +236,76 @@ namespace om {
             throw std::invalid_argument("launch_apply_binary_op: all tensors must have the same shape");
 
         const char* om_kernel = nullptr;
+        bool om_use_nd = true;
         switch (dst.rank)
         {
         case 1:
             {
                 dim3 threads(256);
-                dim3 blocks((dst.shape[0] + 255) / 256);
-                om_kernel = "apply_binary_op_rank1";
-                apply_binary_op_rank1<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw(), op);
+                const size_t gx = (dst.shape[0] + 255) / 256;
+                if (detail::grid_fits(gx, 1, 1))
+                {
+                    dim3 blocks(static_cast<unsigned int>(gx));
+                    om_kernel = "apply_binary_op_rank1";
+                    om_use_nd = false;
+                    apply_binary_op_rank1<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw(), op);
+                }
             }
             break;
         case 2:
             {
                 dim3 threads(16, 16);
-                dim3 blocks((dst.shape[1] + 15) / 16, (dst.shape[0] + 15) / 16);
-                om_kernel = "apply_binary_op_rank2";
-                apply_binary_op_rank2<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw(), op);
+                const size_t gx = (dst.shape[1] + 15) / 16;
+                const size_t gy = (dst.shape[0] + 15) / 16;
+                if (detail::grid_fits(gx, gy, 1))
+                {
+                    dim3 blocks(static_cast<unsigned int>(gx), static_cast<unsigned int>(gy));
+                    om_kernel = "apply_binary_op_rank2";
+                    om_use_nd = false;
+                    apply_binary_op_rank2<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw(), op);
+                }
             }
             break;
         case 3:
             {
                 dim3 threads(8, 8, 8);
-                dim3 blocks((dst.shape[2] + 7) / 8, (dst.shape[1] + 7) / 8, (dst.shape[0] + 7) / 8);
-                om_kernel = "apply_binary_op_rank3";
-                apply_binary_op_rank3<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw(), op);
+                const size_t gx = (dst.shape[2] + 7) / 8;
+                const size_t gy = (dst.shape[1] + 7) / 8;
+                const size_t gz = (dst.shape[0] + 7) / 8;
+                if (detail::grid_fits(gx, gy, gz))
+                {
+                    dim3 blocks(static_cast<unsigned int>(gx), static_cast<unsigned int>(gy), static_cast<unsigned int>(gz));
+                    om_kernel = "apply_binary_op_rank3";
+                    om_use_nd = false;
+                    apply_binary_op_rank3<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw(), op);
+                }
             }
             break;
         case 4:
             {
                 dim3 threads(8, 8, dst.shape[1] < 8 ? dst.shape[1] : 8);
-                dim3 blocks(
-                    (dst.shape[3] + threads.x - 1) / threads.x,
-                    (dst.shape[2] + threads.y - 1) / threads.y,
-                    dst.shape[0]
-                );
-                om_kernel = "apply_binary_op_rank4";
-                apply_binary_op_rank4<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw(), op);
+                const size_t gx = (dst.shape[3] + threads.x - 1) / threads.x;
+                const size_t gy = (dst.shape[2] + threads.y - 1) / threads.y;
+                const size_t gz = dst.shape[0];
+                if (detail::grid_fits(gx, gy, gz))
+                {
+                    dim3 blocks(static_cast<unsigned int>(gx), static_cast<unsigned int>(gy), static_cast<unsigned int>(gz));
+                    om_kernel = "apply_binary_op_rank4";
+                    om_use_nd = false;
+                    apply_binary_op_rank4<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw(), op);
+                }
             }
             break;
         default:
-            {
-                size_t total = dst.size();
-                dim3 threads(256);
-                dim3 blocks((total + 255) / 256);
-                om_kernel = "apply_binary_op_nd";
-                apply_binary_op_nd<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw(), op);
-            }
             break;
+        }
+        if (om_use_nd)
+        {
+            size_t total = dst.size();
+            dim3 threads(256);
+            dim3 blocks(static_cast<unsigned int>((total + 255) / 256));
+            om_kernel = "apply_binary_op_nd";
+            apply_binary_op_nd<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw(), op);
         }
         CUDA_CHECK_LAUNCH(om_kernel, stream);
         if (stream == nullptr) cudaDeviceSynchronize();

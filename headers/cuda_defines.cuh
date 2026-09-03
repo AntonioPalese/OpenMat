@@ -2,6 +2,7 @@
 #include <cuda_runtime.h>
 #include <stdexcept>
 #include <string>
+#include <cstddef>
 
 #define CUDA_CHECK                                                          \
     do {                                                                    \
@@ -72,6 +73,29 @@ namespace detail {
     // naming the kernel and the call site.
     void check_launch(const char* kernel, const char* func,
                       const char* file, int line, cudaStream_t stream);
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Grid extent limits
+    //
+    // gridDim.y and gridDim.z are capped at 65535 on every compute
+    // capability; only gridDim.x goes up to 2^31-1. A launcher that maps a
+    // tensor axis straight onto blockIdx.z therefore has a shape ceiling,
+    // past which the launch fails *synchronously* with "invalid
+    // configuration argument" — a message that says nothing about which
+    // axis was too large, and which reads like a generic CUDA error.
+    //
+    // Launchers check the grid before launching and fall back to a flat 1-D
+    // layout (the _nd kernels) when it does not fit.
+    //
+    // Takes size_t rather than a dim3 on purpose: dim3 members are unsigned
+    // int, so building one first would truncate an extent above 2^32 and
+    // could turn an over-large grid into a plausible small one.
+    inline bool grid_fits(size_t gx, size_t gy, size_t gz)
+    {
+        constexpr size_t max_x  = 2147483647ull;   // 2^31 - 1
+        constexpr size_t max_yz = 65535ull;
+        return gx <= max_x && gy <= max_yz && gz <= max_yz;
+    }
 
 } // namespace detail
 } // namespace om

@@ -66,57 +66,84 @@ namespace om {
         tensor[offset] = value;
     }
 
+    // Rank-specialized launch. Each rank maps tensor axes onto grid axes, and
+    // gridDim.y/z stop at 65535: when the specialized grid does not fit, fall
+    // back to the flat _nd kernel (gridDim.x only) instead of failing the
+    // launch with "invalid configuration argument".
     template<typename T>
     void launch_fill(TensorView<T> tensor, T value, cudaStream_t stream)
     {
         const char* om_kernel = nullptr;
+        bool om_use_nd = true;
         switch (tensor.rank)
         {
         case 1:
             {
                 dim3 threads(16);
-                dim3 blocks((tensor.shape[0] + 15) / 16);
-                om_kernel = "fill_kernel_rank1";
-                fill_kernel_rank1<<<blocks, threads, 0, stream>>>(tensor.as_device_tw(), value);
+                const size_t gx = (tensor.shape[0] + 15) / 16;
+                if (detail::grid_fits(gx, 1, 1))
+                {
+                    dim3 blocks(static_cast<unsigned int>(gx));
+                    om_kernel = "fill_kernel_rank1";
+                    om_use_nd = false;
+                    fill_kernel_rank1<<<blocks, threads, 0, stream>>>(tensor.as_device_tw(), value);
+                }
             }
             break;
         case 2:
             {
                 dim3 threads(16, 16);
-                dim3 blocks((tensor.shape[1] + 15) / 16, (tensor.shape[0] + 15) / 16);
-                om_kernel = "fill_kernel_rank2";
-                fill_kernel_rank2<<<blocks, threads, 0, stream>>>(tensor.as_device_tw(), value);
+                const size_t gx = (tensor.shape[1] + 15) / 16;
+                const size_t gy = (tensor.shape[0] + 15) / 16;
+                if (detail::grid_fits(gx, gy, 1))
+                {
+                    dim3 blocks(static_cast<unsigned int>(gx), static_cast<unsigned int>(gy));
+                    om_kernel = "fill_kernel_rank2";
+                    om_use_nd = false;
+                    fill_kernel_rank2<<<blocks, threads, 0, stream>>>(tensor.as_device_tw(), value);
+                }
             }
             break;
         case 3:
             {
                 dim3 threads(8, 8, 8);
-                dim3 blocks((tensor.shape[2] + 7) / 8, (tensor.shape[1] + 7) / 8, (tensor.shape[0] + 7) / 8);
-                om_kernel = "fill_kernel_rank3";
-                fill_kernel_rank3<<<blocks, threads, 0, stream>>>(tensor.as_device_tw(), value);
+                const size_t gx = (tensor.shape[2] + 7) / 8;
+                const size_t gy = (tensor.shape[1] + 7) / 8;
+                const size_t gz = (tensor.shape[0] + 7) / 8;
+                if (detail::grid_fits(gx, gy, gz))
+                {
+                    dim3 blocks(static_cast<unsigned int>(gx), static_cast<unsigned int>(gy), static_cast<unsigned int>(gz));
+                    om_kernel = "fill_kernel_rank3";
+                    om_use_nd = false;
+                    fill_kernel_rank3<<<blocks, threads, 0, stream>>>(tensor.as_device_tw(), value);
+                }
             }
             break;
         case 4:
             {
                 dim3 threads(8, 8, tensor.shape[1] < 8 ? tensor.shape[1] : 8);
-                dim3 blocks(
-                    (tensor.shape[3] + threads.x - 1) / threads.x,
-                    (tensor.shape[2] + threads.y - 1) / threads.y,
-                    tensor.shape[0]
-                );
-                om_kernel = "fill_kernel_rank4";
-                fill_kernel_rank4<<<blocks, threads, 0, stream>>>(tensor.as_device_tw(), value);
+                const size_t gx = (tensor.shape[3] + threads.x - 1) / threads.x;
+                const size_t gy = (tensor.shape[2] + threads.y - 1) / threads.y;
+                const size_t gz = tensor.shape[0];
+                if (detail::grid_fits(gx, gy, gz))
+                {
+                    dim3 blocks(static_cast<unsigned int>(gx), static_cast<unsigned int>(gy), static_cast<unsigned int>(gz));
+                    om_kernel = "fill_kernel_rank4";
+                    om_use_nd = false;
+                    fill_kernel_rank4<<<blocks, threads, 0, stream>>>(tensor.as_device_tw(), value);
+                }
             }
             break;
         default:
-            {
-                size_t total_elements = tensor.size();
-                dim3 threads(256);
-                dim3 blocks((total_elements + threads.x - 1) / threads.x);
-                om_kernel = "fill_kernel_nd";
-                fill_kernel_nd<<<blocks, threads, 0, stream>>>(tensor.as_device_tw(), value);
-            }
             break;
+        }
+        if (om_use_nd)
+        {
+            size_t total_elements = tensor.size();
+            dim3 threads(256);
+            dim3 blocks(static_cast<unsigned int>((total_elements + threads.x - 1) / threads.x));
+            om_kernel = "fill_kernel_nd";
+            fill_kernel_nd<<<blocks, threads, 0, stream>>>(tensor.as_device_tw(), value);
         }
         CUDA_CHECK_LAUNCH(om_kernel, stream);
         if (stream == nullptr) cudaDeviceSynchronize();

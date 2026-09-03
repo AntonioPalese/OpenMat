@@ -9,6 +9,10 @@
 #include <cuda_runtime.h>
 
 
+// Rank-specialized launch. Each rank maps tensor axes onto grid axes, and
+// gridDim.y/z stop at 65535: when the specialized grid does not fit, fall back
+// to the flat _nd kernel (gridDim.x only) instead of failing the launch with
+// "invalid configuration argument".
 #define DEFINE_UNARY_OP_LAUNCH(OP_NAME)\
     template<typename T>\
     void launch_##OP_NAME(const TensorView<const T> lhs, T value, TensorView<T> dst, cudaStream_t stream)\
@@ -18,53 +22,76 @@
             throw std::runtime_error("Matrix size mismatch in " #OP_NAME);\
         }\
         const char* om_kernel = nullptr;\
+        bool om_use_nd = true;\
         switch (lhs.rank)\
         {\
         case 1:\
             {\
                 dim3 threads(16);\
-                dim3 blocks((lhs.shape[0] + 15) / 16);\
-                om_kernel = #OP_NAME "_kernel_rank1";\
-                OP_NAME##_kernel_rank1<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), value, dst.as_device_tw());\
+                const size_t gx = (lhs.shape[0] + 15) / 16;\
+                if (::om::detail::grid_fits(gx, 1, 1))\
+                {\
+                    dim3 blocks(static_cast<unsigned int>(gx));\
+                    om_kernel = #OP_NAME "_kernel_rank1";\
+                    om_use_nd = false;\
+                    OP_NAME##_kernel_rank1<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), value, dst.as_device_tw());\
+                }\
             }\
             break;\
         case 2:\
             {\
                 dim3 threads(16, 16);\
-                dim3 blocks((lhs.shape[1] + 15) / 16, (lhs.shape[0] + 15) / 16);\
-                om_kernel = #OP_NAME "_kernel_rank2";\
-                OP_NAME##_kernel_rank2<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), value, dst.as_device_tw());\
+                const size_t gx = (lhs.shape[1] + 15) / 16;\
+                const size_t gy = (lhs.shape[0] + 15) / 16;\
+                if (::om::detail::grid_fits(gx, gy, 1))\
+                {\
+                    dim3 blocks(static_cast<unsigned int>(gx), static_cast<unsigned int>(gy));\
+                    om_kernel = #OP_NAME "_kernel_rank2";\
+                    om_use_nd = false;\
+                    OP_NAME##_kernel_rank2<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), value, dst.as_device_tw());\
+                }\
             }\
             break;\
         case 3:\
             {\
                 dim3 threads(8, 8, 8);\
-                dim3 blocks((lhs.shape[2] + 7) / 8, (lhs.shape[1] + 7) / 8, (lhs.shape[0] + 7) / 8);\
-                om_kernel = #OP_NAME "_kernel_rank3";\
-                OP_NAME##_kernel_rank3<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), value, dst.as_device_tw());\
+                const size_t gx = (lhs.shape[2] + 7) / 8;\
+                const size_t gy = (lhs.shape[1] + 7) / 8;\
+                const size_t gz = (lhs.shape[0] + 7) / 8;\
+                if (::om::detail::grid_fits(gx, gy, gz))\
+                {\
+                    dim3 blocks(static_cast<unsigned int>(gx), static_cast<unsigned int>(gy), static_cast<unsigned int>(gz));\
+                    om_kernel = #OP_NAME "_kernel_rank3";\
+                    om_use_nd = false;\
+                    OP_NAME##_kernel_rank3<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), value, dst.as_device_tw());\
+                }\
             }\
             break;\
         case 4:\
             {\
                 dim3 threads(8, 8, lhs.shape[1] < 8 ? lhs.shape[1] : 8);\
-                dim3 blocks(\
-                    (lhs.shape[3] + threads.x - 1) / threads.x,\
-                    (lhs.shape[2] + threads.y - 1) / threads.y,\
-                    lhs.shape[0]\
-                );\
-                om_kernel = #OP_NAME "_kernel_rank4";\
-                OP_NAME##_kernel_rank4<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), value, dst.as_device_tw());\
+                const size_t gx = (lhs.shape[3] + threads.x - 1) / threads.x;\
+                const size_t gy = (lhs.shape[2] + threads.y - 1) / threads.y;\
+                const size_t gz = lhs.shape[0];\
+                if (::om::detail::grid_fits(gx, gy, gz))\
+                {\
+                    dim3 blocks(static_cast<unsigned int>(gx), static_cast<unsigned int>(gy), static_cast<unsigned int>(gz));\
+                    om_kernel = #OP_NAME "_kernel_rank4";\
+                    om_use_nd = false;\
+                    OP_NAME##_kernel_rank4<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), value, dst.as_device_tw());\
+                }\
             }\
             break;\
         default:\
-            {\
-                size_t total_elements = lhs.size();\
-                dim3 threads(256);\
-                dim3 blocks((total_elements + threads.x - 1) / threads.x);\
-                om_kernel = #OP_NAME "_kernel_nd";\
-                OP_NAME##_kernel_nd<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), value, dst.as_device_tw());\
-            }\
             break;\
+        }\
+        if (om_use_nd)\
+        {\
+            size_t total_elements = lhs.size();\
+            dim3 threads(256);\
+            dim3 blocks(static_cast<unsigned int>((total_elements + threads.x - 1) / threads.x));\
+            om_kernel = #OP_NAME "_kernel_nd";\
+            OP_NAME##_kernel_nd<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), value, dst.as_device_tw());\
         }\
         CUDA_CHECK_LAUNCH(om_kernel, stream);\
         if (stream == nullptr) cudaDeviceSynchronize();\

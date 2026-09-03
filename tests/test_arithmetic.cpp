@@ -136,3 +136,53 @@ TEST(TensorArithmetic, GPUFP16MatMulLarger) {
     c.copyToHost(host.data());
     for (auto v : host) EXPECT_NEAR(float(v), 3.0f, 0.01f);
 }
+
+// gridDim.y and gridDim.z are capped at 65535, so a leading axis large enough
+// to overflow them cannot use the rank-specialized block layout: the rank-4
+// launcher sets blocks.z = shape[0] and the rank-3 one (shape[0] + 7) / 8.
+// Past those thresholds the launch used to fail synchronously with "invalid
+// configuration argument" — indistinguishable, to a caller, from a generic
+// CUDA error. The launcher now checks the grid and falls back to the flat _nd
+// kernel, which only ever uses gridDim.x.
+TEST(TensorArithmetic, GPULargeLeadingAxisFallsBackToND) {
+    OM_REQUIRE_CUDA();
+    Device gpu("cuda:0");
+
+    auto check_add = [&](const std::vector<size_t>& shape) {
+        Tensor<float> a(shape, gpu);
+        Tensor<float> b(shape, gpu);
+        a.fill(1.0f);
+        b.fill(2.0f);
+
+        Tensor<float> c = a + b;
+        std::vector<float> host(c.size());
+        c.copyToHost(host.data());
+
+        EXPECT_FLOAT_EQ(host.front(), 3.0f);
+        EXPECT_FLOAT_EQ(host[host.size() / 2], 3.0f);
+        EXPECT_FLOAT_EQ(host.back(), 3.0f);
+    };
+
+    check_add({1100000, 1});          // rank 2: gridDim.y = 68750 > 65535
+    check_add({600000, 1, 1});        // rank 3: gridDim.z = 75000 > 65535
+    check_add({70000, 1, 1, 1});      // rank 4: gridDim.z = 70000 > 65535
+}
+
+// Just below the threshold the rank-specialized kernels are still the ones
+// running; this pins the fallback to "too large" rather than "large".
+TEST(TensorArithmetic, GPUJustUnderGridLimitUsesRankKernel) {
+    OM_REQUIRE_CUDA();
+    Device gpu("cuda:0");
+
+    Tensor<float> a({65535, 1, 1, 1}, gpu);   // rank 4: gridDim.z = 65535, exactly the cap
+    Tensor<float> b({65535, 1, 1, 1}, gpu);
+    a.fill(1.0f);
+    b.fill(2.0f);
+
+    Tensor<float> c = a * b;
+    std::vector<float> host(c.size());
+    c.copyToHost(host.data());
+
+    EXPECT_FLOAT_EQ(host.front(), 2.0f);
+    EXPECT_FLOAT_EQ(host.back(), 2.0f);
+}

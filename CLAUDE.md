@@ -146,6 +146,8 @@ Tensor<T>::operator+()
 
 [headers/ops/kernels/binary_op_macros.cuh](headers/ops/kernels/binary_op_macros.cuh): `DEFINE_BINARY_OP_LAUNCH(OP)` generates `launch_OP(lhs, rhs, dst, cudaStream_t)` which switches on `lhs.rank` and picks a kernel with a rank-tuned grid/block layout (1D `dim3(16)`, 2D `dim3(16,16)`, 3D/4D `dim3(8,8,8)`). Rank ≥ 5 falls back to `OP_kernel_nd`, a flat 1D kernel reconstructing multi-indices from a linear index. `DEFINE_BINARY_OP_LAUNCH_FRW_DEC(OP)` emits explicit instantiations for `float`, `int`, `char`, `float16_t`.
 
+**The `_nd` kernel is also the overflow path, not just the rank ≥ 5 path.** `gridDim.y` and `gridDim.z` are capped at 65535 (only `gridDim.x` reaches 2^31-1), so a leading axis large enough overflows the rank-specialized layout — the rank-4 launcher sets `blocks.z = shape[0]`, the rank-3 one `(shape[0] + 7) / 8`. Past that the launch fails synchronously with `invalid configuration argument`, which surfaces to the caller as a generic CUDA error naming nothing useful. Every rank-specialized launcher therefore computes its grid extents as `size_t` and gates the launch on `om::detail::grid_fits(gx, gy, gz)` ([headers/cuda_defines.cuh](headers/cuda_defines.cuh)), falling through to the flat `_nd` kernel when they do not fit. The extents are checked *before* being narrowed into a `dim3` — its members are `unsigned int`, so building one first could truncate an oversized extent into a plausible small one. The same guard is in the unary launcher, `launch_fill`, `launch_apply_op` and `launch_apply_binary_op`; a new rank-switching launcher needs it too.
+
 **Ops layout:**
 ```
 headers/ops/cpu/        ← CPU op declarations (macro-generated inline functions)
