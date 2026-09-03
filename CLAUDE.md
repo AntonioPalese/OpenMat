@@ -135,6 +135,8 @@ src/ops/kernels/        ← CUDA kernel .cu translation units
 
 **Supported dtypes** (`om::dtype<T>()`): `float`, `double`, `int`, `char`, `float16_t`. Kernel instantiations cover `float`, `int`, `char`, `float16_t` — `double` has no GPU instantiation.
 
+`float16_t` ([headers/type_traits/types.cuh](headers/type_traits/types.cuh)) is a hand-rolled `__half` wrapper, not a CUDA type: it carries `__host__ __device__` conversions plus free `+ - * /` operators that use `__hadd`/`__hsub`/... on `__CUDA_ARCH__ >= 530` and fall back to `float` math otherwise. Generic code gates on `is_extended_arithmetic<T>` (same file) — `std::is_arithmetic` plus a `float16_t` specialization — so a `static_assert` on `std::is_arithmetic` alone will reject half precision.
+
 ## Fused operations
 
 [headers/ops/kernels/fused_op.cuh](headers/ops/kernels/fused_op.cuh) — functor-based fusion, no intermediate allocation:
@@ -151,6 +153,18 @@ src/ops/kernels/        ← CUDA kernel .cu translation units
 ## Reductions
 
 GPU: two-phase shared-memory tree reduction + warp shuffle (`__shfl_down_sync`) — `launch_reduce_sum/min/max` in [headers/ops/kernels/reduce_gpu.cuh](headers/ops/kernels/reduce_gpu.cuh). CPU: [headers/ops/cpu/reduce_cpu.h](headers/ops/cpu/reduce_cpu.h). Exposed as `.sum()`, `.mean()`, `.min()`, `.max()`; these are synchronous and return a host scalar (no stream overloads).
+
+## Shape ops, transpose, matmul
+
+These live outside the binary-op macro machinery and each has its own constraints.
+
+**`reshape` / `flatten` / `squeeze` / `unsqueeze`** ([headers/tensor.inl](headers/tensor.inl)) are **deep copies, not views** — `reshape` does `Tensor out(*this)` (the copy ctor allocates and copies) and then rewrites `m_Shape`/`m_Stride` in place. Nothing in the library returns an aliasing view of another tensor's buffer, so unlike NumPy/PyTorch a reshape never lets a write show up through the original. The other three delegate to `reshape`. All are host-side only — no kernel, no stream overload — and `squeeze` of the last remaining axis yields shape `{1}` rather than a scalar.
+
+**`transpose()` is rank-2 only** and throws otherwise; use `permute(axes)` for higher ranks. Both have real CPU and GPU paths ([headers/ops/cpu/transpose_cpu.h](headers/ops/cpu/transpose_cpu.h), [src/ops/kernels/transpose_gpu.cu](src/ops/kernels/transpose_gpu.cu)) and both have `(…, const Stream&)` overloads. `permute` validates axes on the host (length == rank, in range, no duplicates) before dispatching.
+
+`launch_permute` takes the axes as a **host** `const size_t*` and copies them into an `AxesBuf` — a trivially-copyable struct passed **by value** into the kernel parameter block. This is the same rule as `DeviceTensorView`: no device allocation for small per-launch metadata, and no raw pointer members, which would decay to unusable host pointers on the device side.
+
+**`matmul` is 2D-only** in both backends — rank != 2 or mismatched inner dimensions throw from `Tensor::matmul` ([headers/tensor.inl](headers/tensor.inl)) and again inside `matmul_cpu`. It is registered in the legacy dispatch table (`DEFINE_DEVICE_DISPATCH_BINARY_H(matmul, …)`) but `Tensor::matmul` bypasses it and calls `matmul_cpu` / `launch_matmul` directly, like every other stream-aware op. No batching, no broadcasting.
 
 ## Python FFI layer
 
