@@ -42,6 +42,7 @@ TEST(Reshape, WrongSizeThrows) {
 }
 
 TEST(Reshape, GPU) {
+    OM_REQUIRE_CUDA();
     auto t = Tensor<float>::from_vector({1,2,3,4,5,6}, {6}, Device("cuda:0"));
     auto r = t.reshape({2, 3});
     ASSERT_EQ(r.rank(), 2u);
@@ -82,6 +83,7 @@ TEST(Flatten, AlreadyFlat) {
 }
 
 TEST(Flatten, GPU) {
+    OM_REQUIRE_CUDA();
     auto t = Tensor<float>::from_vector({1,2,3,4,5,6}, {2,3}, Device("cuda:0"));
     auto f = t.flatten();
     ASSERT_EQ(f.rank(), 1u);

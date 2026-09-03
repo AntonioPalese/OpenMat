@@ -1,0 +1,129 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Release everywhere: a Debug CUDA build compiles with -G (device debug), which
+  # is slow to build and buys nothing a CI gate can use. The numbers in README.md
+  # and stream_perf_report.md are Release numbers too.
+  BUILD_TYPE: Release
+
+jobs:
+  # ── CPU-only ────────────────────────────────────────────────────────────────
+  # No GPU, no driver: a CUDA *toolkit* container. This job exists for the two
+  # failure modes the compiler catches and a human review does not — a macro that
+  # expands to nothing on a new dtype, and a missing explicit instantiation, which
+  # is a link error only once something outside a .cu file calls it. Every test
+  # that touches the device skips itself (OM_REQUIRE_CUDA / requires_cuda), so
+  # ctest and pytest run green here on the ~60 host-side tests.
+  cpu:
+    name: CPU (build + host-side tests)
+    runs-on: ubuntu-latest
+    container: nvidia/cuda:12.6.3-devel-ubuntu24.04
+    steps:
+      - name: Install toolchain
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            git ca-certificates cmake ninja-build python3 python3-pytest python3-numpy
+
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: |
+          # The stubs directory comes first: it holds a link-time-only libcuda.so,
+          # which is what -lcuda resolves against on a machine with no driver.
+          export CMAKE_LIBRARY_PATH="/usr/local/cuda/lib64/stubs:/usr/local/cuda/lib64:/usr/lib/$(uname -m)-linux-gnu"
+          # CMAKE_CUDA_ARCHITECTURES must be explicit here: the default is "native",
+          # which needs a GPU present to resolve and fails outright without one.
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=$BUILD_TYPE \
+            -DCMAKE_CUDA_ARCHITECTURES="75;86;89" \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Build
+        run: |
+          export CMAKE_LIBRARY_PATH="/usr/local/cuda/lib64/stubs:/usr/local/cuda/lib64:/usr/lib/$(uname -m)-linux-gnu"
+          cmake --build build -j "$(nproc)"
+
+      - name: ctest (device tests skip)
+        working-directory: build
+        run: ctest --output-on-failure
+
+      - name: pytest (device tests skip)
+        working-directory: python
+        env:
+          OPENMAT_LIB: ${{ github.workspace }}/build/OpenMat.so
+        run: python3 -m pytest -q
+
+  # ── GPU ─────────────────────────────────────────────────────────────────────
+  # Self-hosted runner with a real device. Register it with the labels below:
+  #   ./config.sh --labels self-hosted,linux,gpu
+  # It needs nvcc on PATH and a CMake >= 3.24 (for CMAKE_CUDA_ARCHITECTURES=native).
+  gpu:
+    name: GPU (full suite + compute-sanitizer)
+    runs-on: [self-hosted, linux, gpu]
+    # One GPU, one job: two of these at once would contend for device memory and
+    # make the stress/perf suites report nonsense.
+    concurrency:
+      group: openmat-gpu-runner
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: |
+          # CMakeLists turns this into target_link_directories for -lcuda/-lcudart;
+          # unset, CMake only warns and every test binary then fails to link.
+          export CMAKE_LIBRARY_PATH="/usr/local/cuda/lib64:/usr/lib/$(uname -m)-linux-gnu"
+          # Arch stays "native" here — the runner has the GPU we ship for.
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=$BUILD_TYPE \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Build
+        run: |
+          export CMAKE_LIBRARY_PATH="/usr/local/cuda/lib64:/usr/lib/$(uname -m)-linux-gnu"
+          cmake --build build -j "$(nproc)"
+
+      - name: ctest (correctness suites)
+        working-directory: build
+        # test_benchmarks and test_stream_perf are timing suites: their assertions
+        # compare wall-clock against wall-clock and go red under CI load. They run
+        # below, unguarded, for the numbers only.
+        run: ctest --output-on-failure -E "test_benchmarks|test_stream_perf"
+
+      # uv is how the package is documented to be used (python/README.md); with
+      # --no-project it just supplies pytest/numpy without touching the checkout.
+      - name: pytest
+        working-directory: python
+        env:
+          OPENMAT_LIB: ${{ github.workspace }}/build/OpenMat.so
+        run: uv run --no-project --with pytest --with numpy python -m pytest -q
+
+      # compute-sanitizer is the only thing that catches a broken stream-ownership
+      # invariant near the call site: cudaMallocAsync memory freed on a stream
+      # other than the one it came from surfaces later as an illegal access in an
+      # unrelated kernel. --leak-check full also covers the Tensor destructor path.
+      - name: compute-sanitizer memcheck
+        run: |
+          # Not always on the runner's PATH; it ships next to nvcc.
+          SANITIZER="$(command -v compute-sanitizer || echo /usr/local/cuda/bin/compute-sanitizer)"
+          for suite in test_stress test_allocator_stream test_streams; do
+            echo "::group::memcheck $suite"
+            "$SANITIZER" --tool memcheck --leak-check full \
+              --error-exitcode 1 "build/tests/$suite"
+            echo "::endgroup::"
+          done
+
+      - name: Timing suites (informational)
+        continue-on-error: true
+        run: |
+          ./build/tests/test_benchmarks
+          ./build/tests/test_stream_perf

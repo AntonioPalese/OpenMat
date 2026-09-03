@@ -11,22 +11,26 @@ TEST(Reductions, SumCPU_Rank2) {
 }
 
 TEST(Reductions, SumGPU_Rank1) {
+    OM_REQUIRE_CUDA();
     auto t = Tensor<float>::from_vector({1,2,3,4,5}, {5}, Device("cuda:0"));
     EXPECT_FLOAT_EQ(t.sum(), 15.0f);
 }
 
 TEST(Reductions, SumGPU_Uniform) {
+    OM_REQUIRE_CUDA();
     auto t = Tensor<float>::full({1024}, 2.0f, Device("cuda:0"));
     EXPECT_FLOAT_EQ(t.sum(), 2048.0f);
 }
 
 TEST(Reductions, SumGPU_LargeArray) {
+    OM_REQUIRE_CUDA();
     const size_t N = 1 << 20;
     auto t = Tensor<float>::ones({N}, Device("cuda:0"));
     EXPECT_FLOAT_EQ(t.sum(), static_cast<float>(N));
 }
 
 TEST(Reductions, SumCPUMatchesGPU) {
+    OM_REQUIRE_CUDA();
     std::vector<float> data(256);
     for (size_t i = 0; i < 256; ++i) data[i] = static_cast<float>(i);
     auto cpu = Tensor<float>::from_vector(data, {256});
@@ -40,11 +44,13 @@ TEST(Reductions, MeanCPU) {
 }
 
 TEST(Reductions, MeanGPU) {
+    OM_REQUIRE_CUDA();
     auto t = Tensor<float>::full({100}, 3.0f, Device("cuda:0"));
     EXPECT_FLOAT_EQ(t.mean(), 3.0f);
 }
 
 TEST(Reductions, MeanCPUMatchesGPU) {
+    OM_REQUIRE_CUDA();
     std::vector<float> data(64);
     for (size_t i = 0; i < 64; ++i) data[i] = static_cast<float>(i + 1);
     auto cpu = Tensor<float>::from_vector(data, {64});
@@ -58,22 +64,26 @@ TEST(Reductions, MinCPU) {
 }
 
 TEST(Reductions, MinGPU) {
+    OM_REQUIRE_CUDA();
     auto t = Tensor<float>::from_vector({5,1,3,2,4}, {5}, Device("cuda:0"));
     EXPECT_FLOAT_EQ(t.min(), 1.0f);
 }
 
 TEST(Reductions, MinGPU_NegativeValues) {
+    OM_REQUIRE_CUDA();
     auto t = Tensor<float>::from_vector({0.0f, -3.0f, 2.0f, -1.0f}, {4}, Device("cuda:0"));
     EXPECT_FLOAT_EQ(t.min(), -3.0f);
 }
 
 TEST(Reductions, MinGPU_LargeArray) {
+    OM_REQUIRE_CUDA();
     const size_t N = 1 << 20;
     auto t = Tensor<float>::full({N}, 7.0f, Device("cuda:0"));
     EXPECT_FLOAT_EQ(t.min(), 7.0f);
 }
 
 TEST(Reductions, MinCPUMatchesGPU) {
+    OM_REQUIRE_CUDA();
     std::vector<float> data(128);
     for (size_t i = 0; i < 128; ++i) data[i] = static_cast<float>(128 - i);
     auto cpu = Tensor<float>::from_vector(data, {128});
@@ -87,22 +97,26 @@ TEST(Reductions, MaxCPU) {
 }
 
 TEST(Reductions, MaxGPU) {
+    OM_REQUIRE_CUDA();
     auto t = Tensor<float>::from_vector({5,1,3,2,4}, {5}, Device("cuda:0"));
     EXPECT_FLOAT_EQ(t.max(), 5.0f);
 }
 
 TEST(Reductions, MaxGPU_NegativeValues) {
+    OM_REQUIRE_CUDA();
     auto t = Tensor<float>::from_vector({-5.0f, -1.0f, -3.0f}, {3}, Device("cuda:0"));
     EXPECT_FLOAT_EQ(t.max(), -1.0f);
 }
 
 TEST(Reductions, MaxGPU_LargeArray) {
+    OM_REQUIRE_CUDA();
     const size_t N = 1 << 20;
     auto t = Tensor<float>::full({N}, -4.0f, Device("cuda:0"));
     EXPECT_FLOAT_EQ(t.max(), -4.0f);
 }
 
 TEST(Reductions, MaxCPUMatchesGPU) {
+    OM_REQUIRE_CUDA();
     std::vector<float> data(128);
     for (size_t i = 0; i < 128; ++i) data[i] = static_cast<float>(i);
     auto cpu = Tensor<float>::from_vector(data, {128});
@@ -111,17 +125,20 @@ TEST(Reductions, MaxCPUMatchesGPU) {
 }
 
 TEST(Reductions, SumAfterScaleShift) {
+    OM_REQUIRE_CUDA();
     auto t = Tensor<float>::from_vector({1,2,3,4}, {4}, Device("cuda:0"));
     EXPECT_FLOAT_EQ(t.scale_shift(2.0f, 1.0f).sum(), 24.0f);
 }
 
 TEST(Reductions, MinMaxRange) {
+    OM_REQUIRE_CUDA();
     auto t = Tensor<float>::from_vector({3,1,4,1,5,9,2,6}, {8}, Device("cuda:0"));
     EXPECT_FLOAT_EQ(t.min(), 1.0f);
     EXPECT_FLOAT_EQ(t.max(), 9.0f);
 }
 
 TEST(Reductions, MeanOfOnes) {
+    OM_REQUIRE_CUDA();
     auto t = Tensor<float>::ones({1000}, Device("cuda:0"));
     EXPECT_NEAR(t.mean(), 1.0f, 1e-5f);
 }

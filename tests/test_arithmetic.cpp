@@ -26,6 +26,7 @@ TEST(TensorArithmetic, CPUOperations) {
 }
 
 TEST(TensorArithmetic, GPUOperations) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     Tensor<float> a({2}, gpu);
     Tensor<float> b({2}, gpu);
@@ -69,6 +70,7 @@ TEST(TensorArithmetic, CPUMatMul) {
 }
 
 TEST(TensorArithmetic, GPUMatMul) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     Tensor<float> a({2, 2}, gpu);
     Tensor<float> b({2, 2}, gpu);
@@ -81,6 +83,7 @@ TEST(TensorArithmetic, GPUMatMul) {
 }
 
 TEST(TensorArithmetic, GPUFP16Operations) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     Tensor<float16_t> a({4}, gpu);
     Tensor<float16_t> b({4}, gpu);
@@ -103,6 +106,7 @@ TEST(TensorArithmetic, GPUFP16Operations) {
 }
 
 TEST(TensorArithmetic, GPUFP16MatMul) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     Tensor<float16_t> a({2, 2}, gpu);
     Tensor<float16_t> b({2, 2}, gpu);
@@ -118,6 +122,7 @@ TEST(TensorArithmetic, GPUFP16MatMul) {
 }
 
 TEST(TensorArithmetic, GPUFP16MatMulLarger) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     Tensor<float16_t> a({4, 3}, gpu);
     Tensor<float16_t> b({3, 4}, gpu);

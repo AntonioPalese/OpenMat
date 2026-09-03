@@ -64,6 +64,7 @@ TEST(FusedOps, CPUScaleShiftKnownValues) {
 // ============================================================================
 
 TEST(FusedOps, GPUApplyAdd_Rank1) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     Tensor<float> a({6}, gpu);
     a.fill(3.0f);
@@ -72,6 +73,7 @@ TEST(FusedOps, GPUApplyAdd_Rank1) {
 }
 
 TEST(FusedOps, GPUApplyMul_Rank1) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     Tensor<float> a({6}, gpu);
     a.fill(4.0f);
@@ -80,6 +82,7 @@ TEST(FusedOps, GPUApplyMul_Rank1) {
 }
 
 TEST(FusedOps, GPUApplyCompose_Rank1) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     Tensor<float> a({4}, gpu);
     a.fill(1.0f);
@@ -89,6 +92,7 @@ TEST(FusedOps, GPUApplyCompose_Rank1) {
 }
 
 TEST(FusedOps, GPUApplyAdd_Rank2) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     Tensor<float> a({3, 4}, gpu);
     a.fill(5.0f);
@@ -98,6 +102,7 @@ TEST(FusedOps, GPUApplyAdd_Rank2) {
 }
 
 TEST(FusedOps, GPUApplyMul_Rank3) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     Tensor<float> a({2, 3, 4}, gpu);
     a.fill(2.0f);
@@ -111,6 +116,7 @@ TEST(FusedOps, GPUApplyMul_Rank3) {
 // ============================================================================
 
 TEST(FusedOps, GPUScaleShift_Rank1) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     Tensor<float> a({8}, gpu);
     a.fill(2.0f);
@@ -118,6 +124,7 @@ TEST(FusedOps, GPUScaleShift_Rank1) {
 }
 
 TEST(FusedOps, GPUShiftScale_Rank1) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     Tensor<float> a({8}, gpu);
     a.fill(2.0f);
@@ -125,6 +132,7 @@ TEST(FusedOps, GPUShiftScale_Rank1) {
 }
 
 TEST(FusedOps, GPUScaleShift_Rank2) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     Tensor<float> a({4, 4}, gpu);
     a.fill(5.0f);
@@ -136,6 +144,7 @@ TEST(FusedOps, GPUScaleShift_Rank2) {
 // ============================================================================
 
 TEST(FusedOps, GPUApplyBinaryAdd_Rank1) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     Tensor<float> a({4}, gpu); a.fill(3.0f);
     Tensor<float> b({4}, gpu); b.fill(2.0f);
@@ -143,6 +152,7 @@ TEST(FusedOps, GPUApplyBinaryAdd_Rank1) {
 }
 
 TEST(FusedOps, GPUApplyBinaryMul_Rank2) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     Tensor<float> a({3, 3}, gpu); a.fill(4.0f);
     Tensor<float> b({3, 3}, gpu); b.fill(0.5f);
@@ -152,6 +162,7 @@ TEST(FusedOps, GPUApplyBinaryMul_Rank2) {
 }
 
 TEST(FusedOps, GPUApplyBinaryDiv_Rank1) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     Tensor<float> a({4}, gpu); a.fill(9.0f);
     Tensor<float> b({4}, gpu); b.fill(3.0f);
@@ -163,6 +174,7 @@ TEST(FusedOps, GPUApplyBinaryDiv_Rank1) {
 // ============================================================================
 
 TEST(FusedOps, GPUFusedAddMul_Rank1) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     Tensor<float> a({6}, gpu); a.fill(3.0f);
     Tensor<float> b({6}, gpu); b.fill(7.0f);
@@ -170,6 +182,7 @@ TEST(FusedOps, GPUFusedAddMul_Rank1) {
 }
 
 TEST(FusedOps, GPUFusedSubMul_Rank1) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     Tensor<float> a({6}, gpu); a.fill(10.0f);
     Tensor<float> b({6}, gpu); b.fill(4.0f);
@@ -177,6 +190,7 @@ TEST(FusedOps, GPUFusedSubMul_Rank1) {
 }
 
 TEST(FusedOps, GPUFusedMulAdd_Rank1) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     Tensor<float> a({6}, gpu); a.fill(3.0f);
     Tensor<float> b({6}, gpu); b.fill(4.0f);
@@ -184,6 +198,7 @@ TEST(FusedOps, GPUFusedMulAdd_Rank1) {
 }
 
 TEST(FusedOps, GPUFusedDivAdd_Rank1) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     Tensor<float> a({6}, gpu); a.fill(12.0f);
     Tensor<float> b({6}, gpu); b.fill(4.0f);
@@ -191,6 +206,7 @@ TEST(FusedOps, GPUFusedDivAdd_Rank1) {
 }
 
 TEST(FusedOps, GPUFusedAddMul_Rank2) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     Tensor<float> a({4, 4}, gpu); a.fill(2.0f);
     Tensor<float> b({4, 4}, gpu); b.fill(3.0f);
@@ -200,6 +216,7 @@ TEST(FusedOps, GPUFusedAddMul_Rank2) {
 }
 
 TEST(FusedOps, GPUFusedMulAdd_Rank3) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     Tensor<float> a({2, 3, 4}, gpu); a.fill(2.0f);
     Tensor<float> b({2, 3, 4}, gpu); b.fill(3.0f);
@@ -213,6 +230,7 @@ TEST(FusedOps, GPUFusedMulAdd_Rank3) {
 // ============================================================================
 
 TEST(FusedOps, CPUGPUConsistency_ScaleShift) {
+    OM_REQUIRE_CUDA();
     const size_t N = 16;
     Device cpu("cpu:0");
     Device gpu("cuda:0");
@@ -226,6 +244,7 @@ TEST(FusedOps, CPUGPUConsistency_ScaleShift) {
 }
 
 TEST(FusedOps, CPUGPUConsistency_FusedAddMul) {
+    OM_REQUIRE_CUDA();
     const size_t N = 8;
     Device cpu("cpu:0");
     Device gpu("cuda:0");
@@ -245,6 +264,7 @@ TEST(FusedOps, CPUGPUConsistency_FusedAddMul) {
 // ============================================================================
 
 TEST(FusedOps, FusedAddMulEquivalent) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     Tensor<float> a({8}, gpu); a.fill(3.0f);
     Tensor<float> b({8}, gpu); b.fill(5.0f);
@@ -254,6 +274,7 @@ TEST(FusedOps, FusedAddMulEquivalent) {
 }
 
 TEST(FusedOps, FusedMulAddEquivalent) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     Tensor<float> a({8}, gpu); a.fill(3.0f);
     Tensor<float> b({8}, gpu); b.fill(4.0f);
@@ -263,6 +284,7 @@ TEST(FusedOps, FusedMulAddEquivalent) {
 }
 
 TEST(FusedOps, ScaleShiftEquivalent) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     Tensor<float> a({8}, gpu); a.fill(5.0f);
     auto h_f = to_host(a.scale_shift(2.0f, -1.0f));
@@ -275,6 +297,7 @@ TEST(FusedOps, ScaleShiftEquivalent) {
 // ============================================================================
 
 TEST(FusedOps, ShapeMismatchThrows) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     Tensor<float> a({4}, gpu); a.fill(1.0f);
     Tensor<float> b({8}, gpu); b.fill(1.0f);
@@ -297,6 +320,7 @@ TEST(FusedOps, CPUReLU_KnownValues) {
 }
 
 TEST(FusedOps, GPUReLU_Rank1) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     auto a = Tensor<float>::from_vector({-2.0f, -1.0f, 0.0f, 1.0f, 3.0f}, {5}, gpu);
     auto h = to_host(a.relu());
@@ -308,6 +332,7 @@ TEST(FusedOps, GPUReLU_Rank1) {
 }
 
 TEST(FusedOps, GPUReLU_Rank2) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     auto a = Tensor<float>::from_vector({-1.0f, 2.0f, -3.0f, 4.0f}, {2, 2}, gpu);
     auto h = to_host(a.relu());
@@ -318,6 +343,7 @@ TEST(FusedOps, GPUReLU_Rank2) {
 }
 
 TEST(FusedOps, GPUReLU_Rank3) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     Tensor<float> a({2, 3, 4}, gpu);
     a.fill(-1.0f);
@@ -325,6 +351,7 @@ TEST(FusedOps, GPUReLU_Rank3) {
 }
 
 TEST(FusedOps, CPUGPUReLU_Consistency) {
+    OM_REQUIRE_CUDA();
     const size_t N = 8;
     Device cpu("cpu:0");
     Device gpu("cuda:0");
@@ -348,6 +375,7 @@ TEST(FusedOps, CPUSigmoid_KnownValues) {
 }
 
 TEST(FusedOps, GPUSigmoid_Rank1) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     auto a = Tensor<float>::from_vector({0.0f, 100.0f, -100.0f}, {3}, gpu);
     auto h = to_host(a.sigmoid());
@@ -357,6 +385,7 @@ TEST(FusedOps, GPUSigmoid_Rank1) {
 }
 
 TEST(FusedOps, GPUSigmoid_Rank2) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     Tensor<float> a({4, 4}, gpu);
     a.fill(0.0f);
@@ -364,6 +393,7 @@ TEST(FusedOps, GPUSigmoid_Rank2) {
 }
 
 TEST(FusedOps, CPUGPUSigmoid_Consistency) {
+    OM_REQUIRE_CUDA();
     const size_t N = 6;
     Device cpu("cpu:0");
     Device gpu("cuda:0");

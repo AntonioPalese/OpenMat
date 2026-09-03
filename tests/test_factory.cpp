@@ -15,6 +15,7 @@ TEST(TensorFactory, ZerosCPU) {
 }
 
 TEST(TensorFactory, ZerosGPU) {
+    OM_REQUIRE_CUDA();
     auto t = Tensor<float>::zeros({8}, Device("cuda:0"));
     EXPECT_EQ(t.device_type(), DEVICE_TYPE::CUDA);
     for (float v : to_host(t)) EXPECT_FLOAT_EQ(v, 0.0f);
@@ -38,6 +39,7 @@ TEST(TensorFactory, OnesCPU) {
 }
 
 TEST(TensorFactory, OnesGPU) {
+    OM_REQUIRE_CUDA();
     auto t = Tensor<float>::ones({8}, Device("cuda:0"));
     EXPECT_EQ(t.device_type(), DEVICE_TYPE::CUDA);
     for (float v : to_host(t)) EXPECT_FLOAT_EQ(v, 1.0f);
@@ -53,6 +55,7 @@ TEST(TensorFactory, FullCPU) {
 }
 
 TEST(TensorFactory, FullGPU) {
+    OM_REQUIRE_CUDA();
     auto t = Tensor<float>::full({6}, -2.0f, Device("cuda:0"));
     for (float v : to_host(t)) EXPECT_FLOAT_EQ(v, -2.0f);
 }
@@ -86,6 +89,7 @@ TEST(TensorFactory, FromVectorCPU_Rank2) {
 }
 
 TEST(TensorFactory, FromVectorGPU) {
+    OM_REQUIRE_CUDA();
     std::vector<float> data = {10.0f, 20.0f, 30.0f, 40.0f};
     auto t = Tensor<float>::from_vector(data, {4}, Device("cuda:0"));
     EXPECT_EQ(t.device_type(), DEVICE_TYPE::CUDA);
@@ -116,6 +120,7 @@ TEST(TensorFactory, FromVectorThenOp_CPU) {
 }
 
 TEST(TensorFactory, FromVectorThenOp_GPU) {
+    OM_REQUIRE_CUDA();
     auto a = Tensor<float>::from_vector({1, 2, 3, 4}, {4}, Device("cuda:0"));
     auto b = Tensor<float>::ones({4}, Device("cuda:0"));
     auto h = to_host(a + b);
@@ -123,6 +128,7 @@ TEST(TensorFactory, FromVectorThenOp_GPU) {
 }
 
 TEST(TensorFactory, FromVectorMatmul) {
+    OM_REQUIRE_CUDA();
     // A = [[1,0],[0,1]] (identità), B = [[5,6],[7,8]] → C = B
     auto A = Tensor<float>::from_vector({1,0,0,1}, {2,2}, Device("cuda:0"));
     auto B = Tensor<float>::from_vector({5,6,7,8}, {2,2}, Device("cuda:0"));

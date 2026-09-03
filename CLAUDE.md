@@ -40,7 +40,16 @@ cd build && ctest                       # all suites
 
 Suites: `test_arithmetic`, `test_fused_ops`, `test_device_transfer`, `test_factory`, `test_reductions`, `test_benchmarks`, `test_reshape`, `test_transpose`, `test_streams`, `test_allocator_stream`, `test_stress`, `test_stream_perf`.
 
-`test_benchmarks`, `test_stress`, and `test_stream_perf` are timing/soak suites, not correctness suites — they are slow and their numbers are meaningless in a Debug build.
+`test_benchmarks`, `test_stress`, and `test_stream_perf` are timing/soak suites, not correctness suites — they are slow and their numbers are meaningless in a Debug build. `StreamPerf.ParallelFanOut` in particular asserts wall-clock against wall-clock and goes red under load; CI does not gate on those two suites.
+
+**Every test that touches the device starts with `OM_REQUIRE_CUDA();`** ([tests/test_helpers.h](tests/test_helpers.h)) — a `cudaGetDeviceCount` check that `GTEST_SKIP`s instead of failing. That is what makes `ctest` green on a machine with no GPU (110 skipped, 60 host-side tests run) and is what the CPU-only CI job relies on; a new GPU test without it turns that job red. The Python equivalents are the `requires_cuda` marker and the `device` fixture in [python/tests/conftest.py](python/tests/conftest.py).
+
+## CI
+
+[.github/workflows/ci.yml](.github/workflows/ci.yml), on every push and PR. Two jobs:
+
+- **cpu** — a `nvidia/cuda:*-devel` container on a GitHub-hosted runner: toolkit, no driver, no device. It configures with an explicit `-DCMAKE_CUDA_ARCHITECTURES="75;86;89"` (the `native` default needs a GPU to resolve) and puts `/usr/local/cuda/lib64/stubs` first in `CMAKE_LIBRARY_PATH`, where the link-time-only `libcuda.so` lives. Its job is the full compile+link — the macro machinery and the mandatory explicit instantiations only fail there — plus the host-side tests.
+- **gpu** — a self-hosted runner labelled `self-hosted,linux,gpu`, needing nvcc and CMake ≥ 3.24 on PATH. Release build at `native` arch, the ten correctness suites, the Python suite, then `compute-sanitizer --tool memcheck --leak-check full` over `test_stress`, `test_allocator_stream` and `test_streams` (~30 s total). memcheck is the only thing that reports a stream-ownership violation near the call site instead of as an illegal access in an unrelated kernel later on.
 
 ## Python package
 

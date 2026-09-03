@@ -36,6 +36,7 @@ TEST(DeviceTensorViewInline, CopyableByValue) {
 // ── GpuAllocator async methods ────────────────────────────────────────────────
 
 TEST(GpuAllocatorAsync, AllocateAndFreeAsync) {
+    OM_REQUIRE_CUDA();
     om::Stream s;
     om::GpuAllocator<float> alloc;
 
@@ -47,6 +48,7 @@ TEST(GpuAllocatorAsync, AllocateAndFreeAsync) {
 }
 
 TEST(GpuAllocatorAsync, CopyD2DAsync) {
+    OM_REQUIRE_CUDA();
     om::Stream s;
     om::GpuAllocator<float> alloc;
 
@@ -72,6 +74,7 @@ TEST(GpuAllocatorAsync, CopyD2DAsync) {
 }
 
 TEST(GpuAllocatorAsync, CopyH2DAsync) {
+    OM_REQUIRE_CUDA();
     om::Stream s;
     om::GpuAllocator<float> alloc;
 
@@ -91,6 +94,7 @@ TEST(GpuAllocatorAsync, CopyH2DAsync) {
 }
 
 TEST(GpuAllocatorAsync, CopyD2HAsync) {
+    OM_REQUIRE_CUDA();
     om::Stream s;
     om::GpuAllocator<float> alloc;
 
@@ -111,6 +115,7 @@ TEST(GpuAllocatorAsync, CopyD2HAsync) {
 // ── Tensor::to(device, stream) ────────────────────────────────────────────────
 
 TEST(TensorToAsync, CPU_to_GPU) {
+    OM_REQUIRE_CUDA();
     auto cpu_t = Tensor<float>::from_vector({1.f,2.f,3.f,4.f}, {4}, Device("cpu:0"));
 
     om::Stream s;
@@ -124,6 +129,7 @@ TEST(TensorToAsync, CPU_to_GPU) {
 }
 
 TEST(TensorToAsync, GPU_to_CPU) {
+    OM_REQUIRE_CUDA();
     auto gpu_t = Tensor<float>::from_vector({10.f,20.f,30.f}, {3}, Device("cuda:0"));
 
     om::Stream s;
@@ -138,6 +144,7 @@ TEST(TensorToAsync, GPU_to_CPU) {
 }
 
 TEST(TensorToAsync, CpuShorthand) {
+    OM_REQUIRE_CUDA();
     auto gpu_t = Tensor<float>::from_vector({1.f, 2.f}, {2}, Device("cuda:0"));
     om::Stream s;
     auto cpu_t = gpu_t.cpu(s);
@@ -150,6 +157,7 @@ TEST(TensorToAsync, CpuShorthand) {
 }
 
 TEST(TensorToAsync, CudaShorthand) {
+    OM_REQUIRE_CUDA();
     auto cpu_t = Tensor<float>::from_vector({7.f, 8.f}, {2}, Device("cpu:0"));
     om::Stream s;
     auto gpu_t = cpu_t.cuda(s);
@@ -163,6 +171,7 @@ TEST(TensorToAsync, CudaShorthand) {
 // ── Tensor::from_vector with stream ──────────────────────────────────────────
 
 TEST(TensorFromVectorAsync, GPU_async) {
+    OM_REQUIRE_CUDA();
     om::Stream s;
     auto t = Tensor<float>::from_vector({3.f,1.f,4.f,1.f,5.f}, {5}, Device("cuda:0"), s);
     s.synchronize();
@@ -175,6 +184,7 @@ TEST(TensorFromVectorAsync, GPU_async) {
 }
 
 TEST(TensorFromVectorAsync, ResultMatchesSyncVersion) {
+    OM_REQUIRE_CUDA();
     std::vector<float> data = {1.f, 2.f, 3.f, 4.f, 5.f, 6.f};
     std::vector<size_t> sh  = {2, 3};
 

@@ -7,6 +7,7 @@
 #define BENCH_MS() (std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - _t0).count())
 
 TEST(Benchmark, MatMulFloat) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     { Tensor<float> w({64,64},gpu); w.fill(1.0f); w.matmul(w); cudaDeviceSynchronize(); }
 
@@ -31,6 +32,7 @@ TEST(Benchmark, MatMulFloat) {
 }
 
 TEST(Benchmark, MatMulFP16) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     { Tensor<float16_t> w({64,64},gpu); w.fill(float16_t(1.0f)); w.matmul(w); cudaDeviceSynchronize(); }
 
@@ -55,6 +57,7 @@ TEST(Benchmark, MatMulFP16) {
 }
 
 TEST(Benchmark, ElementWiseOps) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     const size_t N = 16 * 1024 * 1024;
 

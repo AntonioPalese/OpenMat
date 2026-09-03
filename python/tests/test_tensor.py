@@ -1,6 +1,8 @@
 import pytest
 from openmat import Tensor
 
+from .conftest import requires_cuda
+
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -150,34 +152,40 @@ def test_fused_add_mul():
 
 # ── GPU ───────────────────────────────────────────────────────────────────────
 
+@requires_cuda
 def test_gpu_ones():
     t = Tensor.ones([1024], device="cuda")
     assert t.is_cuda
     assert approx(t.sum(), 1024.0)
 
+@requires_cuda
 def test_gpu_to_cpu():
     g = Tensor.full([16], 3.0, device="cuda")
     c = g.cpu()
     assert not c.is_cuda
     assert approx(c.sum(), 48.0)
 
+@requires_cuda
 def test_cpu_to_gpu():
     c = Tensor.from_list([1, 2, 3, 4], [4])
     g = c.cuda()
     assert g.is_cuda
     assert approx(g.sum(), 10.0)
 
+@requires_cuda
 def test_gpu_add():
     a = Tensor.from_list([1, 2, 3, 4], [4], device="cuda")
     b = Tensor.from_list([4, 3, 2, 1], [4], device="cuda")
     assert approx((a + b).sum(), 20.0)
 
+@requires_cuda
 def test_gpu_reshape():
     t = Tensor.from_list(list(range(1, 7)), [6], device="cuda")
     r = t.reshape([2, 3])
     assert r.shape == [2, 3]
     assert approx(r.sum(), 21.0)
 
+@requires_cuda
 def test_gpu_reduction():
     t = Tensor.from_list([5, 1, 3, 2, 4], [5], device="cuda")
     assert approx(t.min(), 1.0)

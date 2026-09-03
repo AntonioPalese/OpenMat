@@ -40,6 +40,7 @@ static void print_row(const std::string& label, double ms, double ref_ms) {
 // difference is host-side overhead only. The "speedup" column should be ~1x.
 
 TEST(StreamPerf, SingleOpLatency) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     warmup(gpu);
 
@@ -94,6 +95,7 @@ TEST(StreamPerf, SingleOpLatency) {
 // The GPU does identical work; the gain is eliminating N-1 host/device stalls.
 
 TEST(StreamPerf, SequentialChain) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     warmup(gpu);
 
@@ -144,6 +146,7 @@ TEST(StreamPerf, SequentialChain) {
 // The speedup depends on how many independent kernels the GPU can co-schedule.
 
 TEST(StreamPerf, ParallelFanOut) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     warmup(gpu);
 
@@ -204,6 +207,7 @@ TEST(StreamPerf, ParallelFanOut) {
 // Overlapped:  transfer || compute -> sync          (~max(transfer, compute))
 
 TEST(StreamPerf, ComputeTransferOverlap) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     warmup(gpu);
 
@@ -250,6 +254,7 @@ TEST(StreamPerf, ComputeTransferOverlap) {
 // much it costs to create a new stream per operation vs reusing one.
 
 TEST(StreamPerf, StreamCreationOverhead) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     warmup(gpu);
 

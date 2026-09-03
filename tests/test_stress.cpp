@@ -16,6 +16,7 @@ static void gpu_sync() { CUDA_CALL(cudaDeviceSynchronize()); }
 // and N_BATCH at once to stress the cudaMallocAsync pool.
 
 TEST(Stress, AllocatorSequential) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     constexpr int N_ITERS = 500;
     constexpr size_t ELEMS = 1024 * 1024;  // 4 MB each
@@ -34,6 +35,7 @@ TEST(Stress, AllocatorSequential) {
 }
 
 TEST(Stress, AllocatorBatch) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     constexpr int N_BATCH = 64;
     constexpr size_t ELEMS = 512 * 1024;  // 2 MB each
@@ -58,6 +60,7 @@ TEST(Stress, AllocatorBatch) {
 // Runs 1000 iterations of add+mul to ensure no memory leak or error accumulation.
 
 TEST(Stress, SustainedElementWise) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     constexpr int N_ITERS = 1000;
     constexpr size_t ELEMS = 4 * 1024 * 1024;  // 16 MB
@@ -85,6 +88,7 @@ TEST(Stress, SustainedElementWise) {
 // Fires independent work on N_STREAMS streams simultaneously, then syncs all.
 
 TEST(Stress, MultiStreamConcurrency) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     constexpr int N_STREAMS = 8;
     constexpr size_t ELEMS = 2 * 1024 * 1024;
@@ -125,6 +129,7 @@ TEST(Stress, MultiStreamConcurrency) {
 // Stress-tests single very large allocations and ops.
 
 TEST(Stress, LargeTensor) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     constexpr size_t ELEMS = 128 * 1024 * 1024;  // 512 MB
 
@@ -151,6 +156,7 @@ TEST(Stress, LargeTensor) {
 // resource exhaustion.
 
 TEST(Stress, OpChainDepth) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     constexpr int DEPTH = 200;
     constexpr size_t ELEMS = 1024 * 1024;
@@ -175,6 +181,7 @@ TEST(Stress, OpChainDepth) {
 // Rank 6 and rank 8 permutations exercise the flat-index fallback kernel path.
 
 TEST(Stress, HighRankPermute) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
 
     // rank-6 tensor: [4,4,4,4,4,4] = 4096 elements
@@ -229,6 +236,7 @@ TEST(Stress, CPULarge) {
 // Measures async transfer bandwidth under repeated round-trips.
 
 TEST(Stress, AsyncTransferBandwidth) {
+    OM_REQUIRE_CUDA();
     constexpr int N_ITERS = 100;
     constexpr size_t ELEMS = 16 * 1024 * 1024;  // 64 MB
 

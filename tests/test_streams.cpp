@@ -4,10 +4,12 @@
 // ── om::Stream construction ───────────────────────────────────────────────────
 
 TEST(Stream, ConstructAndDestroy) {
+    OM_REQUIRE_CUDA();
     EXPECT_NO_THROW({ om::Stream s; });
 }
 
 TEST(Stream, GetReturnsNonNull) {
+    OM_REQUIRE_CUDA();
     om::Stream s;
     EXPECT_NE(s.get(), nullptr);
 }
@@ -18,6 +20,7 @@ TEST(Stream, DefaultStreamIsNull) {
 }
 
 TEST(Stream, MoveConstruct) {
+    OM_REQUIRE_CUDA();
     om::Stream s1;
     cudaStream_t raw = s1.get();
     om::Stream s2(std::move(s1));
@@ -26,6 +29,7 @@ TEST(Stream, MoveConstruct) {
 }
 
 TEST(Stream, Synchronize) {
+    OM_REQUIRE_CUDA();
     om::Stream s;
     EXPECT_NO_THROW(s.synchronize());
 }
@@ -33,6 +37,7 @@ TEST(Stream, Synchronize) {
 // ── Stream overloads produce correct results ─────────────────────────────────
 
 TEST(StreamOps, AddBinaryMatchesDefault) {
+    OM_REQUIRE_CUDA();
     auto a = Tensor<float>::from_vector({1,2,3,4}, {2,2}, Device("cuda:0"));
     auto b = Tensor<float>::from_vector({10,20,30,40}, {2,2}, Device("cuda:0"));
 
@@ -50,6 +55,7 @@ TEST(StreamOps, AddBinaryMatchesDefault) {
 }
 
 TEST(StreamOps, SubBinaryMatchesDefault) {
+    OM_REQUIRE_CUDA();
     auto a = Tensor<float>::from_vector({10,20,30,40}, {4}, Device("cuda:0"));
     auto b = Tensor<float>::from_vector({1,2,3,4},     {4}, Device("cuda:0"));
 
@@ -66,6 +72,7 @@ TEST(StreamOps, SubBinaryMatchesDefault) {
 }
 
 TEST(StreamOps, MulScalarMatchesDefault) {
+    OM_REQUIRE_CUDA();
     auto a = Tensor<float>::from_vector({1,2,3,4,5,6}, {2,3}, Device("cuda:0"));
 
     auto ref = a * 3.0f;
@@ -81,6 +88,7 @@ TEST(StreamOps, MulScalarMatchesDefault) {
 }
 
 TEST(StreamOps, MatmulMatchesDefault) {
+    OM_REQUIRE_CUDA();
     auto a = Tensor<float>::from_vector({1,2,3,4}, {2,2}, Device("cuda:0"));
     auto b = Tensor<float>::from_vector({5,6,7,8}, {2,2}, Device("cuda:0"));
 
@@ -97,6 +105,7 @@ TEST(StreamOps, MatmulMatchesDefault) {
 }
 
 TEST(StreamOps, TransposeMatchesDefault) {
+    OM_REQUIRE_CUDA();
     auto t = Tensor<float>::from_vector({1,2,3,4,5,6}, {2,3}, Device("cuda:0"));
 
     auto ref = t.transpose();
@@ -112,6 +121,7 @@ TEST(StreamOps, TransposeMatchesDefault) {
 }
 
 TEST(StreamOps, PermuteMatchesDefault) {
+    OM_REQUIRE_CUDA();
     auto t = Tensor<float>::ones({2,3,4}, Device("cuda:0"));
 
     auto ref = t.permute({2,0,1});
@@ -127,6 +137,7 @@ TEST(StreamOps, PermuteMatchesDefault) {
 }
 
 TEST(StreamOps, ReLUMatchesDefault) {
+    OM_REQUIRE_CUDA();
     auto t = Tensor<float>::from_vector({-2,-1,0,1,2,3}, {2,3}, Device("cuda:0"));
 
     auto ref = t.relu();
@@ -142,6 +153,7 @@ TEST(StreamOps, ReLUMatchesDefault) {
 }
 
 TEST(StreamOps, SigmoidMatchesDefault) {
+    OM_REQUIRE_CUDA();
     auto t = Tensor<float>::from_vector({-1,0,1,2}, {4}, Device("cuda:0"));
 
     auto ref = t.sigmoid();
@@ -159,6 +171,7 @@ TEST(StreamOps, SigmoidMatchesDefault) {
 // ── Two independent streams produce correct results ───────────────────────────
 
 TEST(StreamOps, TwoIndependentStreams) {
+    OM_REQUIRE_CUDA();
     auto a = Tensor<float>::from_vector({1,2,3,4}, {4}, Device("cuda:0"));
     auto b = Tensor<float>::from_vector({10,20,30,40}, {4}, Device("cuda:0"));
     auto c = Tensor<float>::from_vector({5,5,5,5}, {4}, Device("cuda:0"));
@@ -184,6 +197,7 @@ TEST(StreamOps, TwoIndependentStreams) {
 // ── default_stream() behaves synchronously (backward compat) ─────────────────
 
 TEST(StreamOps, DefaultStreamSyncBehavior) {
+    OM_REQUIRE_CUDA();
     auto a = Tensor<float>::from_vector({1,2,3,4}, {4}, Device("cuda:0"));
     auto b = Tensor<float>::from_vector({1,1,1,1}, {4}, Device("cuda:0"));
 

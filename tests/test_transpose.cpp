@@ -49,6 +49,7 @@ TEST(Transpose, CPU_Rank1Throws) {
 }
 
 TEST(Transpose, GPU_2x3) {
+    OM_REQUIRE_CUDA();
     auto t = Tensor<float>::from_vector({1,2,3,4,5,6}, {2,3}, Device("cuda:0"));
     auto r = t.transpose();
     ASSERT_EQ(r.shape()[0], 3u);
@@ -61,6 +62,7 @@ TEST(Transpose, GPU_2x3) {
 }
 
 TEST(Transpose, GPU_SumPreserved) {
+    OM_REQUIRE_CUDA();
     auto t = Tensor<float>::from_vector({1,2,3,4,5,6}, {2,3}, Device("cuda:0"));
     EXPECT_FLOAT_EQ(t.transpose().sum(), t.sum());
 }
@@ -133,6 +135,7 @@ TEST(Permute, CPU_OutOfRangeAxisThrows) {
 }
 
 TEST(Permute, GPU_Rank3_Shape) {
+    OM_REQUIRE_CUDA();
     auto t = Tensor<float>::ones({2, 3, 4}, Device("cuda:0"));
     auto p = t.permute({2, 0, 1});
     ASSERT_EQ(p.shape()[0], 4u);
@@ -142,6 +145,7 @@ TEST(Permute, GPU_Rank3_Shape) {
 }
 
 TEST(Permute, GPU_Rank3_Values) {
+    OM_REQUIRE_CUDA();
     std::vector<float> data(24);
     for (int i = 0; i < 24; ++i) data[i] = static_cast<float>(i);
     auto t = Tensor<float>::from_vector(data, {2, 3, 4}, Device("cuda:0"));

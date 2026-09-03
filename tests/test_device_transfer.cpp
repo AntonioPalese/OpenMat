@@ -1,6 +1,7 @@
 #include "test_helpers.h"
 
 TEST(DeviceTransfer, CPUtoGPU_Values) {
+    OM_REQUIRE_CUDA();
     Device cpu("cpu:0");
     Tensor<float> a({4}, cpu);
     a({0})=1; a({1})=2; a({2})=3; a({3})=4;
@@ -15,6 +16,7 @@ TEST(DeviceTransfer, CPUtoGPU_Values) {
 }
 
 TEST(DeviceTransfer, GPUtoCPU_Values) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     Tensor<float> a({4}, gpu);
     a.fill(7.0f);
@@ -27,6 +29,7 @@ TEST(DeviceTransfer, GPUtoCPU_Values) {
 }
 
 TEST(DeviceTransfer, RoundTrip_CPU_GPU_CPU) {
+    OM_REQUIRE_CUDA();
     Device cpu("cpu:0");
     Tensor<float> a({8}, cpu);
     for (size_t i = 0; i < 8; ++i) a({i}) = static_cast<float>(i);
@@ -48,6 +51,7 @@ TEST(DeviceTransfer, SameDevice_CPU_DeepCopy) {
 }
 
 TEST(DeviceTransfer, SameDevice_GPU_DeepCopy) {
+    OM_REQUIRE_CUDA();
     Device gpu("cuda:0");
     Tensor<float> a({4}, gpu);
     a.fill(3.0f);
@@ -58,6 +62,7 @@ TEST(DeviceTransfer, SameDevice_GPU_DeepCopy) {
 }
 
 TEST(DeviceTransfer, ShapePreserved_Rank2) {
+    OM_REQUIRE_CUDA();
     Device cpu("cpu:0");
     Tensor<float> a({3, 5}, cpu);
     a.fill(1.0f);
@@ -74,6 +79,7 @@ TEST(DeviceTransfer, ShapePreserved_Rank2) {
 }
 
 TEST(DeviceTransfer, OpAfterTransfer) {
+    OM_REQUIRE_CUDA();
     Device cpu("cpu:0");
     Tensor<float> a({4}, cpu);
     for (size_t i = 0; i < 4; ++i) a({i}) = static_cast<float>(i + 1);
