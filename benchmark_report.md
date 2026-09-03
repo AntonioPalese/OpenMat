@@ -150,10 +150,32 @@ inner iteration — with no blocking, no SIMD and no threading, against OpenBLAS
 | OpenMat CUDA | 1582 |
 | PyTorch CUDA (cuBLAS) | 16592 |
 
-The GPU kernel is 10.5× off cuBLAS, which for a non-tiled kernel with no shared
-memory staging is the expected order. The CPU path at 421× off is not a tuning
-gap; it is a different algorithm class. Loop reordering to `ikj` alone would win
-roughly an order of magnitude for one line of change.
+The GPU kernel ([src/ops/kernels/matmul_gpu.cu:14-61](src/ops/kernels/matmul_gpu.cu#L14-L61))
+is already tiled — it stages 16×16 tiles of A and B in shared memory with the
+usual two `__syncthreads()` per tile. The 10.5× is what is left *after* that, and
+it comes from three things the kernel does not do:
+
+- **One output element per thread — no register blocking.** The inner loop is
+  `sum += tileA[ty][k] * tileB[k][tx]`: two shared-memory loads per FMA. The LDS
+  issue rate, not the FFMA rate, is the ceiling, and no amount of occupancy moves
+  it. Having each thread compute a 4×4 patch in registers turns 32 loads per 16
+  FMAs into 8 per 16 — 4× less shared traffic per FLOP — and is the single
+  largest remaining win.
+- **No double buffering.** The two barriers per iteration make the loop strictly
+  load → sync → compute → sync, so every block eats the full global-memory
+  latency of tile *t* with nothing in flight to hide it. Prefetching tile *t+1*
+  into a second shared buffer (`cp.async` on sm_80+) overlaps the two.
+- **No tensor cores.** Every product is a scalar FFMA on the CUDA cores; nothing
+  goes through `wmma`/`mma.sync`, where the bulk of an sm_121 part's matmul
+  throughput lives.
+
+Global loads are scalar as well — one `T` per thread per tile, strided by
+`strideA1` — rather than vectorised; a smaller win, but a free one once the tile
+shape allows it.
+
+The CPU path at 421× off is not a tuning gap; it is a different algorithm class.
+Loop reordering to `ikj` alone would win roughly an order of magnitude for one
+line of change.
 
 ## Full results
 
