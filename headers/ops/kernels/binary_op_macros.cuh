@@ -17,12 +17,14 @@
         {\
             throw std::runtime_error("Matrix size mismatch in " #OP_NAME);\
         }\
+        const char* om_kernel = nullptr;\
         switch (lhs.rank)\
         {\
         case 1:\
             {\
                 dim3 threads(16);\
                 dim3 blocks((lhs.shape[0] + 15) / 16);\
+                om_kernel = #OP_NAME "_kernel_rank1";\
                 OP_NAME##_kernel_rank1<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw());\
             }\
             break;\
@@ -30,6 +32,7 @@
             {\
                 dim3 threads(16, 16);\
                 dim3 blocks((lhs.shape[1] + 15) / 16, (lhs.shape[0] + 15) / 16);\
+                om_kernel = #OP_NAME "_kernel_rank2";\
                 OP_NAME##_kernel_rank2<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw());\
             }\
             break;\
@@ -37,6 +40,7 @@
             {\
                 dim3 threads(8, 8, 8);\
                 dim3 blocks((lhs.shape[2] + 7) / 8, (lhs.shape[1] + 7) / 8, (lhs.shape[0] + 7) / 8);\
+                om_kernel = #OP_NAME "_kernel_rank3";\
                 OP_NAME##_kernel_rank3<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw());\
             }\
             break;\
@@ -48,6 +52,7 @@
                     (lhs.shape[2] + threads.y - 1) / threads.y,\
                     lhs.shape[0]\
                 );\
+                om_kernel = #OP_NAME "_kernel_rank4";\
                 OP_NAME##_kernel_rank4<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw());\
             }\
             break;\
@@ -56,11 +61,12 @@
                 size_t total_elements = lhs.size();\
                 dim3 threads(256);\
                 dim3 blocks((total_elements + threads.x - 1) / threads.x);\
+                om_kernel = #OP_NAME "_kernel_nd";\
                 OP_NAME##_kernel_nd<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw());\
             }\
             break;\
         }\
-        CUDA_CHECK;\
+        CUDA_CHECK_LAUNCH(om_kernel, stream);\
         if (stream == nullptr) cudaDeviceSynchronize();\
     }
 

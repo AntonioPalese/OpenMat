@@ -39,6 +39,18 @@ set(CMAKE_BUILD_TYPE Debug CACHE STRING "Choose the type of build." FORCE)
 endif()
 
 
+# ----------------------------------------
+# Debug launch checking (see headers/cuda_defines.cuh)
+#
+# OM_DEBUG_SYNC forces a cudaStreamSynchronize() after every kernel launch, so
+# an out-of-bounds access is reported at the launching call site instead of at
+# some later, unrelated synchronization point. It serializes streams, so it is
+# off by default and can also be switched on per run with OPENMAT_DEBUG_SYNC=1
+# without rebuilding. OM_NO_DEBUG_SYNC compiles the machinery out entirely.
+# ----------------------------------------
+option(OM_DEBUG_SYNC    "Synchronize after every kernel launch by default" OFF)
+option(OM_NO_DEBUG_SYNC "Compile out the forced post-launch synchronization" OFF)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
@@ -78,6 +90,14 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
 )
 
 target_include_directories(${PROJECT_NAME} PUBLIC headers/)
+
+if(OM_DEBUG_SYNC)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE OM_DEBUG_SYNC=1)
+endif()
+if(OM_NO_DEBUG_SYNC)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE OM_NO_DEBUG_SYNC=1)
+endif()
+
 
 # ----------------------------------------
 # Main executable

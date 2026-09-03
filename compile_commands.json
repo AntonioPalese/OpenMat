@@ -1,6 +1,12 @@
 [
 {
   "directory": "/home/apalese/OpenMat/build",
+  "command": "/usr/bin/c++ -DOpenMat_EXPORTS -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -g -fPIC -o CMakeFiles/OpenMat.dir/src/cuda_debug.cpp.o -c /home/apalese/OpenMat/src/cuda_debug.cpp",
+  "file": "/home/apalese/OpenMat/src/cuda_debug.cpp",
+  "output": "CMakeFiles/OpenMat.dir/src/cuda_debug.cpp.o"
+},
+{
+  "directory": "/home/apalese/OpenMat/build",
   "command": "/usr/bin/c++ -DOpenMat_EXPORTS -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -g -fPIC -o CMakeFiles/OpenMat.dir/src/mat_utils.cpp.o -c /home/apalese/OpenMat/src/mat_utils.cpp",
   "file": "/home/apalese/OpenMat/src/mat_utils.cpp",
   "output": "CMakeFiles/OpenMat.dir/src/mat_utils.cpp.o"

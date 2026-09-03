@@ -160,7 +160,7 @@ namespace om {
 #endif
 
         reduce_sum_kernel<<<blocks, REDUCE_BLOCK, 0, stream>>>(src.data, d_partial, n);
-        CUDA_CHECK;
+        CUDA_CHECK_LAUNCH("reduce_sum_kernel", stream);
 
         // Must sync before D→H copy
         if (stream != nullptr)
@@ -204,7 +204,7 @@ namespace om {
 #endif
 
         reduce_min_kernel<<<blocks, REDUCE_BLOCK, 0, stream>>>(src.data, d_partial, n, identity);
-        CUDA_CHECK;
+        CUDA_CHECK_LAUNCH("reduce_min_kernel", stream);
 
         if (stream != nullptr)
             cudaStreamSynchronize(stream);
@@ -247,7 +247,7 @@ namespace om {
 #endif
 
         reduce_max_kernel<<<blocks, REDUCE_BLOCK, 0, stream>>>(src.data, d_partial, n, identity);
-        CUDA_CHECK;
+        CUDA_CHECK_LAUNCH("reduce_max_kernel", stream);
 
         if (stream != nullptr)
             cudaStreamSynchronize(stream);
@@ -287,7 +287,7 @@ namespace om {
 #endif
 
         reduce_min_kernel<<<blocks, REDUCE_BLOCK, 0, stream>>>(src.data, d_partial, n, identity);
-        CUDA_CHECK;
+        CUDA_CHECK_LAUNCH("reduce_min_kernel", stream);
 
         if (stream != nullptr) cudaStreamSynchronize(stream);
         else                   cudaDeviceSynchronize();
@@ -323,7 +323,7 @@ namespace om {
 #endif
 
         reduce_max_kernel<<<blocks, REDUCE_BLOCK, 0, stream>>>(src.data, d_partial, n, identity);
-        CUDA_CHECK;
+        CUDA_CHECK_LAUNCH("reduce_max_kernel", stream);
 
         if (stream != nullptr) cudaStreamSynchronize(stream);
         else                   cudaDeviceSynchronize();

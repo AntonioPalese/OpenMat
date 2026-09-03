@@ -72,12 +72,14 @@ namespace om {
         if (!src.match(dst))
             throw std::invalid_argument("Source and destination must have the same shape");
 
+        const char* om_kernel = nullptr;
         switch (dst.rank)
         {
         case 1:
             {
                 dim3 threads(16);
                 dim3 blocks((dst.shape[0] + 15) / 16);
+                om_kernel = "apply_op_rank1";
                 apply_op_rank1<<<blocks, threads, 0, stream>>>(src.as_device_tw(), dst.as_device_tw(), op);
             }
             break;
@@ -85,6 +87,7 @@ namespace om {
             {
                 dim3 threads(16, 16);
                 dim3 blocks((dst.shape[1] + 15) / 16, (dst.shape[0] + 15) / 16);
+                om_kernel = "apply_op_rank2";
                 apply_op_rank2<<<blocks, threads, 0, stream>>>(src.as_device_tw(), dst.as_device_tw(), op);
             }
             break;
@@ -92,6 +95,7 @@ namespace om {
             {
                 dim3 threads(8, 8, 8);
                 dim3 blocks((dst.shape[2] + 7) / 8, (dst.shape[1] + 7) / 8, (dst.shape[0] + 7) / 8);
+                om_kernel = "apply_op_rank3";
                 apply_op_rank3<<<blocks, threads, 0, stream>>>(src.as_device_tw(), dst.as_device_tw(), op);
             }
             break;
@@ -103,6 +107,7 @@ namespace om {
                     (dst.shape[2] + threads.y - 1) / threads.y,
                     dst.shape[0]
                 );
+                om_kernel = "apply_op_rank4";
                 apply_op_rank4<<<blocks, threads, 0, stream>>>(src.as_device_tw(), dst.as_device_tw(), op);
             }
             break;
@@ -111,11 +116,12 @@ namespace om {
                 size_t total_elements = dst.size();
                 dim3 threads(256);
                 dim3 blocks((total_elements + threads.x - 1) / threads.x);
+                om_kernel = "apply_op_nd";
                 apply_op_nd<<<blocks, threads, 0, stream>>>(src.as_device_tw(), dst.as_device_tw(), op);
             }
             break;
         }
-        CUDA_CHECK;
+        CUDA_CHECK_LAUNCH(om_kernel, stream);
         if (stream == nullptr) cudaDeviceSynchronize();
     }
 
@@ -198,12 +204,14 @@ namespace om {
         if (!lhs.match(dst) || !rhs.match(dst))
             throw std::invalid_argument("launch_apply_binary_op: all tensors must have the same shape");
 
+        const char* om_kernel = nullptr;
         switch (dst.rank)
         {
         case 1:
             {
                 dim3 threads(256);
                 dim3 blocks((dst.shape[0] + 255) / 256);
+                om_kernel = "apply_binary_op_rank1";
                 apply_binary_op_rank1<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw(), op);
             }
             break;
@@ -211,6 +219,7 @@ namespace om {
             {
                 dim3 threads(16, 16);
                 dim3 blocks((dst.shape[1] + 15) / 16, (dst.shape[0] + 15) / 16);
+                om_kernel = "apply_binary_op_rank2";
                 apply_binary_op_rank2<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw(), op);
             }
             break;
@@ -218,6 +227,7 @@ namespace om {
             {
                 dim3 threads(8, 8, 8);
                 dim3 blocks((dst.shape[2] + 7) / 8, (dst.shape[1] + 7) / 8, (dst.shape[0] + 7) / 8);
+                om_kernel = "apply_binary_op_rank3";
                 apply_binary_op_rank3<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw(), op);
             }
             break;
@@ -229,6 +239,7 @@ namespace om {
                     (dst.shape[2] + threads.y - 1) / threads.y,
                     dst.shape[0]
                 );
+                om_kernel = "apply_binary_op_rank4";
                 apply_binary_op_rank4<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw(), op);
             }
             break;
@@ -237,11 +248,12 @@ namespace om {
                 size_t total = dst.size();
                 dim3 threads(256);
                 dim3 blocks((total + 255) / 256);
+                om_kernel = "apply_binary_op_nd";
                 apply_binary_op_nd<<<blocks, threads, 0, stream>>>(lhs.as_device_tw(), rhs.as_device_tw(), dst.as_device_tw(), op);
             }
             break;
         }
-        CUDA_CHECK;
+        CUDA_CHECK_LAUNCH(om_kernel, stream);
         if (stream == nullptr) cudaDeviceSynchronize();
     }
 

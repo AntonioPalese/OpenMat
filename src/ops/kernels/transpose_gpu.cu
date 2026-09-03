@@ -96,7 +96,7 @@ void launch_transpose(const TensorView<const T> src, TensorView<T> dst, cudaStre
     dim3 blocks((N + TILE - 1) / TILE, (M + TILE - 1) / TILE);
 
     transpose_kernel<T><<<blocks, threads, 0, stream>>>(src.as_device_tw(), dst.as_device_tw());
-    CUDA_CHECK;
+    CUDA_CHECK_LAUNCH("transpose_kernel", stream);
     if (stream == nullptr) cudaDeviceSynchronize();
 }
 
@@ -115,7 +115,7 @@ void launch_permute(const TensorView<const T> src, TensorView<T> dst,
     dim3 blocks((total + 255) / 256);
 
     permute_kernel<T><<<blocks, threads, 0, stream>>>(src.as_device_tw(), dst.as_device_tw(), axes_buf, rank);
-    CUDA_CHECK;
+    CUDA_CHECK_LAUNCH("permute_kernel", stream);
     if (stream == nullptr) cudaDeviceSynchronize();
 }
 

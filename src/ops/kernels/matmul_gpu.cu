@@ -96,7 +96,7 @@ namespace om
             dst.stride[0], dst.stride[1]
         );
 
-        CUDA_CHECK;
+        CUDA_CHECK_LAUNCH("matmul_kernel", stream);
         if (stream == nullptr) cudaDeviceSynchronize();
     }
 

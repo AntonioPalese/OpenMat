@@ -44,6 +44,25 @@ Suites: `test_arithmetic`, `test_fused_ops`, `test_device_transfer`, `test_facto
 
 **Every test that touches the device starts with `OM_REQUIRE_CUDA();`** ([tests/test_helpers.h](tests/test_helpers.h)) — a `cudaGetDeviceCount` check that `GTEST_SKIP`s instead of failing. That is what makes `ctest` green on a machine with no GPU (110 skipped, 60 host-side tests run) and is what the CPU-only CI job relies on; a new GPU test without it turns that job red. The Python equivalents are the `requires_cuda` marker and the `device` fixture in [python/tests/conftest.py](python/tests/conftest.py).
 
+## Debugging asynchronous kernel errors
+
+`OPENMAT_DEBUG_SYNC=1` forces a `cudaStreamSynchronize` after every kernel launch, so an out-of-bounds access is reported at the launching call site with the kernel's name instead of surfacing later as an illegal access in an unrelated call:
+
+```bash
+OPENMAT_DEBUG_SYNC=1 ./build/tests/test_streams          # no rebuild needed
+```
+
+```
+[CUDA ASYNC ERROR] kernel 'add_kernel_rank1' at src/ops/kernels/binary_ops.cu:10
+  in void om::launch_add(...) [with T = float; ...]
+  on stream 0xb0149ef4a290
+  → an illegal memory access was encountered
+```
+
+`cmake -DOM_DEBUG_SYNC=ON` makes it the build's default (the env var still overrides either way, so `OPENMAT_DEBUG_SYNC=0` turns it back off); `cmake -DOM_NO_DEBUG_SYNC=ON` compiles it out entirely. It serializes streams — diagnostic mode, never a default. It complements `compute-sanitizer`: cheap enough to leave on for a whole test run, but it only localizes, it does not tell you which access was bad.
+
+**Every kernel launch must be followed by `CUDA_CHECK_LAUNCH(kernel_name, stream)`** ([headers/cuda_defines.cuh](headers/cuda_defines.cuh)), not the older bare `CUDA_CHECK` — that one has no way to know the stream or the kernel, so it can only do the synchronous check. In the rank-switching launcher macros the name is carried in a local `const char* om_kernel` assigned in each branch, with one check after the `switch`. The implementation is deliberately non-`inline`, in [src/cuda_debug.cpp](src/cuda_debug.cpp): both switches are preprocessor-conditional, and an inline definition would let a consumer built with different settings supply a conflicting second definition (ODR violation, linker silently picks one).
+
 ## CI
 
 [.github/workflows/ci.yml](.github/workflows/ci.yml), on every push and PR. Two jobs:

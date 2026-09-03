@@ -252,13 +252,35 @@ Regola per chi aggiunge operazioni: **implementare l'overload `(args, const Stre
 
 Suite di test: `test_streams`, `test_allocator_stream`, `test_stress`, `test_stream_perf`. Numeri misurati in [`README.md`](../README.md) e [`stream_perf_report.md`](../stream_perf_report.md) (build Release — in Debug i numeri non significano nulla).
 
-### 6.2 Gestione degli errori CUDA ⚠️
+### 6.2 Gestione degli errori CUDA ✅
 
-Migliorato ma non completo. `CUDA_CHECK` in [`headers/cuda_defines.cuh`](../headers/cuda_defines.cuh) ora include **file e riga** nel messaggio, ed è affiancato da `CUDA_CALL(expr)` che controlla il valore di ritorno di una singola chiamata riportando anche l'espressione fallita.
+`CUDA_CHECK` in [`headers/cuda_defines.cuh`](../headers/cuda_defines.cuh) include **file e riga** nel messaggio, ed è affiancato da `CUDA_CALL(expr)` che controlla il valore di ritorno di una singola chiamata riportando anche l'espressione fallita.
 
-Resta il limite di fondo: `CUDA_CHECK` usa `cudaGetLastError()` dopo il lancio, quindi intercetta solo gli errori **sincroni** di lancio (configurazione di griglia non valida, argomenti errati). Gli errori asincroni dentro il kernel — accessi fuori dai limiti, illegal address — emergono al successivo punto di sincronizzazione, che con gli stream può essere arbitrariamente lontano dal kernel colpevole. Questo è esattamente lo scenario in cui una violazione dell'invariante di 6.1 diventa difficile da diagnosticare.
+Il limite di fondo — `cudaGetLastError()` dopo il lancio intercetta solo gli errori **sincroni** di lancio, mentre gli errori asincroni dentro il kernel (accessi fuori dai limiti, illegal address) emergono al successivo punto di sincronizzazione, arbitrariamente lontano dal kernel colpevole — è ora coperto da una **modalità debug**.
 
-Miglioramenti possibili: una modalità debug che forzi `cudaStreamSynchronize` dopo ogni lancio, e la cattura di uno stack trace al punto di lancio da riportare quando l'errore emerge dopo.
+`CUDA_CHECK_LAUNCH(nome_kernel, stream)` sostituisce `CUDA_CHECK` in tutti e 13 i siti di lancio. Fa sempre il controllo sincrono; in modalità debug forza in più un `cudaStreamSynchronize` sullo stream del lancio, così l'errore asincrono viene attribuito al kernel e al sito che lo ha lanciato:
+
+```
+[CUDA ASYNC ERROR] kernel 'add_kernel_rank1' at src/ops/kernels/binary_ops.cu:10
+  in void om::launch_add(...) [with T = float; ...]
+  on stream 0xb0149ef4a290
+  → an illegal memory access was encountered
+  (caught by OPENMAT_DEBUG_SYNC forced synchronization; unset it to restore asynchronous execution)
+```
+
+Attivazione:
+
+| | |
+|---|---|
+| a runtime, senza ricompilare | `export OPENMAT_DEBUG_SYNC=1` (accetta anche `true`/`yes`/`on`) |
+| di default nella build | `cmake -DOM_DEBUG_SYNC=ON` — la variabile d'ambiente la sovrascrive in entrambe le direzioni, quindi `OPENMAT_DEBUG_SYNC=0` la disattiva |
+| eliminata a compile time | `cmake -DOM_NO_DEBUG_SYNC=ON` — resta solo il controllo sincrono |
+
+La sincronizzazione forzata serializza esattamente la sovrapposizione per cui gli stream esistono: è una modalità diagnostica, mai un default. Dopo un illegal access il contesto CUDA è comunque inutilizzabile — il punto è sapere **dove** è successo.
+
+L'implementazione sta in un'unica unità di traduzione ([`src/cuda_debug.cpp`](../src/cuda_debug.cpp)), non `inline` nell'header: entrambi gli switch sono condizionali del preprocessore, e una definizione inline darebbe a un consumatore compilato con impostazioni diverse una seconda definizione in conflitto — violazione della ODR che il linker risolve scegliendone una in silenzio. Il costo di una chiamata non inline è nulla rispetto ai microsecondi di un lancio di kernel.
+
+Resta possibile (non fatto): la cattura di uno stack trace al punto di lancio da riportare quando l'errore emerge dopo. Con `CUDA_CHECK_LAUNCH` è però molto meno necessaria — `compute-sanitizer --tool memcheck` copre il resto.
 
 ### 6.3 Stampa e serializzazione ❌
 
@@ -307,7 +329,7 @@ Suite di test: `python/tests/test_tensor.py`, `test_tensor_api.py`, `test_dtypes
 | ✅ | Media | 2.2 — `transpose`, `permute` |
 | ✅ | Bassa | 6.1 — CUDA streams |
 | ✅ | — | 7 — Layer Python (ctypes, float32 + int32, stream) |
-| ⚠️ | — | 6.2 — Errori CUDA: file/riga e `CUDA_CALL` fatti; errori asincroni ancora tardivi |
+| ✅ | — | 6.2 — Errori CUDA: file/riga, `CUDA_CALL`, e `OPENMAT_DEBUG_SYNC` per gli errori asincroni |
 | | **Alta** | 4.4 — Overload stream per `apply_binary` (chiude l'asimmetria di 6.1) |
 | | **Alta** | 1.1 — Unarie `abs`, `sqrt`, `exp`, `log` via `apply` (costo basso, alto valore) |
 | | Media | 6.3 — `operator<<`, `save`, `load` |

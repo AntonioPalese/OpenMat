@@ -25,7 +25,60 @@
         }                                                                   \
     } while (0)
 
-    
+// ─────────────────────────────────────────────────────────────────────────────
+// Debug launch checking
+//
+// cudaGetLastError() right after a launch only sees *synchronous* launch
+// errors (bad grid/block configuration, bad arguments). An out-of-bounds
+// access inside the kernel is asynchronous: it surfaces at the next
+// synchronization point, which on a non-default stream can be arbitrarily far
+// from the kernel that caused it — typically as an "illegal memory access"
+// reported by an unrelated call.
+//
+// CUDA_CHECK_LAUNCH(kernel_name, stream) always performs the synchronous
+// check, and in debug mode additionally forces a cudaStreamSynchronize() on
+// the launch stream, so the asynchronous error is reported with the name of
+// the kernel and the site that launched it.
+//
+// Enabling debug mode:
+//   * runtime  — export OPENMAT_DEBUG_SYNC=1     (also accepts true/yes/on)
+//   * build    — cmake -DOM_DEBUG_SYNC=ON        (on unless OPENMAT_DEBUG_SYNC=0)
+//
+// Building with -DOM_NO_DEBUG_SYNC=ON compiles the forced synchronization out
+// entirely; only the synchronous check remains.
+//
+// The implementation deliberately lives in one translation unit inside the
+// library (src/cuda_debug.cpp) rather than being inline here: both switches are
+// preprocessor-conditional, and an inline definition would give a consumer that
+// compiles with different settings a second, conflicting definition — an ODR
+// violation the linker resolves by silently picking one. As a non-inline
+// function the behaviour is fixed by how the library was built, and the extra
+// call is nothing against the microseconds of a kernel launch.
+//
+// Forced synchronization serializes the very overlap streams exist for, so it
+// is a diagnostic mode, never a default. Note that after an illegal access the
+// CUDA context is unusable; the point is to learn *where* it happened.
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace om {
+namespace detail {
+
+    // True when forced post-launch synchronization is active. Resolved once,
+    // on first use, from OPENMAT_DEBUG_SYNC and the build-time default.
+    bool debug_sync_launches();
+
+    // Called immediately after a launch. `stream` is the stream the kernel was
+    // enqueued on — nullptr for the default stream. Throws std::runtime_error
+    // naming the kernel and the call site.
+    void check_launch(const char* kernel, const char* func,
+                      const char* file, int line, cudaStream_t stream);
+
+} // namespace detail
+} // namespace om
+
+#define CUDA_CHECK_LAUNCH(KERNEL_NAME, STREAM)                              \
+    ::om::detail::check_launch((KERNEL_NAME), __PRETTY_FUNCTION__,          \
+                               __FILE__, __LINE__, (STREAM))
 
 inline bool is_device_pointer(const void* ptr) {
     cudaPointerAttributes attr;
