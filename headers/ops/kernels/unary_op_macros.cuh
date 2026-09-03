@@ -13,6 +13,9 @@
 // gridDim.y/z stop at 65535: when the specialized grid does not fit, fall back
 // to the flat _nd kernel (gridDim.x only) instead of failing the launch with
 // "invalid configuration argument".
+// Rank-1 blocks are 256 threads: a 16-thread block fills half a warp and
+// leaves the other 16 lanes idle for the whole launch, which made a vector
+// slower than the very same buffer viewed as a matrix.
 #define DEFINE_UNARY_OP_LAUNCH(OP_NAME)\
     template<typename T>\
     void launch_##OP_NAME(const TensorView<const T> lhs, T value, TensorView<T> dst, cudaStream_t stream)\
@@ -27,8 +30,8 @@
         {\
         case 1:\
             {\
-                dim3 threads(16);\
-                const size_t gx = (lhs.shape[0] + 15) / 16;\
+                dim3 threads(256);\
+                const size_t gx = (lhs.shape[0] + 255) / 256;\
                 if (::om::detail::grid_fits(gx, 1, 1))\
                 {\
                     dim3 blocks(static_cast<unsigned int>(gx));\
