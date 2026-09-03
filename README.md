@@ -38,7 +38,8 @@ make -j$(nproc)
 
 There is no cross-framework comparison against NumPy or PyTorch yet — see the
 [roadmap](#roadmap). The measured stream results below are the numbers this project
-actually stands behind; raw output is in [stream_perf_report.md](stream_perf_report.md).
+actually stands behind, on two GPUs that disagree with each other; raw output and the
+per-test analysis are in [stream_perf_report.md](stream_perf_report.md).
 
 ---
 
@@ -61,26 +62,34 @@ All methods share the same kernel dispatch code. The no-stream variants delegate
 
 ### When streams help — and when they do not
 
-Benchmarked on **NVIDIA GeForce RTX 4060 · CUDA 11.5** (`tests/test_stream_perf.cpp`):
+Benchmarked with `tests/test_stream_perf.cpp` on two machines: **NVIDIA GeForce RTX 4060 · CUDA 11.5**
+(the original numbers) and **NVIDIA GB10 (DGX Spark, `sm_121`) · CUDA 13.0**, both in Release.
+The GB10 column is the median of 4 consecutive runs.
 
-#### Single op, sync after each iteration — no improvement
+**The results do not transfer between the two.** Two of the five conclusions invert — the
+sequential-chain win disappears and the parallel fan-out, a wash on the 4060, becomes the
+largest gain. Full analysis in [stream_perf_report.md](stream_perf_report.md).
 
-| Variant | Time/iter | Speedup |
+#### Single op, sync after each iteration — no improvement on either
+
+| Variant | RTX 4060 | GB10 |
 |---|---|---|
-| `operator+` (sync) | 0.42 ms | 1.00× |
-| `add(default_stream())` | 0.42 ms | 1.00× |
-| `add(Stream s)` + sync | 0.40 ms | ~1.05× |
+| `operator+` (sync) | 0.42 ms · 1.00× | 0.32 ms · 1.00× |
+| `add(default_stream())` | 0.42 ms · 1.00× | 0.32 ms · 1.01× |
+| `add(Stream s)` + sync | 0.40 ms · ~1.05× | 0.32 ms · ~1.02× |
 
 When the host blocks after every single operation the round-trip cost is identical regardless of whether a stream is used. The stream wrapper adds no measurable overhead, but it also cannot help if you synchronize immediately.
 
-#### Sequential chain of dependent ops — **2.68× faster**
+#### Sequential chain of dependent ops — **2.68× on the 4060, ~1× on GB10**
 
-| Variant | Total time (100 adds, 8 MB) | Speedup |
+| Variant | RTX 4060 (100 adds, 8 MB) | GB10 |
 |---|---|---|
-| Sync after every op | 45.38 ms | 1.00× |
-| One stream, one sync at the end | 16.94 ms | **2.68×** |
+| Sync after every op | 45.38 ms · 1.00× | 14.6 ms · 1.00× |
+| One stream, one sync at the end | 16.94 ms · **2.68×** | 14.2 ms · 1.03× |
 
-This is the highest-impact use case. With 100 explicit synchronizations the host stalls 100 times; each stall costs ~0.28 ms of scheduling overhead. Enqueuing all 100 kernels on a single stream and syncing once eliminates 99 of those stalls. The GPU's internal ordering guarantees correctness even with data dependencies between ops.
+On the 4060 this is the highest-impact use case. With 100 explicit synchronizations the host stalls 100 times; each stall costs ~0.28 ms of scheduling overhead. Enqueuing all 100 kernels on a single stream and syncing once eliminates 99 of those stalls. The GPU's internal ordering guarantees correctness even with data dependencies between ops.
+
+On GB10 the same 100 syncs cost ~0.45 ms in total, so the chain is bounded by kernel work rather than by host stalls and batching buys 3%. The principle — streams help once you stop synchronizing — still holds; its magnitude is entirely a function of what one sync costs on the platform, and on a unified-memory part that is close to nothing.
 
 The pattern in practice:
 
@@ -92,22 +101,25 @@ for (int i = 0; i < 100; ++i)
 s.synchronize();           // one round-trip at the end
 ```
 
-#### Parallel fan-out of independent ops — no improvement on memory-bound ops
+#### Parallel fan-out of independent ops — a wash on the 4060, the biggest win on GB10
 
-| K | Sequential | K parallel streams | Speedup |
-|---|---|---|---|
-| 2 | 0.15 ms | 0.14 ms | ~1.05× |
-| 8 | 0.73 ms | 0.69 ms | ~1.06× |
-| 16 | 1.46 ms | 1.38 ms | ~1.06× |
-
-Launching K independent kernels on K streams does not produce meaningful speedup when each kernel already saturates the available memory bandwidth. The RTX 4060 has one compute pipeline; `mul` on 4 MB data is entirely memory-bound and consumes close to 100% of bandwidth by itself. Parallel streams help more with compute-bound or small kernels, or on server GPUs with multiple independent SM partitions.
-
-#### Compute + transfer overlap — **1.12× faster**
-
-| Variant | Total time (20 rounds, 16 MB) | Speedup |
+| K | RTX 4060 (seq → K streams) | GB10 (seq → K streams) |
 |---|---|---|
-| Serialized (H2D → sync → compute → sync) | 37.21 ms | 1.00× |
-| Overlapped (stream_copy ∥ stream_compute) | 33.11 ms | **1.12×** |
+| 2 | 0.15 → 0.14 ms · ~1.05× | 0.22 → 0.14 ms · **1.62×** |
+| 4 | 0.30 → 0.31 ms · ~0.97× | 0.26 → 0.25 ms · ~1.05× |
+| 8 | 0.73 → 0.69 ms · ~1.06× | 1.9 → 0.57 ms · **3.1–3.4×** |
+| 16 | 1.46 → 1.38 ms · ~1.06× | 2.6 → 1.9 ms · **1.25–1.42×** |
+
+On the 4060, launching K independent kernels on K streams does not produce meaningful speedup when each kernel already saturates the available memory bandwidth: that GPU has one compute pipeline, and `mul` on 4 MB is entirely memory-bound.
+
+That reasoning does not describe GB10, where eight independent muls on eight streams run 3.3× faster than sequentially. Note the non-monotonic shape (K=4 drops back to ~1×) and that K=8 and K=16 are the only rows that move between runs — the test times a single un-warmed run per K, so part of the irregularity is measurement rather than hardware.
+
+#### Compute + transfer overlap — **1.12× on the 4060, ~4× on GB10**
+
+| Variant | RTX 4060 (20 rounds, 16 MB) | GB10 |
+|---|---|---|
+| Serialized (H2D → sync → compute → sync) | 37.21 ms · 1.00× | 47.9 ms · 1.00× |
+| Overlapped (stream_copy ∥ stream_compute) | 33.11 ms · **1.12×** | 11.9 ms · **~4.0×** |
 
 The RTX 4060 has a dedicated DMA copy engine that operates independently from the compute SMs. Assigning H2D transfers to one stream and compute work to another lets both run simultaneously:
 
@@ -121,24 +133,29 @@ Overlapped:  [H2D -------]
 
 The theoretical maximum speedup is ~2× (total time drops to `max(H2D, compute)` instead of `H2D + compute`). The observed 12% is lower because H2D and compute are similar in duration on this workload, leaving limited asymmetry to exploit. In inference pipelines that alternate between data loading and computation the gain is more pronounced.
 
+GB10's 4× exceeds that ceiling, which means the ratio is measuring a bad baseline rather than good overlap: the serialized path is *slower* there than on the 4060 (47.9 ms vs 37.21 ms) because the H2D leg dominates. `test_stress` puts H2D+D2H round-trips at only 4.3–4.8 GB/s on a coherent-memory part, which points at transfers going through pageable host memory with a staging copy. Fixing that would improve the absolute time and shrink this speedup.
+
 #### Stream creation overhead — negligible
 
-| Variant | Time/iter (256 KB mul, 1000 iters) |
-|---|---|
-| Reuse one stream | 0.01 ms |
-| New stream per call | 0.01 ms |
+| Variant | RTX 4060 (256 KB mul, 1000 iters) | GB10 |
+|---|---|---|
+| Reuse one stream | 0.01 ms | 0.01 ms |
+| New stream per call | 0.01 ms | 0.01 ms |
 
 At this scale `cudaStreamCreate` overhead is within measurement noise. For latency-sensitive tight loops (kernel time < 10 µs) the recommendation is still to create streams once and reuse them, as driver overhead becomes a larger fraction of total time.
 
 ### Summary
 
-| Pattern | Use streams? | Effect |
-|---|---|---|
-| Single op, immediate sync | Irrelevant | No change |
-| Chain of N ops on the same data | **Yes — one stream, one sync** | Up to ~2.7× faster |
-| Independent ops on separate data | Only if compute-bound | ~1× on memory-bound workloads |
-| Compute while transferring data | **Yes — two streams** | 10–15% on consumer GPU |
-| Stream creation per call | No — reuse streams | No overhead at scale |
+| Pattern | Use streams? | RTX 4060 | GB10 |
+|---|---|---|---|
+| Single op, immediate sync | Irrelevant | no change | no change |
+| Chain of N ops on the same data | Depends on what a sync costs | ~2.7× faster | ~1× |
+| Independent ops on separate data | **Yes on GB10**, no on the 4060 | ~1× | up to ~3.3× |
+| Compute while transferring data | **Yes — two streams** | 10–15% | ~4× (slow H2D baseline) |
+| Stream creation per call | No — reuse streams | no overhead at scale | no overhead at scale |
+
+The one portable lesson is that none of these rows is portable: measure on the target
+machine before designing around any of them.
 
 ---
 
@@ -393,7 +410,7 @@ Building this from scratch exposed a set of problems that high-level frameworks 
 - **Memory coalescing is not free** — a naïve transpose kernel hits ~15% of peak memory bandwidth. A tiled implementation with shared memory and padding to avoid bank conflicts gets to ~85%.
 - **Occupancy vs. shared memory is a real trade-off** — larger tiles improve reuse but reduce the number of resident warps. The sweet spot depends on the specific GPU's L1/shared memory ratio.
 - **Stride bugs are silent** — a wrong stride in an N-D kernel produces numerically plausible but incorrect output. Systematic testing against NumPy reference output was the only reliable detection method.
-- **Streams only help when you stop synchronizing** — the single biggest win (2.68×) comes not from running kernels faster but from removing 99 out of 100 host/device sync barriers in a chain. The GPU did the same work; the host just stopped blocking between submissions.
+- **Streams only help when you stop synchronizing — and how much they help is not portable** — the biggest win on the RTX 4060 (2.68×) came not from running kernels faster but from removing 99 out of 100 host/device sync barriers in a chain. Re-running the same suite on a GB10 returned 1.03× for that case, because a sync round-trip there costs almost nothing, while the parallel fan-out that was a wash on the 4060 became a 3.3× win. Same code, same test, opposite conclusions.
 - **Raw arrays decay in CUDA kernel parameters** — passing `size_t axes[MAX_RANK]` as a kernel argument silently becomes a host pointer on the device side. The fix is a trivially-copyable struct wrapper so CUDA copies the data by value into the kernel parameter block.
 - **A Python reference is not a lifetime guarantee** — the first two attempts at keeping a CUDA stream alive from Python both segfaulted under `gc.collect()`. The cyclic collector finalizes a cycle's members, plus everything reachable only from them, in arbitrary order, so a `Stream` could be torn down while tensors still owed it a stream-ordered free. Reference counting had to move to the C side of the boundary.
 - **`cudaMallocAsync` is not a drop-in replacement** — it uses a stream-ordered memory pool. Freeing on a different stream than the one used for allocation is a programming error that manifests as an illegal memory access with no obvious call site. Storing `m_Stream` in each `Tensor` and using it in the destructor is the invariant that keeps this safe.

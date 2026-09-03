@@ -11,6 +11,10 @@
 | Compute capability | 8.9 (Ada Lovelace) |
 | Test suite | `tests/test_stream_perf.cpp` |
 
+> I numeri di questo documento sono quelli della RTX 4060. Le stesse suite sono state
+> rieseguite su NVIDIA GB10 (DGX Spark, `sm_121`, CUDA 13.0) e **due conclusioni su cinque
+> si invertono** — vedi [Appendice — Rerun su NVIDIA GB10](#appendice--rerun-su-nvidia-gb10-dgx-spark).
+
 ---
 
 ## Panoramica
@@ -151,3 +155,168 @@ Gli stream **non aiutano** quando:
 - I kernel sono troppo grandi per essere co-schedulati sulla stessa GPU.
 
 Il pattern più efficace nell'attuale implementazione OpenMat è accodare più operazioni sullo stesso stream e sincronizzare una volta sola alla fine del batch, come avviene naturalmente con l'API stream overload `tensor.op(args, stream)`.
+
+---
+
+# Appendice — Rerun su NVIDIA GB10 (DGX Spark)
+
+Tutti i test sopra sono stati rieseguiti su una seconda architettura. **I risultati non
+si trasferiscono**: due delle cinque conclusioni si invertono. Questa sezione riporta i
+numeri GB10 accanto a quelli RTX 4060 e spiega perché divergono.
+
+## Ambiente di test
+
+| Componente | RTX 4060 (originale) | GB10 (DGX Spark) |
+|---|---|---|
+| GPU | GeForce RTX 4060 | NVIDIA GB10 |
+| Compute capability | 8.9 (Ada Lovelace) | 12.1 (Blackwell, `sm_121`) |
+| Memoria | 8 GB GDDR6 dedicata | unificata Grace–Blackwell |
+| CUDA Toolkit | 11.5 | 13.0 (V13.0.88) |
+| Driver | 535.309.01 | 580.173.02 |
+| Compilatore | — | GCC 13.3 / CMake 3.28 |
+| Build | Release | Release |
+
+Suite complete: **12/12 passate** (`ctest`, 12.31 s totali). I numeri sotto sono la
+mediana di 4 esecuzioni consecutive di `test_stream_perf`; la varianza è entro il ±3%
+tranne dove indicato.
+
+## Confronto sintetico
+
+| Test | RTX 4060 | GB10 | Esito |
+|---|---|---|---|
+| 1 — Single op, sync ogni iter | 0.42 ms, 1.00× | 0.32 ms, 1.02× | invariato |
+| 2 — Sequential chain (100 add, 8 MB) | 45.38 → 16.94 ms, **2.68×** | 14.6 → 14.2 ms, **1.03×** | **guadagno sparito** |
+| 3a — Fan-out K=2 | ~1.05× | **1.62×** | invertito |
+| 3b — Fan-out K=8 | ~1.06× | **3.1–3.4×** | invertito |
+| 3c — Fan-out K=16 | ~1.06× | **1.25–1.42×** | invertito |
+| 4 — Overlap compute/transfer | 37.21 → 33.11 ms, **1.12×** | 47.9 → 11.9 ms, **~4.0×** | molto amplificato |
+| 5 — Stream creation overhead | trascurabile | trascurabile (0.01 ms) | invariato |
+
+## Test 2 — la catena sequenziale non guadagna più
+
+Il 2.68× sulla 4060 derivava interamente dall'eliminazione di 99 stalli host, a ~0.28 ms
+ciascuno. Su GB10 un round-trip di sincronizzazione costa così poco che 100 sync valgono
+complessivamente ~0.45 ms su un totale di ~14.6 ms: la catena è limitata dal lavoro dei
+kernel, non dagli stalli host, e accodare tutto su un unico stream rende il 3%.
+
+La conclusione originale — «gli stream aiutano quando smetti di sincronizzare» — resta
+valida come principio, ma la sua *entità* dipende dal costo di una sync sulla piattaforma.
+Su un sistema a memoria unificata con CPU e GPU sullo stesso package quel costo è quasi
+azzerato, e con esso il guadagno.
+
+## Test 3 — il fan-out parallelo ora paga
+
+Sulla 4060 il fan-out era un pareggio: un solo `mul` da 4 MB saturava già la banda e la GPU
+aveva una sola pipeline di compute. Su GB10 otto `mul` indipendenti su otto stream vanno
+**3.3× più veloci** della versione sequenziale. La motivazione architetturale scritta per la
+4060 (banda satura ⇒ niente da guadagnare) non descrive questa piattaforma.
+
+Da notare l'andamento non monotono: K=2 dà 1.6×, K=4 crolla a 1.05×, K=8 sale a 3.3×, K=16
+ritorna a ~1.3×. Le righe K=8 e K=16 sono anche le uniche instabili tra run (3.10–3.43× e
+1.25–1.42×). Il test misura un singolo run senza warm-up per K, quindi parte di questa
+irregolarità è misura, non hardware — vale la pena mediarlo su più ripetizioni prima di
+trarne conclusioni architetturali.
+
+## Test 4 — overlap 4×, ma per il motivo sbagliato
+
+Il rapporto sembra ottimo, però il guadagno viene soprattutto dal fatto che il *baseline*
+è peggiore: la variante serializzata impiega 47.9 ms su GB10 contro 37.2 ms sulla 4060,
+mentre quella sovrapposta scende a 11.9 ms. È il ramo H2D a dominare, e infatti
+`Stress.AsyncTransferBandwidth` misura solo **4.3–4.8 GB/s** su round-trip da 64 MB — una
+cifra bassa per una piattaforma a memoria coerente. L'ipotesi più probabile è che i
+trasferimenti passino da memoria host pageable con staging intermedio invece che da memoria
+pinned. Se confermato, sistemare il path di trasferimento migliorerebbe il tempo assoluto e
+al tempo stesso **ridurrebbe** questo 4×.
+
+---
+
+## `test_benchmarks` su GB10
+
+| MatMul | fp32 ms | fp32 GFLOPS | fp16 ms | fp16 GFLOPS |
+|---|---|---|---|---|
+| 256² | 0.03 | 1024 | 0.04 | 900 |
+| 512² | 0.18 | 1453 | 0.18 | 1458 |
+| 1024² | 1.36 | 1578 | 1.36 | 1579 |
+| 2048² | 12.10 | 1420 | 11.09 | 1549 |
+| 4096² | 99.98 | 1375 | 89.81 | 1530 |
+
+fp16 rende solo ~1.12× rispetto a fp32: atteso, dato che il kernel è scritto a mano e non
+usa i tensor core.
+
+Element-wise su 16M elementi:
+
+| Op | ms | Gelem/s |
+|---|---|---|
+| float32 add | 3.79 | 4.42 |
+| float32 mul | 3.70 | 4.54 |
+| `scale_shift` | 3.68 | 4.56 |
+| `fused_add_mul` | 3.36 | 5.00 |
+| float16 add | 2.58 | 6.51 |
+| float16 mul | 2.54 | 6.61 |
+
+## `test_stress` su GB10
+
+| Scenario | Risultato |
+|---|---|
+| 500 × 4 MB alloc+fill+free | 255.0 ms (0.51 ms/iter) |
+| 64 tensori vivi contemporaneamente (2 MB) | 5.8 ms |
+| 1000 × (add+mul) su 16M float | 639.4 ms — **78.7 GB/s** effettivi |
+| 8 stream × 8 MB mul in parallelo | 3.1 ms |
+| add 512 MB + 512 MB | 26.2 ms — **61.5 GB/s** |
+| catena add profonda 200 (4 MB) | 13.2 ms |
+| permute rank-6 [4⁶] ×1000 | 8.9 ms |
+| permute rank-8 [4⁸] inverso | OK |
+| add+mul 32 MB su CPU | 20.1 ms |
+| 100 × 64 MB round-trip H2D+D2H | 3109.1 ms — **4.3 GB/s** |
+
+## Python
+
+`python/test_bindings.py` passa interamente (CPU e GPU) contro `OpenMat.so` in Release.
+La suite `pytest` non è stata eseguita: su questa macchina `uv` non è installato e il
+`python3` di sistema non ha `pytest`.
+
+## Output grezzo (GB10, Release)
+
+```
++-- Single op (16M add, 200 iters, sync-after-each)
+|   variant                                 ms  speedup
++------------------------------------------------------
+|   operator+ (sync)                     0.33 ms    1.00x
+|   add(default_stream())                0.32 ms    1.04x
+|   add(Stream s) + sync                 0.31 ms    1.05x
++------------------------------------------------------
+
++-- Sequential chain (100 adds, 8MB, single run)
+|   variant                                 ms  speedup
++------------------------------------------------------
+|   sync after each op                  15.26 ms    1.00x
+|   stream + 1 sync                     15.24 ms    1.00x
++------------------------------------------------------
+
++-- Fan-out: K independent muls (4MB each)
+|   variant                                 ms  speedup
++------------------------------------------------------
+|   K=2 sequential                       0.22 ms    1.00x
+|   K=2 parallel streams                 0.14 ms    1.64x
+|   K=4 sequential                       0.27 ms    1.00x
+|   K=4 parallel streams                 0.25 ms    1.06x
+|   K=8 sequential                       1.92 ms    1.00x
+|   K=8 parallel streams                 0.57 ms    3.34x
+|   K=16 sequential                      2.52 ms    1.00x
+|   K=16 parallel streams                2.01 ms    1.25x
++------------------------------------------------------
+
++-- Compute+transfer overlap (20 rounds, 16MB)
+|   variant                                 ms  speedup
++------------------------------------------------------
+|   serialised (H2D then compute)       47.77 ms    1.00x
+|   overlapped (2 streams)              12.50 ms    3.82x
++------------------------------------------------------
+
++-- Stream creation overhead (1000 iters, 256KB mul)
+|   variant                                 ms  speedup
++------------------------------------------------------
+|   reuse stream                         0.01 ms    1.00x
+|   new stream per call                  0.01 ms    0.71x
++------------------------------------------------------
+```
