@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build
 
-Requirements: NVIDIA GPU, CUDA Toolkit ≥ 11.2 (for `cudaMallocAsync`), CMake ≥ 3.24 (for `CMAKE_CUDA_ARCHITECTURES=native`), C++17/CUDA 17 compiler. Verified building and passing all 12 suites on CUDA 13.0 / GCC 13.3 / CMake 3.28 / GB10 (sm_121).
+Requirements: NVIDIA GPU, CUDA Toolkit ≥ 11.2 (for `cudaMallocAsync`), CMake ≥ 3.24 (for `CMAKE_CUDA_ARCHITECTURES=native`), C++17/CUDA 17 compiler. Verified building and passing all 13 suites on CUDA 13.0 / GCC 13.3 / CMake 3.28 / GB10 (sm_121).
 
 ```bash
 # Full clean rebuild (also refreshes compile_commands.json in the repo root)
@@ -38,7 +38,7 @@ cd build && ctest                       # all suites
 ./build/tests/test_arithmetic --gtest_filter="TensorArithmetic.CPUOperations"
 ```
 
-Suites: `test_arithmetic`, `test_fused_ops`, `test_device_transfer`, `test_factory`, `test_reductions`, `test_benchmarks`, `test_reshape`, `test_transpose`, `test_streams`, `test_allocator_stream`, `test_stress`, `test_stream_perf`.
+Suites: `test_arithmetic`, `test_fused_ops`, `test_device_transfer`, `test_factory`, `test_reductions`, `test_benchmarks`, `test_reshape`, `test_transpose`, `test_streams`, `test_allocator_stream`, `test_host_pool`, `test_stress`, `test_stream_perf`.
 
 `test_benchmarks`, `test_stress`, and `test_stream_perf` are timing/soak suites, not correctness suites — they are slow and their numbers are meaningless in a Debug build. `StreamPerf.ParallelFanOut` in particular asserts wall-clock against wall-clock and goes red under load; CI does not gate on those two suites.
 
@@ -132,7 +132,11 @@ Tensor<T>::operator+()
 
 **`Tensor<T>`** ([headers/tensor.cuh](headers/tensor.cuh), [headers/tensor.inl](headers/tensor.inl)) — owning N-D tensor: shape, row-major strides, raw `T*`, a `Device`, an `om::Stream m_Stream`, and a `unique_ptr<Allocator<T>>`. Copy deep-copies; move transfers ownership and nulls the source. There is a private `Tensor(shape, device, Stream)` constructor used by the stream overloads so a result tensor is allocated and freed on the stream that produced it.
 
-**`Allocator<T>` / `AllocatorFactory<T>`** ([headers/allocator.h](headers/allocator.h), [.inl](headers/allocator.inl)) — `CpuAllocator` (malloc/free/memcpy) and `GpuAllocator` (cudaMalloc/cudaFree/cudaMemcpy). The base class declares `allocate_async`, `deallocate_async`, `copy_async`, `copy_host_to_device_async`, `copy_device_to_host_async` with **synchronous default implementations**, so a subclass overrides only what it can actually do async. `GpuAllocator` uses `cudaMallocAsync`/`cudaFreeAsync` under `#if CUDART_VERSION >= 11020`.
+**`Allocator<T>` / `AllocatorFactory<T>`** ([headers/allocator.h](headers/allocator.h), [.inl](headers/allocator.inl)) — `CpuAllocator` (host block cache/memcpy) and `GpuAllocator` (cudaMalloc/cudaFree/cudaMemcpy). The base class declares `allocate_async`, `deallocate_async`, `copy_async`, `copy_host_to_device_async`, `copy_device_to_host_async` with **synchronous default implementations**, so a subclass overrides only what it can actually do async. `GpuAllocator` uses `cudaMallocAsync`/`cudaFreeAsync` under `#if CUDART_VERSION >= 11020`.
+
+**Host memory is recycled, not returned to the OS.** `CpuAllocator::allocate/deallocate` go through `om::detail::HostPool` ([headers/host_pool.h](headers/host_pool.h)), a process-wide free list keyed by size class. Plain `malloc` was measurably the dominant cost of every host-side op: above glibc's 128 KB `MMAP_THRESHOLD` each allocation is a fresh `mmap`, so an out-of-place op page-faults its whole output buffer before computing anything — 16384 faults per 64 MB result. Recycling a block keeps its pages mapped and took `add` at 16 M elements from 19.4 ms to 4.5 ms and a 64 MB `Tensor::cpu()` from 18.2 ms to 1.14 ms (the D2H case pays the faults *inside* `cudaMemcpy`, which is why the allocator showed up as a transfer problem).
+
+Details that matter if you touch it: requests round up to a size class (8 per octave, ≤ 12.5 % overshoot) so the number of free lists stays bounded; each block carries a 64-byte header holding its class, so `deallocate` needs no side table and the pointer handed out is 64-byte aligned rather than malloc's 16; the cache is capped (256 MB by default, `OPENMAT_HOST_CACHE_BYTES` overrides, `0` disables recycling and restores the old behaviour — useful for A/B measurement); and the singleton is deliberately never destroyed, because a `Tensor` with static storage duration would otherwise free into a destroyed pool. Host pointers must therefore never be freed with bare `std::free`, and host memory must never be allocated with bare `malloc` and handed to a `Tensor`.
 
 **Stream-ownership invariant:** `cudaMallocAsync` memory belongs to a stream-ordered pool and must be freed on the stream it was allocated on. That is why each `Tensor` stores `m_Stream` and the destructor calls `deallocate_async(m_Data, m_Stream.get())`. Breaking this shows up as an illegal memory access far from the real call site.
 

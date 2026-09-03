@@ -52,7 +52,7 @@ Full tables, root-cause analysis and reproduction steps in
 | GPU fused `(a+b)*s`, 16 M elem | **1.66× faster than PyTorch** — 858 µs vs 1420 µs |
 | CPU fused `x*s+t`, 16 M elem | **2.31× faster than NumPy**, 1.24× faster than PyTorch |
 | GPU `transpose`, 2048² | **1.16× faster than PyTorch** — 206 µs vs 240 µs |
-| CPU elementwise, 16 M elem | parity with NumPy — *once the allocator is corrected*, see below |
+| CPU elementwise, 16 M elem | parity with NumPy — 4.50 ms vs 6.13 ms on `add` |
 | H2D / D2H transfer | parity, within 5 % |
 | GPU `sum`, 16 M elem | 1.15× slower — 320 µs vs 278 µs |
 | GPU elementwise `add`, 16 M elem | 1.47× slower — 159 GB/s vs 234 GB/s |
@@ -67,14 +67,17 @@ Full tables, root-cause analysis and reproduction steps in
 runs in reverse on the CPU, where NumPy's `a * 2.0 + 1.0` is two passes over 64 MB and
 `scale_shift` beats both references outright.
 
-**Three of the remaining gaps have a single, local cause.**
+**The CPU gap above 128 KB was the allocator, not the loop — now fixed.** `add` at 16 M
+measured 25.2 ms against NumPy's 6.1 ms, because `CpuAllocator` called `malloc` directly
+and past glibc's mmap threshold every out-of-place op faulted in all 16 384 pages of its
+own result. `CpuAllocator` now recycles host blocks through a size-classed free list
+(`om::detail::HostPool`), as NumPy and PyTorch do: **4.50 ms against NumPy's 6.13 ms**,
+and the 25× D2H anomaly — the same page faults, paid inside `cudaMemcpy` — closes from
+18.2 ms to **1.14 ms**, matching PyTorch. Setting `OPENMAT_HOST_CACHE_BYTES=0` turns the
+cache off and reproduces the old numbers.
 
-- *The CPU gap above 128 KB is the allocator, not the loop.* `add` at 16 M measures
-  25.2 ms against NumPy's 6.1 ms; re-run under `MALLOC_MMAP_MAX_=0` it becomes
-  **4.48 ms against 4.40 ms — parity**. `CpuAllocator` calls `malloc` directly, so past
-  glibc's mmap threshold every out-of-place op faults in all 16 384 pages of its own
-  result. NumPy and PyTorch cache host blocks. This is also the whole of the 25× D2H
-  anomaly (27.1 ms → 1.13 ms corrected, matching PyTorch's 1.14 ms).
+**Two of the remaining gaps have a single, local cause.**
+
 - *Rank-1 CUDA kernels launch 16-thread blocks*, occupying a warp with half its lanes
   idle — see [Design decisions](#design-decisions).
 - *`sum` accumulates into one serial register.* The loop-carried FP dependency in
@@ -270,10 +273,14 @@ Rather than pairing raw `cudaMalloc`/`cudaFree` calls at each use site, every `T
 
 `CpuAllocator` deliberately stayed a thin `malloc`/`free` pair, on the reasoning that the
 host path is not the interesting one. The benchmark priced that decision: above glibc's
-128 KB mmap threshold every out-of-place op faults in its entire output buffer from the
-kernel, which is a 5.6× penalty on a 16 M-element `add` and 24× on a 64 MB device-to-host
-copy. Both vanish under `MALLOC_MMAP_MAX_=0`. A caching allocator is not an optimization
-here, it is the difference between parity with NumPy and 4× behind it.
+128 KB mmap threshold every out-of-place op faulted in its entire output buffer from the
+kernel, a 4.3× penalty on a 16 M-element `add` and 16× on a 64 MB device-to-host copy. A
+caching allocator was not an optimization here, it was the difference between parity with
+NumPy and 4× behind it — so host allocations now go through `om::detail::HostPool`
+([headers/host_pool.h](headers/host_pool.h)), a capped, mutex-guarded free list keyed by
+size class, with a 64-byte header per block carrying its class (and giving 64-byte
+alignment, where `malloc` guarantees 16). Same structure as NumPy's block cache and
+PyTorch's CPU caching allocator, for the same reason.
 
 **`DeviceTensorView` inline metadata instead of per-launch device allocations**
 The original design allocated `shape[]` and `stride[]` in device memory on every `DeviceTensorView` construction (2×`cudaMalloc` + 2×`cudaMemcpy` per object; 6 allocations for a single binary op). Replacing those with fixed inline arrays (`size_t shape[MAX_RANK]`) eliminates all per-launch metadata allocations. The struct is now trivially copyable and passed by value into the kernel parameter block — the same pattern used by cuDNN and CUTLASS. `MAX_RANK = 8` covers practical use without wasting register space.
@@ -482,7 +489,7 @@ Building this from scratch exposed a set of problems that high-level frameworks 
 - **Raw arrays decay in CUDA kernel parameters** — passing `size_t axes[MAX_RANK]` as a kernel argument silently becomes a host pointer on the device side. The fix is a trivially-copyable struct wrapper so CUDA copies the data by value into the kernel parameter block.
 - **A Python reference is not a lifetime guarantee** — the first two attempts at keeping a CUDA stream alive from Python both segfaulted under `gc.collect()`. The cyclic collector finalizes a cycle's members, plus everything reachable only from them, in arbitrary order, so a `Stream` could be torn down while tensors still owed it a stream-ordered free. Reference counting had to move to the C side of the boundary.
 - **Half a warp is half the bandwidth** — the rank-1 elementwise kernels launch `dim3(16)` blocks, so 16 of 32 lanes in the warp sit idle. It cost 20–32% of memory bandwidth and went unnoticed for as long as there was nothing to compare against: the kernels *were* faster than the CPU path, which is all the internal benchmarks could tell me. It took reshaping the same buffer to a different rank, and watching `add` jump from 149 to 187 GB/s, to see it.
-- **A benchmark is a measurement of the whole program, not the code you were looking at** — OpenMat's CPU `add` looked 4× slower than NumPy's at 16 M elements. The loop was not the problem; `malloc` was. Past glibc's 128 KB threshold every result buffer is a fresh `mmap`, and the op pays 16 384 page faults before it computes anything. One environment variable (`MALLOC_MMAP_MAX_=0`) closed the entire gap. The same cause was quietly making a 64 MB device-to-host copy look 24× slower than PyTorch's, in what appeared to be an unrelated part of the library.
+- **A benchmark is a measurement of the whole program, not the code you were looking at** — OpenMat's CPU `add` looked 4× slower than NumPy's at 16 M elements. The loop was not the problem; `malloc` was. Past glibc's 128 KB threshold every result buffer is a fresh `mmap`, and the op pays 16 384 page faults before it computes anything. One environment variable (`MALLOC_MMAP_MAX_=0`) closed the entire gap, and a size-classed free list in `CpuAllocator` made it permanent. The same cause was quietly making a 64 MB device-to-host copy look 24× slower than PyTorch's, in what appeared to be an unrelated part of the library.
 - **Fusion is worth more than kernel tuning** — the ops where OpenMat beats PyTorch and NumPy are not the ones with the best kernels, they are the ones that avoid a memory round-trip. `fused_add_mul` wins by 1.66× against a mature library with better kernels, purely because `(a + b) * s` costs PyTorch a 64 MB intermediate. Arithmetic is nearly free at this scale; every avoided traversal of memory is not.
 - **`cudaMallocAsync` is not a drop-in replacement** — it uses a stream-ordered memory pool. Freeing on a different stream than the one used for allocation is a programming error that manifests as an illegal memory access with no obvious call site. Storing `m_Stream` in each `Tensor` and using it in the destructor is the invariant that keeps this safe.
 

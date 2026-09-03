@@ -1,22 +1,26 @@
 #include "allocator.h"
 #include "cuda_defines.cuh"
+#include "host_pool.h"
 
 namespace om
 {
+    // Host memory goes through om::detail::HostPool rather than malloc/free:
+    // above glibc's 128 KB mmap threshold a plain malloc costs a page fault
+    // per 4 KB of the buffer on first touch, which is the whole of the CPU
+    // elementwise and D2H gap against NumPy/PyTorch. See host_pool.h.
     template<typename T>
     T* CpuAllocator<T>::allocate(size_t count) {
         if (count == 0)
             return nullptr;
-
-        T* ptr = static_cast<T*>(std::malloc(sizeof(T) * count));
-        if (!ptr)
+        if (count > static_cast<size_t>(-1) / sizeof(T))
             throw std::bad_alloc();
-        return ptr;
+
+        return static_cast<T*>(detail::HostPool::instance().allocate(sizeof(T) * count));
     }
 
     template<typename T>
     void CpuAllocator<T>::deallocate(T* ptr) {
-        std::free(ptr);
+        detail::HostPool::instance().deallocate(ptr);
     }
 
     template <typename T>

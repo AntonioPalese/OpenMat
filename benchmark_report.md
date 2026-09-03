@@ -30,12 +30,12 @@ out-of-place and allocates its result, as all three libraries do by default.
 | GPU fused `(a+b)*s`, 16 M elem | **1.66× faster than PyTorch** (858 µs vs 1420 µs) |
 | GPU elementwise `add`, 16 M elem | 1.47× slower (159 GB/s vs 234 GB/s) |
 | GPU transpose, 2048² | **1.16× faster than PyTorch** (206 µs vs 240 µs) |
-| CPU elementwise, 16 M elem | parity with NumPy — *once the allocator is corrected* (§3) |
+| CPU elementwise, 16 M elem | parity with NumPy — 4.50 ms vs 6.13 ms on `add` (§3) |
 | CPU fused `x*s+t`, 16 M elem | **2.31× faster than NumPy, 1.24× faster than PyTorch** |
 | `sum`, CPU | 4–12× slower (§5) |
 | `matmul`, CPU 1024³ | 421× slower — 1.81 GFLOP/s vs 756 GFLOP/s (§6) |
 | `matmul`, GPU 1024³ | 10.5× slower — 1.58 TFLOP/s vs 16.6 TFLOP/s (cuBLAS) |
-| H2D / D2H transfer | parity, within 5 % (§3 for the one exception) |
+| H2D / D2H transfer | parity, within 5 % |
 
 ## 1. Fusion is the win, and it is measurable
 
@@ -48,7 +48,8 @@ PyTorch's `(a + b) * 2.5` takes **1420 µs**: PyTorch materialises `a+b` into a
 effective traffic on that op — the highest figure any op in this run achieved,
 and essentially the machine's attainable ceiling.
 
-On the CPU (allocator-corrected, §3) the same effect shows twice:
+On the CPU (allocator-corrected — since §3 that is simply the default) the same
+effect shows twice:
 
 | op, 16 M elem | NumPy | PyTorch | OpenMat |
 |---|---|---|---|
@@ -82,7 +83,7 @@ it is the only one at full bandwidth there.
 Reshaping a vector to a matrix should not make elementwise addition 25 % faster.
 Raising the two `threads(16)` sites to 256 is a two-line change.
 
-## 3. The CPU gap above 128 KB is the allocator, not the loop
+## 3. The CPU gap above 128 KB was the allocator, not the loop — fixed
 
 At 16 M elements OpenMat's CPU `add` measures 25.2 ms against NumPy's 6.1 ms —
 a 4× gap that vanishes under `MALLOC_MMAP_MAX_=0 MALLOC_TRIM_THRESHOLD_=-1`:
@@ -105,8 +106,35 @@ This is also the whole of the 25× D2H anomaly: `Tensor::cpu()` allocates the
 destination, and `cudaMemcpy` into never-touched pageable memory pays the faults
 inside the copy. Corrected, it matches PyTorch to within 1 %.
 
-**Fix:** a small free-list in `CpuAllocator` keyed by byte size, or
-`cudaHostAlloc` for transfer destinations.
+**Fixed** in `CpuAllocator`, which now allocates through `om::detail::HostPool`
+([headers/host_pool.h](headers/host_pool.h)): a process-wide free list keyed by
+size class (8 classes per octave), capped at 256 MB, so a freed block is handed
+back to the next allocation of its class with its pages still mapped instead of
+being `munmap`'d. Re-measured on the same machine, same methodology, with the
+cache on and with `OPENMAT_HOST_CACHE_BYTES=0` (which restores the old
+behaviour) — PyTorch was not installed for this second run, so its column is the
+figure from the run above:
+
+| 16 M elem, CPU | cache off | cache on |
+|---|---|---|
+| OpenMat `add` | 19381 µs | **4498 µs** |
+| NumPy `add` | 6024 µs | 6134 µs |
+| OpenMat `copy` | 16366 µs | **2645 µs** |
+| OpenMat D2H, 64 MB | 18239 µs | **1141 µs** |
+| PyTorch D2H, 64 MB | — | 1140 µs (earlier run) |
+| OpenMat H2D, 64 MB | 1191 µs | 1194 µs |
+
+`add` lands at parity with NumPy and D2H within 0.1 % of PyTorch. The per-op
+dispatch floor is unchanged (1.75 µs at 4096 elements, cache on and off): the
+mutex and hash lookup do not register against the ctypes crossing.
+
+H2D is the one number the cache does not move, and it is not supposed to: its
+destination is device memory, and its source is pageable host memory, which
+makes `cudaMemcpyAsync` synchronous. `cudaHostAlloc` for host buffers that
+participate in transfers would fix that, but pinning is not free and nothing in
+the API tells `CpuAllocator` which tensors will ever cross the bus — it would
+have to page-lock every host tensor, and it cannot fall back gracefully on a
+machine with no driver. Left as a separate change.
 
 ## 4. Small sizes are FFI-bound
 
@@ -216,7 +244,9 @@ shape/transpose         (2048, 2048)    5801.80   2711.69   6716.35
 
 ### CPU, `MALLOC_MMAP_MAX_=0 MALLOC_TRIM_THRESHOLD_=-1`
 
-Isolates the compute loop from the page-fault cost of §3.
+Isolates the compute loop from the page-fault cost of §3. Taken before the block
+cache landed; the default build now reaches these numbers on its own, and this
+env-var pass is only how the diagnosis was made.
 
 ```
 op                             shape      np us  torch us     om us
@@ -295,10 +325,10 @@ VIRTUAL_ENV=bench-env uv pip install torch --index-url https://download.pytorch.
 OPENMAT_LIB=build-release/OpenMat.so PYTHONPATH=python \
   bench-env/bin/python scripts/bench_vs.py --out bench_results.json
 
-# allocator-corrected CPU pass
-MALLOC_MMAP_MAX_=0 MALLOC_TRIM_THRESHOLD_=-1 \
+# same pass with the host block cache off, i.e. the pre-§3 allocator
+OPENMAT_HOST_CACHE_BYTES=0 \
 OPENMAT_LIB=build-release/OpenMat.so PYTHONPATH=python \
-  bench-env/bin/python scripts/bench_vs.py --no-cuda --out bench_noalloc.json
+  bench-env/bin/python scripts/bench_vs.py --no-cuda --out bench_nocache.json
 ```
 
 `--quick` shortens the batches for a smoke run. `bench_results.json` carries the
