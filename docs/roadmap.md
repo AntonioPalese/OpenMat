@@ -4,7 +4,7 @@ Questo documento elenca le funzionalità del framework, il loro stato attuale e 
 
 **Legenda:** ✅ implementato · ⚠️ implementato parzialmente o con divergenze rispetto al progetto originale · ❌ da fare
 
-Ultimo allineamento al codice: settembre 2026.
+Ultimo allineamento al codice: 4 settembre 2026 (benchmark rieseguiti su GB10, Release; vedi [`benchmark_report.md`](../benchmark_report.md)).
 
 ---
 
@@ -56,6 +56,12 @@ Le riduzioni a scalare sono implementate; le riduzioni lungo un asse no.
 Implementate in [`headers/ops/kernels/reduce_gpu.cuh`](../headers/ops/kernels/reduce_gpu.cuh) (riduzione a due fasi: tree-reduction in shared memory per blocco + warp shuffle con `__shfl_down_sync`) e [`headers/ops/cpu/reduce_cpu.h`](../headers/ops/cpu/reduce_cpu.h). Suite di test: `test_reductions`.
 
 **Limite noto:** le riduzioni sono **sincrone** e restituiscono uno scalare host — non hanno overload `(const Stream&)`, a differenza di quasi tutto il resto della libreria. Aggiungerli richiede una variante che scriva il risultato in un `Tensor` di dimensione 1 sul device, lasciando la copia su host al chiamante.
+
+**Prestazioni, aggiornamento settembre 2026.** `reduce_sum_cpu` accumulava in un singolo registro: la dipendenza FP loop-carried impediva la vettorizzazione automatica (senza `-ffast-math`) e il loop girava a un'addizione per *latenza* FP invece che per throughput — 7.7 GB/s contro la riduzione SIMD pairwise di NumPy. Spezzando l'accumulo su **8 lane indipendenti** ricombinate a coppie alla fine si rompe la catena: **36.9 GB/s a 16M elementi, 1.06× più veloce di NumPy** invece che 4× più lento. È una ristrutturazione a livello sorgente, non un pragma, ed è anche leggermente più accurata (i parziali sommati alla fine hanno magnitudine simile).
+
+Resta single-thread: PyTorch è ancora 2.8× più veloce a 16M perché distribuisce la riduzione su 20 core. Un `parallel for` con clausola `reduction(+:)` è il passo successivo non ancora tentato — da non confondere con la clausola `simd reduction(min:)/(max:)` su `min`/`max`, che è stata misurata e **rimossa** (§6.4).
+
+`min`/`max` restano il divario aperto più grande sulla superficie elementwise CPU: 2.7× più lenti di NumPy a 16M, 6.8× a 1M.
 
 Le riduzioni per asse richiedono un kernel diverso da quello attuale: una griglia in cui ogni blocco riduce una "colonna" lungo l'asse scelto, con gli stride del tensore a determinare il passo.
 
@@ -211,6 +217,18 @@ Il lavoro è meccanico e segue `apply`: accettare `const Stream& s`, costruire l
 
 Stato attuale: `matmul` è **2D-only** in entrambi i backend. Rank != 2 o dimensioni interne incompatibili sollevano un'eccezione da `Tensor::matmul` e di nuovo dentro `matmul_cpu`. Nessun batching, nessun broadcasting. Ha l'overload `(const Tensor&, const Stream&)`.
 
+**Prestazioni CPU, aggiornamento settembre 2026 ✅.** `matmul_cpu` era il triplo loop `ijk` da manuale, che indicizza `rhs(k, j)` lungo una colonna — un cache miss per iterazione interna — senza blocking, SIMD o threading: **1.81 GFLOP/s** a 1024³, 421× dietro NumPy. Ora è ordine `ikj` con tiling L2 a 128 e `omp parallel for` sulle righe di output (indipendenti fra loro). Scorrere `k` in mezzo fa sì che sia la riga di `rhs` sia quella di `dst` vengano spazzate in modo contiguo nel loop `j` più interno — stride unitario, quindi vettorizzabile — e il blocking `i`/`k`/`j` tiene ogni pannello residente in L2 durante l'accumulo.
+
+| CPU matmul | OpenMat GFLOP/s | NumPy GFLOP/s | rapporto |
+|---|---|---|---|
+| 128³ | **196.6** | 189.2 | **1.04× più veloce** |
+| 512³ | 140.6 | 666.8 | 4.7× più lento |
+| 1024³ | 122.8 | 768.3 | 6.3× più lento |
+
+**68× a 1024³**, e a 128³ supera NumPy (lì la chiamata è abbastanza piccola che l'overhead di dispatch di OpenBLAS pesa quanto il lavoro). Quel che resta è la distanza fra un loop C tiled e un microkernel scritto a mano: OpenBLAS fa blocking anche per L1 e per i registri, emette intrinsics NEON con software pipelining, e impacchetta i pannelli in buffer contigui. È una classe di implementazione diversa, non una differenza di tuning — ma ora è un fattore 6, non tre ordini di grandezza.
+
+Sul lato GPU il divario resta **10.3×** rispetto a cuBLAS (1636 vs 16869 GFLOP/s a 1024³) e ha tre cause distinte, tutte ancora aperte: un solo elemento di output per thread (due load da shared memory per FMA, quindi il tetto è il rate di issue LDS, non quello FFMA — il register blocking 4×4 è la vittoria singola più grande), nessun double buffering (le due barriere per tile rendono il loop strettamente load → sync → compute → sync), e nessun uso dei tensor core. Quest'ultimo punto è misurabile direttamente: in `test_benchmarks` fp16 rende solo ~1.1× rispetto a fp32, dove i tensor core varrebbero diversi×. Dettagli in [`benchmark_report.md` §6](../benchmark_report.md#6-matmul-the-cpu-gap-closed-68-the-gpu-one-remains).
+
 ### 5.1 Batch matmul ❌
 
 ```cpp
@@ -298,11 +316,15 @@ Sul lato Python la lacuna è parzialmente coperta: `Tensor` ha `__repr__` / `__s
 
 Area non presente nella roadmap originale, aggiunta dopo di essa.
 
-`DEFINE_BINARY_OPS_CPU` ([`headers/ops/cpu/binary_op_macros.h`](../headers/ops/cpu/binary_op_macros.h)) e `DEFINE_UNARY_OPS_CPU` ([`headers/ops/cpu/unary_op_macros.h`](../headers/ops/cpu/unary_op_macros.h)) — il lato CPU di `add`/`sub`/`mul`/`div`, sia tensore⊕tensore sia tensore⊕scalare — usano ora `#pragma omp parallel for schedule(static) if(_total > 65536)`. Essendo entrambi un unico punto di generazione macro, tutte le operazioni beneficiano insieme. Sotto soglia il loop resta scalare (nessun costo di fork/join pagato sulle dimensioni piccole, misurato entro il 2%); sopra soglia, 1.7–10.6× più veloce su una macchina di riferimento a 20 thread, al punto da superare NumPy in valore assoluto da 1M elementi in su. `matmul_cpu` ([`headers/ops/cpu/matmul_cpu.h`](../headers/ops/cpu/matmul_cpu.h)) aveva già ricevuto lo stesso trattamento in precedenza (tiling `ikj` + `omp parallel for` sulle righe). Dati completi: [`benchmark_report.md` §7](../benchmark_report.md#7-cpu-elementwise-ops-were-single-threaded--openmp-closes-most-of-it).
+`DEFINE_BINARY_OPS_CPU` ([`headers/ops/cpu/binary_op_macros.h`](../headers/ops/cpu/binary_op_macros.h)) e `DEFINE_UNARY_OPS_CPU` ([`headers/ops/cpu/unary_op_macros.h`](../headers/ops/cpu/unary_op_macros.h)) — il lato CPU di `add`/`sub`/`mul`/`div`, sia tensore⊕tensore sia tensore⊕scalare — usano ora `#pragma omp parallel for schedule(static) if(_total > 65536)`. Essendo entrambi un unico punto di generazione macro, tutte le operazioni beneficiano insieme. Sotto soglia il loop resta scalare (nessun costo di fork/join pagato sulle dimensioni piccole, misurato entro il 5%); sopra soglia, **1.7–11.6×** più veloce su una macchina di riferimento a 20 thread, al punto da superare NumPy in valore assoluto di 2.9–3.1× a 16M elementi. Il guadagno è massimo a 1M (5.3–11.6×), dove il working set sta in L2 e il tetto era il loop scalare; a 16M si comprime a ~2×, che è il sistema di memoria a parlare. `matmul_cpu` ([`headers/ops/cpu/matmul_cpu.h`](../headers/ops/cpu/matmul_cpu.h)) aveva già ricevuto lo stesso trattamento in precedenza (tiling `ikj` + `omp parallel for` sulle righe). Dati completi: [`benchmark_report.md` §7](../benchmark_report.md#7-cpu-elementwise-ops-were-single-threaded--openmp-closes-most-of-it).
 
 **Tentativo non riuscito, documentato apposta per non essere ritentato senza ri-misurare:** `#pragma omp simd reduction(min:)`/`reduction(max:)` su `reduce_min_cpu`/`reduce_max_cpu` ([`headers/ops/cpu/reduce_cpu.h`](../headers/ops/cpu/reduce_cpu.h)) è stato aggiunto e poi **rimosso** — misurato ~1.6× più lento del semplice loop scalare a 16M elementi (isolato, stesso corpo di loop, stesse flag `-O3 -march=native -fopenmp`), perché GCC 13 vettorizza già automaticamente l'idioma branch-and-select sotto `-O3` da solo (confermato con `-fopt-info-vec-optimized`), e la clausola `reduction` forza una lowering diversa e peggiore sopra un loop già vettorizzato. `reduce_sum_cpu` non è coinvolto: il suo guadagno viene da una ristrutturazione a livello sorgente (8 accumulatori indipendenti), non da un pragma, e resta invariato.
 
-`apply`/`apply_binary` ([`headers/tensor.inl`](../headers/tensor.inl), §4.2) **non** hanno ricevuto lo stesso trattamento in questo giro — restano un loop scalare a singolo thread su CPU indipendentemente dalla dimensione del tensore, quindi `relu`, `sigmoid`, `scale_shift`, `shift_scale` e i quattro `fused_*` non beneficiano ancora del parallelismo che hanno `add`/`sub`/`mul`/`div`. È segnato ⚠️ (non ❌) perché la forma del loop è identica e lo stesso `if(_total > N)` si applicherebbe senza modifiche: è lavoro meccanico rimasto indietro, non un problema di design.
+`apply`/`apply_binary` ([`headers/tensor.inl`](../headers/tensor.inl), §4.2) **non** hanno ricevuto lo stesso trattamento — restano un loop scalare a singolo thread su CPU indipendentemente dalla dimensione del tensore, quindi `relu`, `sigmoid`, `scale_shift`, `shift_scale` e i quattro `fused_*` non beneficiano ancora del parallelismo che hanno `add`/`sub`/`mul`/`div`. Verificato misurando a 1 e a 20 thread: tempi identici (`relu` 2.343 vs 2.344 ms a 16M, `x*s+t` 2.356 vs 2.314 ms).
+
+Vale la pena notare che **battono comunque NumPy** — `relu` 2.22×, `x*s+t` 3.49× a 16M — grazie alla sola fusione (§4), il che rende questo un'occasione mancata più che un difetto. È segnato ⚠️ (non ❌) perché la forma del loop è identica e lo stesso `if(_total > N)` si applicherebbe senza modifiche: è lavoro meccanico rimasto indietro, non un problema di design. Sulla base dei numeri di §7.1 dovrebbe valere circa 2× a 16M.
+
+**Divario aperto residuo:** `reduce_min_cpu`/`reduce_max_cpu` restano 2.7× più lenti di NumPy a 16M (6.8× a 1M) — il più grande rimasto sulla superficie elementwise CPU, ora che `reduce_sum_cpu` è stato sistemato (§1.2). La leva non ancora provata è un `parallel for` con `reduction(min:)`/`(max:)` **fra thread**, che è una modifica diversa dalla clausola `simd` misurata e rimossa qui sopra.
 
 ---
 
@@ -341,9 +363,16 @@ Suite di test: `python/tests/test_tensor.py`, `test_tensor_api.py`, `test_dtypes
 | ✅ | — | 7 — Layer Python (ctypes, float32 + int32, stream) |
 | ✅ | — | 6.2 — Errori CUDA: file/riga, `CUDA_CALL`, e `OPENMAT_DEBUG_SYNC` per gli errori asincroni |
 | ⚠️ | — | 6.4 — Parallelismo CPU (OpenMP) su `add`/`sub`/`mul`/`div`, soglia 65536 elementi; `apply`/`apply_binary` non ancora esteso |
-| ✅ | — | 6.5 — Fast path contiguo per i kernel elementwise: indicizzazione lineare al posto del layout per rank, ogni rank alla banda del rank 1 |
+| ✅ | — | 6.5 — Fast path contiguo per i kernel elementwise: indicizzazione lineare al posto del layout per rank, ogni rank alla banda del rank 1 (verificato: spread 0.4% su `add`, 1.5% su `relu`, rank 1–5) |
+| ✅ | — | 6.6 — `matmul_cpu` `ikj` + tiling L2 + OpenMP: 1.81 → 123 GFLOP/s a 1024³ (§5) |
+| ✅ | — | 6.7 — `reduce_sum_cpu` a 8 lane: 7.7 → 36.9 GB/s, ora davanti a NumPy (§1.2) |
+| ✅ | — | 6.8 — `HostPool`/`PinnedHostPool`: round-trip 100 × 64 MB da 4.3 a 51.1 GB/s |
 | | **Alta** | 4.4 — Overload stream per `apply_binary` (chiude l'asimmetria di 6.1) |
 | | **Alta** | 1.1 — Unarie `abs`, `sqrt`, `exp`, `log` via `apply` (costo basso, alto valore) |
+| | **Alta** | 6.4b — OpenMP su `apply`/`apply_binary`: stesso `if(_total > 65536)` di 6.4, ~2× atteso a 16M su tutta la famiglia fused |
+| | Media | 6.4c — `min`/`max` con `parallel for reduction(min:)/(max:)` fra thread (2.7× dietro NumPy); **non** la clausola `simd`, già misurata e rimossa |
+| | Media | 6.4d — `sum` multi-thread con `reduction(+:)` (PyTorch è 2.8× avanti a 16M grazie a questo) |
+| | Media | 5.3 — Register blocking 4×4 nel kernel matmul GPU: due load da shared per FMA sono il tetto attuale, 10.3× dietro cuBLAS |
 | | Media | 6.3 — `operator<<`, `save`, `load` |
 | | Media | 1.2b — Riduzioni per asse `sum(axis)`, `mean(axis)` |
 | | Media | 3.2b — `arange` / `linspace` nativi in C++ |

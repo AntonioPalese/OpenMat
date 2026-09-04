@@ -1,0 +1,1739 @@
+{
+  "env": {
+    "date": "2026-09-04 08:48:15",
+    "platform": "Linux-6.17.0-1031-nvidia-aarch64-with-glibc2.39",
+    "machine": "aarch64",
+    "processor": "aarch64",
+    "python": "3.12.3",
+    "numpy": "2.5.2",
+    "torch": "2.14.0+cu130",
+    "openmat": "0.2.0",
+    "torch_threads": 20,
+    "cuda_available": true,
+    "gpu": "NVIDIA GB10",
+    "gpu_capability": "sm_121",
+    "cuda_runtime": "13.0"
+  },
+  "results": [
+    {
+      "group": "elementwise",
+      "name": "add",
+      "shape": [
+        4096
+      ],
+      "device": "cpu",
+      "bytes": 49152,
+      "flops": 4096,
+      "libs": {
+        "np": {
+          "min": 4.3635897999990903e-07,
+          "median": 4.373671899998044e-07,
+          "reps": 100000,
+          "trials": 7
+        },
+        "torch": {
+          "min": 7.744509600001948e-07,
+          "median": 7.751586799997767e-07,
+          "reps": 100000,
+          "trials": 7
+        },
+        "om": {
+          "min": 1.9250791940579346e-06,
+          "median": 1.9350373021117348e-06,
+          "reps": 25709,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "elementwise",
+      "name": "mul",
+      "shape": [
+        4096
+      ],
+      "device": "cpu",
+      "bytes": 49152,
+      "flops": 4096,
+      "libs": {
+        "np": {
+          "min": 4.3339152000044125e-07,
+          "median": 4.338565000000472e-07,
+          "reps": 100000,
+          "trials": 7
+        },
+        "torch": {
+          "min": 7.261521399999538e-07,
+          "median": 7.314394399998036e-07,
+          "reps": 100000,
+          "trials": 7
+        },
+        "om": {
+          "min": 1.9246160888464634e-06,
+          "median": 1.930166817961604e-06,
+          "reps": 51775,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "fused",
+      "name": "(a+b)*s",
+      "shape": [
+        4096
+      ],
+      "device": "cpu",
+      "bytes": 49152,
+      "flops": 8192,
+      "libs": {
+        "np": {
+          "min": 9.56991633083754e-07,
+          "median": 9.607506428710134e-07,
+          "reps": 52110,
+          "trials": 7
+        },
+        "torch": {
+          "min": 2.1027164980305424e-06,
+          "median": 2.111629992543984e-06,
+          "reps": 46945,
+          "trials": 7
+        },
+        "om": {
+          "min": 1.7671391367823741e-06,
+          "median": 1.774434893694333e-06,
+          "reps": 54795,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "fused",
+      "name": "x*s+t",
+      "shape": [
+        4096
+      ],
+      "device": "cpu",
+      "bytes": 32768,
+      "flops": 8192,
+      "libs": {
+        "np": {
+          "min": 1.0013227874812892e-06,
+          "median": 1.0052284979194433e-06,
+          "reps": 49751,
+          "trials": 7
+        },
+        "torch": {
+          "min": 2.5808786945799437e-06,
+          "median": 2.5907674466354303e-06,
+          "reps": 19488,
+          "trials": 7
+        },
+        "om": {
+          "min": 1.8229013100268258e-06,
+          "median": 1.826661554516471e-06,
+          "reps": 53663,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "unary",
+      "name": "relu",
+      "shape": [
+        4096
+      ],
+      "device": "cpu",
+      "bytes": 32768,
+      "flops": 4096,
+      "libs": {
+        "np": {
+          "min": 1.171728066772464e-06,
+          "median": 1.1726356668432929e-06,
+          "reps": 85065,
+          "trials": 7
+        },
+        "torch": {
+          "min": 6.80533530000389e-07,
+          "median": 6.823844999996708e-07,
+          "reps": 100000,
+          "trials": 7
+        },
+        "om": {
+          "min": 1.4880982264255823e-06,
+          "median": 1.4905559490187929e-06,
+          "reps": 66927,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "reduction",
+      "name": "sum",
+      "shape": [
+        4096
+      ],
+      "device": "cpu",
+      "bytes": 16384,
+      "flops": 4096,
+      "libs": {
+        "np": {
+          "min": 6.127157716966086e-07,
+          "median": 6.133247344463775e-07,
+          "reps": 81716,
+          "trials": 7
+        },
+        "torch": {
+          "min": 9.65899910000303e-07,
+          "median": 9.691719899996087e-07,
+          "reps": 100000,
+          "trials": 7
+        },
+        "om": {
+          "min": 9.099412099999427e-07,
+          "median": 9.107089299999416e-07,
+          "reps": 100000,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "elementwise",
+      "name": "add",
+      "shape": [
+        65536
+      ],
+      "device": "cpu",
+      "bytes": 786432,
+      "flops": 65536,
+      "libs": {
+        "np": {
+          "min": 4.435045977010399e-06,
+          "median": 4.436444192961562e-06,
+          "reps": 22533,
+          "trials": 7
+        },
+        "torch": {
+          "min": 9.664450962254406e-06,
+          "median": 1.2603459104373116e-05,
+          "reps": 5404,
+          "trials": 7
+        },
+        "om": {
+          "min": 6.250356725879517e-06,
+          "median": 6.2599927813722025e-06,
+          "reps": 15931,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "elementwise",
+      "name": "mul",
+      "shape": [
+        65536
+      ],
+      "device": "cpu",
+      "bytes": 786432,
+      "flops": 65536,
+      "libs": {
+        "np": {
+          "min": 4.47830674076647e-06,
+          "median": 4.480657493724444e-06,
+          "reps": 11156,
+          "trials": 7
+        },
+        "torch": {
+          "min": 5.062272744645713e-06,
+          "median": 9.784653287464838e-06,
+          "reps": 5232,
+          "trials": 7
+        },
+        "om": {
+          "min": 6.272278041976943e-06,
+          "median": 6.28262773445011e-06,
+          "reps": 15771,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "fused",
+      "name": "(a+b)*s",
+      "shape": [
+        65536
+      ],
+      "device": "cpu",
+      "bytes": 786432,
+      "flops": 131072,
+      "libs": {
+        "np": {
+          "min": 7.469267993642853e-06,
+          "median": 7.4770037841515205e-06,
+          "reps": 13213,
+          "trials": 7
+        },
+        "torch": {
+          "min": 9.077958701453471e-06,
+          "median": 1.295912697759709e-05,
+          "reps": 4867,
+          "trials": 7
+        },
+        "om": {
+          "min": 6.045071459083867e-06,
+          "median": 6.058543784707103e-06,
+          "reps": 16387,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "fused",
+      "name": "x*s+t",
+      "shape": [
+        65536
+      ],
+      "device": "cpu",
+      "bytes": 524288,
+      "flops": 131072,
+      "libs": {
+        "np": {
+          "min": 5.4547897553482975e-06,
+          "median": 5.460691240721008e-06,
+          "reps": 9156,
+          "trials": 7
+        },
+        "torch": {
+          "min": 8.72893625036317e-06,
+          "median": 8.81826948709878e-06,
+          "reps": 3451,
+          "trials": 7
+        },
+        "om": {
+          "min": 5.941409477377779e-06,
+          "median": 5.945291456092241e-06,
+          "reps": 16819,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "unary",
+      "name": "relu",
+      "shape": [
+        65536
+      ],
+      "device": "cpu",
+      "bytes": 524288,
+      "flops": 65536,
+      "libs": {
+        "np": {
+          "min": 1.3273106995883614e-05,
+          "median": 1.3277311777385193e-05,
+          "reps": 5103,
+          "trials": 7
+        },
+        "torch": {
+          "min": 6.727353823430553e-06,
+          "median": 8.314450744229553e-06,
+          "reps": 8801,
+          "trials": 7
+        },
+        "om": {
+          "min": 5.586510754790443e-06,
+          "median": 5.5918421699543795e-06,
+          "reps": 17899,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "reduction",
+      "name": "sum",
+      "shape": [
+        65536
+      ],
+      "device": "cpu",
+      "bytes": 262144,
+      "flops": 65536,
+      "libs": {
+        "np": {
+          "min": 6.204966757634742e-06,
+          "median": 6.206622054081858e-06,
+          "reps": 8062,
+          "trials": 7
+        },
+        "torch": {
+          "min": 6.33238076701342e-06,
+          "median": 2.5646669550166834e-05,
+          "reps": 6936,
+          "trials": 7
+        },
+        "om": {
+          "min": 4.821841823577063e-06,
+          "median": 4.831596603900979e-06,
+          "reps": 20553,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "elementwise",
+      "name": "add",
+      "shape": [
+        1048576
+      ],
+      "device": "cpu",
+      "bytes": 12582912,
+      "flops": 1048576,
+      "libs": {
+        "np": {
+          "min": 0.00010612491299677237,
+          "median": 0.00010640074758320324,
+          "reps": 931,
+          "trials": 7
+        },
+        "torch": {
+          "min": 1.6814690104151577e-05,
+          "median": 2.4085675057878758e-05,
+          "reps": 3456,
+          "trials": 7
+        },
+        "om": {
+          "min": 1.9512204977464373e-05,
+          "median": 2.135729374877574e-05,
+          "reps": 5103,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "elementwise",
+      "name": "mul",
+      "shape": [
+        1048576
+      ],
+      "device": "cpu",
+      "bytes": 12582912,
+      "flops": 1048576,
+      "libs": {
+        "np": {
+          "min": 0.00011009816452739106,
+          "median": 0.00011024523920653102,
+          "reps": 857,
+          "trials": 7
+        },
+        "torch": {
+          "min": 1.5210530006740126e-05,
+          "median": 1.9539851652069326e-05,
+          "reps": 1483,
+          "trials": 7
+        },
+        "om": {
+          "min": 1.5949792279051117e-05,
+          "median": 5.022102606309462e-05,
+          "reps": 5103,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "fused",
+      "name": "(a+b)*s",
+      "shape": [
+        1048576
+      ],
+      "device": "cpu",
+      "bytes": 12582912,
+      "flops": 2097152,
+      "libs": {
+        "np": {
+          "min": 0.0002022219056604638,
+          "median": 0.00020302060377366948,
+          "reps": 477,
+          "trials": 7
+        },
+        "torch": {
+          "min": 5.507165815177278e-05,
+          "median": 6.416041397445265e-05,
+          "reps": 1331,
+          "trials": 7
+        },
+        "om": {
+          "min": 0.00015381819627742369,
+          "median": 0.00015406500507595628,
+          "reps": 591,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "fused",
+      "name": "x*s+t",
+      "shape": [
+        1048576
+      ],
+      "device": "cpu",
+      "bytes": 8388608,
+      "flops": 2097152,
+      "libs": {
+        "np": {
+          "min": 0.00019999239139779288,
+          "median": 0.00020042950752692268,
+          "reps": 465,
+          "trials": 7
+        },
+        "torch": {
+          "min": 4.862525294113795e-05,
+          "median": 6.816637647059133e-05,
+          "reps": 2210,
+          "trials": 7
+        },
+        "om": {
+          "min": 8.357620060790717e-05,
+          "median": 8.398701925020487e-05,
+          "reps": 987,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "unary",
+      "name": "relu",
+      "shape": [
+        1048576
+      ],
+      "device": "cpu",
+      "bytes": 8388608,
+      "flops": 1048576,
+      "libs": {
+        "np": {
+          "min": 0.00020757645533767236,
+          "median": 0.00020789068409592004,
+          "reps": 459,
+          "trials": 7
+        },
+        "torch": {
+          "min": 1.0431966733447548e-05,
+          "median": 1.980812084166665e-05,
+          "reps": 4990,
+          "trials": 7
+        },
+        "om": {
+          "min": 8.251791999998368e-05,
+          "median": 8.459857743592017e-05,
+          "reps": 975,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "reduction",
+      "name": "sum",
+      "shape": [
+        1048576
+      ],
+      "device": "cpu",
+      "bytes": 4194304,
+      "flops": 1048576,
+      "libs": {
+        "np": {
+          "min": 0.00010079597754008226,
+          "median": 0.00010087618609632921,
+          "reps": 935,
+          "trials": 7
+        },
+        "torch": {
+          "min": 1.1373218379834868e-05,
+          "median": 3.0513095338172314e-05,
+          "reps": 5234,
+          "trials": 7
+        },
+        "om": {
+          "min": 6.667272367374453e-05,
+          "median": 6.692843388755381e-05,
+          "reps": 1263,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "elementwise",
+      "name": "add",
+      "shape": [
+        16777216
+      ],
+      "device": "cpu",
+      "bytes": 201326592,
+      "flops": 16777216,
+      "libs": {
+        "np": {
+          "min": 0.0056373996000047555,
+          "median": 0.00565876709999884,
+          "reps": 10,
+          "trials": 7
+        },
+        "torch": {
+          "min": 0.0019511063199979617,
+          "median": 0.0020075778000000354,
+          "reps": 25,
+          "trials": 7
+        },
+        "om": {
+          "min": 0.001990035612245302,
+          "median": 0.002010520979591983,
+          "reps": 49,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "elementwise",
+      "name": "mul",
+      "shape": [
+        16777216
+      ],
+      "device": "cpu",
+      "bytes": 201326592,
+      "flops": 16777216,
+      "libs": {
+        "np": {
+          "min": 0.005681660200002625,
+          "median": 0.005734056599999348,
+          "reps": 10,
+          "trials": 7
+        },
+        "torch": {
+          "min": 0.001998497720001069,
+          "median": 0.002025693439995848,
+          "reps": 25,
+          "trials": 7
+        },
+        "om": {
+          "min": 0.001938471592594666,
+          "median": 0.0020070613703679825,
+          "reps": 27,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "fused",
+      "name": "(a+b)*s",
+      "shape": [
+        16777216
+      ],
+      "device": "cpu",
+      "bytes": 201326592,
+      "flops": 33554432,
+      "libs": {
+        "np": {
+          "min": 0.010488183200004641,
+          "median": 0.010788867800010848,
+          "reps": 5,
+          "trials": 7
+        },
+        "torch": {
+          "min": 0.0034072125652172595,
+          "median": 0.0035270722173910817,
+          "reps": 23,
+          "trials": 7
+        },
+        "om": {
+          "min": 0.004154808999999204,
+          "median": 0.004175939666671032,
+          "reps": 12,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "fused",
+      "name": "x*s+t",
+      "shape": [
+        16777216
+      ],
+      "device": "cpu",
+      "bytes": 134217728,
+      "flops": 33554432,
+      "libs": {
+        "np": {
+          "min": 0.008118926285711885,
+          "median": 0.008207150428575005,
+          "reps": 7,
+          "trials": 7
+        },
+        "torch": {
+          "min": 0.002831604111109856,
+          "median": 0.00288759288889019,
+          "reps": 18,
+          "trials": 7
+        },
+        "om": {
+          "min": 0.002655089684205785,
+          "median": 0.0026667719999977635,
+          "reps": 19,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "unary",
+      "name": "relu",
+      "shape": [
+        16777216
+      ],
+      "device": "cpu",
+      "bytes": 134217728,
+      "flops": 16777216,
+      "libs": {
+        "np": {
+          "min": 0.00551302520000263,
+          "median": 0.005556467500002782,
+          "reps": 10,
+          "trials": 7
+        },
+        "torch": {
+          "min": 0.0013925320363630982,
+          "median": 0.0014121002181809671,
+          "reps": 55,
+          "trials": 7
+        },
+        "om": {
+          "min": 0.0022983669545469224,
+          "median": 0.002339795363639041,
+          "reps": 22,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "reduction",
+      "name": "sum",
+      "shape": [
+        16777216
+      ],
+      "device": "cpu",
+      "bytes": 67108864,
+      "flops": 16777216,
+      "libs": {
+        "np": {
+          "min": 0.0019292660769215568,
+          "median": 0.0019363833846149157,
+          "reps": 26,
+          "trials": 7
+        },
+        "torch": {
+          "min": 0.0006498868737864842,
+          "median": 0.000799388174756326,
+          "reps": 103,
+          "trials": 7
+        },
+        "om": {
+          "min": 0.0018207655454551225,
+          "median": 0.001838603090907947,
+          "reps": 33,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "linalg",
+      "name": "matmul",
+      "shape": [
+        128,
+        128
+      ],
+      "device": "cpu",
+      "bytes": null,
+      "flops": 4194304,
+      "libs": {
+        "np": {
+          "min": 2.216897254901359e-05,
+          "median": 2.223953725490287e-05,
+          "reps": 1785,
+          "trials": 7
+        },
+        "torch": {
+          "min": 1.563727566855501e-05,
+          "median": 2.0256113898972584e-05,
+          "reps": 3029,
+          "trials": 7
+        },
+        "om": {
+          "min": 2.133713351135457e-05,
+          "median": 4.153317890523265e-05,
+          "reps": 2247,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "linalg",
+      "name": "matmul",
+      "shape": [
+        512,
+        512
+      ],
+      "device": "cpu",
+      "bytes": null,
+      "flops": 268435456,
+      "libs": {
+        "np": {
+          "min": 0.00040255030081255434,
+          "median": 0.00040724885365847055,
+          "reps": 123,
+          "trials": 7
+        },
+        "torch": {
+          "min": 0.0004177243684213763,
+          "median": 0.000459481583732485,
+          "reps": 209,
+          "trials": 7
+        },
+        "om": {
+          "min": 0.0019093866744168376,
+          "median": 0.0019963942790719707,
+          "reps": 43,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "shape",
+      "name": "transpose",
+      "shape": [
+        512,
+        512
+      ],
+      "device": "cpu",
+      "bytes": 2097152,
+      "flops": null,
+      "libs": {
+        "np": {
+          "min": 0.00014919263095218108,
+          "median": 0.00014927719642832655,
+          "reps": 336,
+          "trials": 7
+        },
+        "torch": {
+          "min": 0.00010881518954268166,
+          "median": 0.00010887923093692112,
+          "reps": 459,
+          "trials": 7
+        },
+        "om": {
+          "min": 0.0001819184072726123,
+          "median": 0.0001823411272727588,
+          "reps": 275,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "linalg",
+      "name": "matmul",
+      "shape": [
+        1024,
+        1024
+      ],
+      "device": "cpu",
+      "bytes": null,
+      "flops": 2147483648,
+      "libs": {
+        "np": {
+          "min": 0.0027950757777767243,
+          "median": 0.0028027970000026573,
+          "reps": 18,
+          "trials": 7
+        },
+        "torch": {
+          "min": 0.002822081111111806,
+          "median": 0.0029093586666662035,
+          "reps": 27,
+          "trials": 7
+        },
+        "om": {
+          "min": 0.017482033000002655,
+          "median": 0.01879099733332623,
+          "reps": 3,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "shape",
+      "name": "transpose",
+      "shape": [
+        2048,
+        2048
+      ],
+      "device": "cpu",
+      "bytes": 33554432,
+      "flops": null,
+      "libs": {
+        "np": {
+          "min": 0.005286785900000268,
+          "median": 0.005306632500003161,
+          "reps": 10,
+          "trials": 7
+        },
+        "torch": {
+          "min": 0.0024107637619051403,
+          "median": 0.0024304240476210126,
+          "reps": 21,
+          "trials": 7
+        },
+        "om": {
+          "min": 0.0071705267142923345,
+          "median": 0.007373227285711437,
+          "reps": 7,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "elementwise",
+      "name": "add",
+      "shape": [
+        4096
+      ],
+      "device": "cuda",
+      "bytes": 49152,
+      "flops": 4096,
+      "libs": {
+        "torch": {
+          "min": 3.1076175411936933e-06,
+          "median": 3.1190607271420143e-06,
+          "reps": 30283,
+          "trials": 7
+        },
+        "om": {
+          "min": 7.937281974635551e-06,
+          "median": 7.980446150118084e-06,
+          "reps": 12377,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "elementwise",
+      "name": "mul",
+      "shape": [
+        4096
+      ],
+      "device": "cuda",
+      "bytes": 49152,
+      "flops": 4096,
+      "libs": {
+        "torch": {
+          "min": 3.1164292817852742e-06,
+          "median": 3.1245016959190416e-06,
+          "reps": 30367,
+          "trials": 7
+        },
+        "om": {
+          "min": 7.88990739717375e-06,
+          "median": 7.901762927286738e-06,
+          "reps": 12667,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "fused",
+      "name": "(a+b)*s",
+      "shape": [
+        4096
+      ],
+      "device": "cuda",
+      "bytes": 49152,
+      "flops": 8192,
+      "libs": {
+        "torch": {
+          "min": 6.791277427837239e-06,
+          "median": 6.817934519272959e-06,
+          "reps": 14447,
+          "trials": 7
+        },
+        "om": {
+          "min": 8.02919013178655e-06,
+          "median": 8.039660559317938e-06,
+          "reps": 6222,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "fused",
+      "name": "x*s+t",
+      "shape": [
+        4096
+      ],
+      "device": "cuda",
+      "bytes": 32768,
+      "flops": 8192,
+      "libs": {
+        "torch": {
+          "min": 7.026499156592706e-06,
+          "median": 7.028260050615872e-06,
+          "reps": 7114,
+          "trials": 7
+        },
+        "om": {
+          "min": 8.066613559318436e-06,
+          "median": 8.070864406782544e-06,
+          "reps": 6195,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "unary",
+      "name": "relu",
+      "shape": [
+        4096
+      ],
+      "device": "cuda",
+      "bytes": 32768,
+      "flops": 4096,
+      "libs": {
+        "torch": {
+          "min": 3.4216156685657863e-06,
+          "median": 3.434930616778173e-06,
+          "reps": 27903,
+          "trials": 7
+        },
+        "om": {
+          "min": 7.68244941574062e-06,
+          "median": 7.696495079949749e-06,
+          "reps": 6504,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "reduction",
+      "name": "sum",
+      "shape": [
+        4096
+      ],
+      "device": "cuda",
+      "bytes": 16384,
+      "flops": 4096,
+      "libs": {
+        "torch": {
+          "min": 1.1067564569861209e-05,
+          "median": 1.1095197726822184e-05,
+          "reps": 5103,
+          "trials": 7
+        },
+        "om": {
+          "min": 1.278245169506472e-05,
+          "median": 1.2929846952769688e-05,
+          "reps": 5103,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "elementwise",
+      "name": "add",
+      "shape": [
+        65536
+      ],
+      "device": "cuda",
+      "bytes": 786432,
+      "flops": 65536,
+      "libs": {
+        "torch": {
+          "min": 3.16537496340987e-06,
+          "median": 3.1684169187245797e-06,
+          "reps": 30747,
+          "trials": 7
+        },
+        "om": {
+          "min": 8.25956294457819e-06,
+          "median": 8.27302696442785e-06,
+          "reps": 6045,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "elementwise",
+      "name": "mul",
+      "shape": [
+        65536
+      ],
+      "device": "cuda",
+      "bytes": 786432,
+      "flops": 65536,
+      "libs": {
+        "torch": {
+          "min": 3.1752161302618505e-06,
+          "median": 3.1794514692832968e-06,
+          "reps": 15722,
+          "trials": 7
+        },
+        "om": {
+          "min": 8.236967981520182e-06,
+          "median": 8.253244264741538e-06,
+          "reps": 6059,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "fused",
+      "name": "(a+b)*s",
+      "shape": [
+        65536
+      ],
+      "device": "cuda",
+      "bytes": 786432,
+      "flops": 131072,
+      "libs": {
+        "torch": {
+          "min": 6.922531119758084e-06,
+          "median": 6.96993692691586e-06,
+          "reps": 7198,
+          "trials": 7
+        },
+        "om": {
+          "min": 8.37503764567579e-06,
+          "median": 8.401038903328709e-06,
+          "reps": 11927,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "fused",
+      "name": "x*s+t",
+      "shape": [
+        65536
+      ],
+      "device": "cuda",
+      "bytes": 524288,
+      "flops": 131072,
+      "libs": {
+        "torch": {
+          "min": 7.021376774918134e-06,
+          "median": 7.027658934349373e-06,
+          "reps": 7113,
+          "trials": 7
+        },
+        "om": {
+          "min": 8.343593354573448e-06,
+          "median": 8.41435697684205e-06,
+          "reps": 11617,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "unary",
+      "name": "relu",
+      "shape": [
+        65536
+      ],
+      "device": "cuda",
+      "bytes": 524288,
+      "flops": 65536,
+      "libs": {
+        "torch": {
+          "min": 3.5323537769576625e-06,
+          "median": 3.5450492646012853e-06,
+          "reps": 14006,
+          "trials": 7
+        },
+        "om": {
+          "min": 7.897933555080448e-06,
+          "median": 7.907196958900235e-06,
+          "reps": 12627,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "reduction",
+      "name": "sum",
+      "shape": [
+        65536
+      ],
+      "device": "cuda",
+      "bytes": 262144,
+      "flops": 65536,
+      "libs": {
+        "torch": {
+          "min": 2.1420486345892925e-05,
+          "median": 2.1462670567834633e-05,
+          "reps": 2307,
+          "trials": 7
+        },
+        "om": {
+          "min": 1.3626994121092864e-05,
+          "median": 1.3654107583771847e-05,
+          "reps": 5103,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "elementwise",
+      "name": "add",
+      "shape": [
+        1048576
+      ],
+      "device": "cuda",
+      "bytes": 12582912,
+      "flops": 1048576,
+      "libs": {
+        "torch": {
+          "min": 8.199040334469821e-06,
+          "median": 8.308959829487731e-06,
+          "reps": 6099,
+          "trials": 7
+        },
+        "om": {
+          "min": 1.4139733098181696e-05,
+          "median": 1.4172311189510108e-05,
+          "reps": 5103,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "elementwise",
+      "name": "mul",
+      "shape": [
+        1048576
+      ],
+      "device": "cuda",
+      "bytes": 12582912,
+      "flops": 1048576,
+      "libs": {
+        "torch": {
+          "min": 8.199559053045856e-06,
+          "median": 8.252373520386397e-06,
+          "reps": 11405,
+          "trials": 7
+        },
+        "om": {
+          "min": 1.4123044679601365e-05,
+          "median": 1.4134579071129359e-05,
+          "reps": 5103,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "fused",
+      "name": "(a+b)*s",
+      "shape": [
+        1048576
+      ],
+      "device": "cuda",
+      "bytes": 12582912,
+      "flops": 2097152,
+      "libs": {
+        "torch": {
+          "min": 2.860396052627463e-05,
+          "median": 2.8627217391352172e-05,
+          "reps": 1748,
+          "trials": 7
+        },
+        "om": {
+          "min": 1.4314342543611213e-05,
+          "median": 1.4357078777186775e-05,
+          "reps": 5103,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "fused",
+      "name": "x*s+t",
+      "shape": [
+        1048576
+      ],
+      "device": "cuda",
+      "bytes": 8388608,
+      "flops": 2097152,
+      "libs": {
+        "torch": {
+          "min": 2.5577054095868856e-05,
+          "median": 2.562387274596758e-05,
+          "reps": 1941,
+          "trials": 7
+        },
+        "om": {
+          "min": 1.3638046051346322e-05,
+          "median": 1.36756502057563e-05,
+          "reps": 5103,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "unary",
+      "name": "relu",
+      "shape": [
+        1048576
+      ],
+      "device": "cuda",
+      "bytes": 8388608,
+      "flops": 1048576,
+      "libs": {
+        "torch": {
+          "min": 8.113204457980614e-06,
+          "median": 8.118171423979543e-06,
+          "reps": 6236,
+          "trials": 7
+        },
+        "om": {
+          "min": 1.3129847344703769e-05,
+          "median": 1.3197618655685687e-05,
+          "reps": 5103,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "reduction",
+      "name": "sum",
+      "shape": [
+        1048576
+      ],
+      "device": "cuda",
+      "bytes": 4194304,
+      "flops": 1048576,
+      "libs": {
+        "torch": {
+          "min": 1.5349712326090062e-05,
+          "median": 1.5398325298846613e-05,
+          "reps": 5103,
+          "trials": 7
+        },
+        "om": {
+          "min": 2.671689732619476e-05,
+          "median": 2.7358471123001835e-05,
+          "reps": 1870,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "elementwise",
+      "name": "add",
+      "shape": [
+        16777216
+      ],
+      "device": "cuda",
+      "bytes": 201326592,
+      "flops": 16777216,
+      "libs": {
+        "torch": {
+          "min": 0.0008664549417477529,
+          "median": 0.0008732731747569648,
+          "reps": 103,
+          "trials": 7
+        },
+        "om": {
+          "min": 0.0008514832222221175,
+          "median": 0.0008533134343435743,
+          "reps": 99,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "elementwise",
+      "name": "mul",
+      "shape": [
+        16777216
+      ],
+      "device": "cuda",
+      "bytes": 201326592,
+      "flops": 16777216,
+      "libs": {
+        "torch": {
+          "min": 0.0008653508834945524,
+          "median": 0.0008671545922325801,
+          "reps": 103,
+          "trials": 7
+        },
+        "om": {
+          "min": 0.0008516204141419667,
+          "median": 0.0008529811515142104,
+          "reps": 99,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "fused",
+      "name": "(a+b)*s",
+      "shape": [
+        16777216
+      ],
+      "device": "cuda",
+      "bytes": 201326592,
+      "flops": 33554432,
+      "libs": {
+        "torch": {
+          "min": 0.001427765571429518,
+          "median": 0.0014321128857155989,
+          "reps": 35,
+          "trials": 7
+        },
+        "om": {
+          "min": 0.0008510597777771953,
+          "median": 0.0008524702929301871,
+          "reps": 99,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "fused",
+      "name": "x*s+t",
+      "shape": [
+        16777216
+      ],
+      "device": "cuda",
+      "bytes": 134217728,
+      "flops": 33554432,
+      "libs": {
+        "torch": {
+          "min": 0.001130384044444731,
+          "median": 0.001134010888889255,
+          "reps": 45,
+          "trials": 7
+        },
+        "om": {
+          "min": 0.0005734147703698774,
+          "median": 0.0005741769333334795,
+          "reps": 135,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "unary",
+      "name": "relu",
+      "shape": [
+        16777216
+      ],
+      "device": "cuda",
+      "bytes": 134217728,
+      "flops": 16777216,
+      "libs": {
+        "torch": {
+          "min": 0.0005695260388353118,
+          "median": 0.0005701145922332605,
+          "reps": 103,
+          "trials": 7
+        },
+        "om": {
+          "min": 0.0005731978370367533,
+          "median": 0.0005765939333337479,
+          "reps": 135,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "reduction",
+      "name": "sum",
+      "shape": [
+        16777216
+      ],
+      "device": "cuda",
+      "bytes": 67108864,
+      "flops": 16777216,
+      "libs": {
+        "torch": {
+          "min": 0.00027289946448083276,
+          "median": 0.00027374174316987664,
+          "reps": 183,
+          "trials": 7
+        },
+        "om": {
+          "min": 0.0003170346855343286,
+          "median": 0.0003178457169811656,
+          "reps": 159,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "linalg",
+      "name": "matmul",
+      "shape": [
+        128,
+        128
+      ],
+      "device": "cuda",
+      "bytes": null,
+      "flops": 4194304,
+      "libs": {
+        "torch": {
+          "min": 8.803932420589322e-06,
+          "median": 8.880266456025973e-06,
+          "reps": 5697,
+          "trials": 7
+        },
+        "om": {
+          "min": 1.2826510875948627e-05,
+          "median": 1.2945177150689641e-05,
+          "reps": 5103,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "linalg",
+      "name": "matmul",
+      "shape": [
+        512,
+        512
+      ],
+      "device": "cuda",
+      "bytes": null,
+      "flops": 268435456,
+      "libs": {
+        "torch": {
+          "min": 2.866632662449087e-05,
+          "median": 2.9256770557816673e-05,
+          "reps": 1739,
+          "trials": 7
+        },
+        "om": {
+          "min": 0.0001774363784786057,
+          "median": 0.0001774793951762333,
+          "reps": 539,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "shape",
+      "name": "transpose",
+      "shape": [
+        512,
+        512
+      ],
+      "device": "cuda",
+      "bytes": 2097152,
+      "flops": null,
+      "libs": {
+        "torch": {
+          "min": 1.0247187144814206e-05,
+          "median": 1.0250416421712088e-05,
+          "reps": 5103,
+          "trials": 7
+        },
+        "om": {
+          "min": 1.821150950421694e-05,
+          "median": 1.8240165784815765e-05,
+          "reps": 5103,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "linalg",
+      "name": "matmul",
+      "shape": [
+        1024,
+        1024
+      ],
+      "device": "cuda",
+      "bytes": null,
+      "flops": 2147483648,
+      "libs": {
+        "torch": {
+          "min": 0.00012730174500006798,
+          "median": 0.00013041720749981778,
+          "reps": 400,
+          "trials": 7
+        },
+        "om": {
+          "min": 0.001312530447367671,
+          "median": 0.0013204252631573198,
+          "reps": 38,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "shape",
+      "name": "transpose",
+      "shape": [
+        2048,
+        2048
+      ],
+      "device": "cuda",
+      "bytes": 33554432,
+      "flops": null,
+      "libs": {
+        "torch": {
+          "min": 0.00023628883333320154,
+          "median": 0.00023989204411782784,
+          "reps": 204,
+          "trials": 7
+        },
+        "om": {
+          "min": 0.00020467709836074406,
+          "median": 0.00020490731967201935,
+          "reps": 244,
+          "trials": 7
+        }
+      }
+    },
+    {
+      "group": "transfer",
+      "name": "h2d",
+      "shape": [
+        65536
+      ],
+      "device": "cuda",
+      "bytes": 262144,
+      "flops": null,
+      "libs": {
+        "torch": {
+          "min": 1.277002371153606e-05,
+          "median": 1.2896124044676537e-05,
+          "reps": 5103,
+          "trials": 5
+        },
+        "om": {
+          "min": 1.3010419753076765e-05,
+          "median": 1.3105954536545747e-05,
+          "reps": 5103,
+          "trials": 5
+        }
+      }
+    },
+    {
+      "group": "transfer",
+      "name": "d2h",
+      "shape": [
+        65536
+      ],
+      "device": "cuda",
+      "bytes": 262144,
+      "flops": null,
+      "libs": {
+        "torch": {
+          "min": 1.1752339604144631e-05,
+          "median": 1.1988381344315237e-05,
+          "reps": 5103,
+          "trials": 5
+        },
+        "om": {
+          "min": 1.1015643151081236e-05,
+          "median": 1.10187332941373e-05,
+          "reps": 5103,
+          "trials": 5
+        }
+      }
+    },
+    {
+      "group": "transfer",
+      "name": "h2d",
+      "shape": [
+        1048576
+      ],
+      "device": "cuda",
+      "bytes": 4194304,
+      "flops": null,
+      "libs": {
+        "torch": {
+          "min": 7.941919077905112e-05,
+          "median": 7.94404069951984e-05,
+          "reps": 629,
+          "trials": 5
+        },
+        "om": {
+          "min": 8.083379466449427e-05,
+          "median": 8.1290013742962e-05,
+          "reps": 1237,
+          "trials": 5
+        }
+      }
+    },
+    {
+      "group": "transfer",
+      "name": "d2h",
+      "shape": [
+        1048576
+      ],
+      "device": "cuda",
+      "bytes": 4194304,
+      "flops": null,
+      "libs": {
+        "torch": {
+          "min": 7.93720007905282e-05,
+          "median": 0.00010460516600786555,
+          "reps": 1265,
+          "trials": 5
+        },
+        "om": {
+          "min": 7.947855926812241e-05,
+          "median": 7.948869132860818e-05,
+          "reps": 1257,
+          "trials": 5
+        }
+      }
+    },
+    {
+      "group": "transfer",
+      "name": "h2d",
+      "shape": [
+        16777216
+      ],
+      "device": "cuda",
+      "bytes": 67108864,
+      "flops": null,
+      "libs": {
+        "torch": {
+          "min": 0.0011318217111112164,
+          "median": 0.0011321082666654546,
+          "reps": 45,
+          "trials": 5
+        },
+        "om": {
+          "min": 0.0011785057866669983,
+          "median": 0.0011786762400000346,
+          "reps": 75,
+          "trials": 5
+        }
+      }
+    },
+    {
+      "group": "transfer",
+      "name": "d2h",
+      "shape": [
+        16777216
+      ],
+      "device": "cuda",
+      "bytes": 67108864,
+      "flops": null,
+      "libs": {
+        "torch": {
+          "min": 0.0068146414831463525,
+          "median": 0.006868493134831032,
+          "reps": 89,
+          "trials": 5
+        },
+        "om": {
+          "min": 0.0397797936666772,
+          "median": 0.04016804533330287,
+          "reps": 3,
+          "trials": 5
+        }
+      }
+    }
+  ]
+}

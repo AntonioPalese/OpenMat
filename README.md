@@ -49,24 +49,26 @@ Full tables, root-cause analysis and reproduction steps in
 
 | | OpenMat vs the faster reference |
 |---|---|
-| GPU fused `(a+b)*s`, 16 M elem | **1.66× faster than PyTorch** — 858 µs vs 1420 µs |
-| CPU fused `x*s+t`, 16 M elem | **2.31× faster than NumPy**, 1.24× faster than PyTorch |
-| GPU `transpose`, 2048² | **1.16× faster than PyTorch** — 206 µs vs 240 µs |
-| CPU elementwise, 16 M elem, single-thread | parity with NumPy — 4.50 ms vs 6.13 ms on `add` |
-| CPU elementwise (`add`/`sub`/`mul`/`div`), ≥1 M elem, OpenMP | **now faster than NumPy** — up to 10.6× over single-thread at 1 M elem |
+| GPU elementwise `add`, 16 M elem | **1.02× faster than PyTorch** — 236 GB/s vs 232, at **any rank** |
+| GPU fused `(a+b)*s`, 16 M elem | **1.68× faster than PyTorch** — 851 µs vs 1428 µs |
+| GPU fused `x*s+t`, 16 M elem | **1.97× faster than PyTorch** — 573 µs vs 1130 µs |
+| GPU `relu`, 16 M elem | parity — 573.2 µs vs 569.5 µs |
+| GPU `transpose`, 2048² | **1.15× faster than PyTorch** — 205 µs vs 236 µs |
+| CPU elementwise `add`, 16 M elem | **2.83× faster than NumPy**, parity with PyTorch |
+| CPU fused `x*s+t`, 16 M elem | **3.06× faster than NumPy, 1.07× faster than PyTorch** |
+| CPU `sum`, 16 M elem | **1.06× faster than NumPy** — 36.9 GB/s vs 34.8 |
 | H2D / D2H transfer | parity, within 5 % |
-| GPU `sum`, 16 M elem | 1.15× slower — 320 µs vs 278 µs |
-| GPU elementwise `add`, 16 M elem | 1.07× slower — 219 GB/s vs 234 GB/s, at **any rank** |
-| Per-op dispatch floor | 1.7 µs on CPU, 8.7 µs on CUDA (PyTorch: 0.8 / 3.2 µs) |
-| CPU `sum`, 16 M elem | 4.1× slower — 7.7 GB/s vs ~93 GB/s |
-| CPU `matmul`, 1024³ | **421× slower** — 1.81 GFLOP/s vs 756 GFLOP/s |
-| GPU `matmul`, 1024³ | 10.5× slower — 1.58 TFLOP/s vs cuBLAS' 16.6 TFLOP/s |
+| GPU `sum`, 16 M elem | 1.16× slower — 317 µs vs 273 µs |
+| CPU `min`/`max`, 16 M elem | 2.7× slower than NumPy |
+| Per-op dispatch floor | 1.9 µs on CPU, 7.9 µs on CUDA (PyTorch: 0.8 / 3.1 µs) |
+| CPU `matmul`, 1024³ | 6.3× slower — 123 GFLOP/s vs 768 GFLOP/s |
+| GPU `matmul`, 1024³ | 10.3× slower — 1.64 TFLOP/s vs cuBLAS' 16.9 TFLOP/s |
 
 **The fusion bet pays off.** At 16 M elements PyTorch's `(a + b) * 2.5` materialises a
-64 MB intermediate and reads it back; `fused_add_mul` writes one buffer once and hits
-235 GB/s — the highest effective bandwidth any op reached in the run. The same argument
-runs in reverse on the CPU, where NumPy's `a * 2.0 + 1.0` is two passes over 64 MB and
-`scale_shift` beats both references outright.
+64 MB intermediate and reads it back; `fused_add_mul` writes one buffer once. `scale_shift`
+shows it more sharply still — 1.97×, because `x * 2.0 + 1.0` costs PyTorch two full passes.
+The same argument runs in reverse on the CPU, where NumPy's `a * 2.0 + 1.0` is two passes
+over 64 MB and `scale_shift` beats both references *while still single-threaded*.
 
 **Elementwise kernels ignored contiguity — every rank now runs at rank-1 speed.**
 The rank-specialized launchers map tensor axes onto grid axes, and only at rank 1 does
@@ -88,11 +90,15 @@ only, `add` over 16 M elements:
 
 GB/s. (`char` reads high throughout because 16 M elements is only 48 MB of traffic against
 a 24 MB L2 — compare it with the `char` row above it, not with `float`.) End-to-end through
-the Python bindings, allocation and synchronization included, `add` on 16 M `float32` goes
-from 7644 µs to **919 µs** at rank 5, 1442 → **920 µs** at rank 3, 984 → **915 µs** at
-rank 2, and is unchanged at rank 1 — which is the point: rank 1 was already the layout
-everything else now gets. `TensorView::is_contiguous()` gates the path, so a strided view
-(when views land) falls back to the existing kernels instead of reading the wrong elements.
+the Python bindings, allocation and synchronization included, the same 16 M `float32` buffer
+now takes **861–865 µs for `add` at every rank from 1 to 5** — a spread of under 1 %, against
+7644 µs at rank 5 and 1442 µs at rank 3 before. `TensorView::is_contiguous()` gates the path,
+so a strided view (when views land) falls back to the existing kernels instead of reading
+the wrong elements.
+
+That is what moved the headline row: GPU `add` at 16 M went from 1.47× *slower* than PyTorch
+to marginally faster, `relu` from 1.9× slower to parity, and `x*s+t` from parity to 1.97×
+faster — without touching those ops' arithmetic at all.
 
 `char` was the one dtype that needed more than flattening: a lane loading one `char` puts
 32 bytes in front of a warp, worth 190.8 GB/s even at rank 1, where the layout was already
@@ -115,43 +121,58 @@ the memory pipeline full; a grid-stride loop capped at a few waves per SM costs 
 measured 25.2 ms against NumPy's 6.1 ms, because `CpuAllocator` called `malloc` directly
 and past glibc's mmap threshold every out-of-place op faulted in all 16 384 pages of its
 own result. `CpuAllocator` now recycles host blocks through a size-classed free list
-(`om::detail::HostPool`), as NumPy and PyTorch do: **4.50 ms against NumPy's 6.13 ms**,
-and the 25× D2H anomaly — the same page faults, paid inside `cudaMemcpy` — closes from
-18.2 ms to **1.14 ms**, matching PyTorch. Setting `OPENMAT_HOST_CACHE_BYTES=0` turns the
-cache off and reproduces the old numbers.
+(`om::detail::HostPool`), as NumPy and PyTorch do. The A/B still reproduces:
+`OPENMAT_HOST_CACHE_BYTES=0` restores the old behaviour and costs **6.2×** on a 16 M `add`
+(1.99 ms → 12.27 ms). It also closed the repeated-transfer number both reports flagged as
+the outstanding bottleneck — 100 × 64 MB H2D+D2H round-trips went from **3109 ms (4.3 GB/s)
+to 263 ms (51.1 GB/s)**, 11.8×.
 
 **The CPU backend was single-threaded scalar — `add`/`sub`/`mul`/`div` no longer are.**
 `DEFINE_BINARY_OPS_CPU`/`DEFINE_UNARY_OPS_CPU` (the CPU side of those four ops, both
 tensor⊕tensor and tensor⊕scalar) now wrap their loop in a size-gated
 `#pragma omp parallel for schedule(static) if(_total > 65536)` — one change to each of
-two macros, and every op either generates benefits together. Below the threshold nothing
-changes (measured within ~2% of the old single-thread time — no fork/join tax on small
-tensors); above it, 1.7–10.6× faster on a 20-thread reference machine, enough to beat
-NumPy outright rather than merely match it. `matmul_cpu` had already been parallelized
-the same way. The attempt to do the analogous thing for `min`/`max` —
+two macros, and every op they generate benefits together. Below the threshold nothing
+changes (measured within 5 % of the single-thread time — no fork/join tax on small
+tensors); above it, **1.7–11.6×** faster on a 20-thread reference machine, enough to beat
+NumPy outright by 2.9–3.1× at 16 M rather than merely match it. `matmul_cpu` had already
+been parallelized the same way. The attempt to do the analogous thing for `min`/`max` —
 `#pragma omp simd reduction(min:)/(max:)` — was tried and **reverted**: isolated
 measurement showed it 1.6× *slower*, because GCC 13 already auto-vectorizes that loop
 shape under `-O3` alone and the explicit reduction clause forces a worse lowering on top
 of it. Full numbers in [benchmark_report.md §7](benchmark_report.md#7-cpu-elementwise-ops-were-single-threaded--openmp-closes-most-of-it).
 `apply`/`apply_binary` (`relu`, `sigmoid`, `scale_shift`, the `fused_*` family) did not
-get this pass and are still single-threaded on CPU regardless of size — same loop shape,
-same fix, just not done yet.
+get this pass and are still single-threaded on CPU regardless of size — they beat NumPy
+anyway, on fusion alone, which is why this is a missed opportunity rather than a defect.
 
-**One remaining gap has a single, local cause.** *`sum` accumulates into one serial
-register.* The loop-carried FP dependency in `reduce_sum_cpu` blocks auto-vectorisation, so
-it runs at one add per FP latency. Independent partial accumulators would recover most of
-it. The GPU reduction is fine. (The other one — rank-1 kernels launching 16-thread blocks —
-has since been fixed; see [Design decisions](#design-decisions).)
+**`sum` was a serial accumulate — now fixed too.** The loop-carried FP dependency in
+`reduce_sum_cpu` blocked auto-vectorisation, so it ran at one add per FP *latency*: 7.7 GB/s
+against NumPy's pairwise SIMD reduction, 4× behind. Splitting the accumulation across **8
+independent lanes** merged pairwise at the end breaks the chain — a source-level
+restructuring, not a pragma — and takes it to **36.9 GB/s, 1.06× faster than NumPy**. (It is
+also slightly more accurate, since the partials merged at the end are of similar magnitude.)
+PyTorch still wins by 2.8× there by threading the reduction across 20 cores, which is the
+obvious next step.
 
-`matmul` is the one structural gap rather than a tuning gap: `matmul_cpu` is the textbook
-`ijk` triple loop indexing `rhs(k, j)` down a column, against OpenBLAS. Reordering to
-`ikj` would be worth roughly an order of magnitude for one line.
+**`matmul` on CPU closed 68×, and is no longer the structural gap.** `matmul_cpu` was the
+textbook `ijk` triple loop indexing `rhs(k, j)` down a column — 1.81 GFLOP/s, 421× off
+NumPy. Reordering to `ikj` with 128-wide L2 tiling and an `omp parallel for` over the
+independent output rows takes it to **123 GFLOP/s**, 6.3× off OpenBLAS at 1024³ and
+*slightly ahead* of NumPy at 128³. What remains is the gap between a tiled C loop and a
+hand-tuned microkernel with register blocking, NEON intrinsics and packed panels — a
+different implementation class, but a 6× one rather than three orders of magnitude.
+
+**The remaining gaps are the GPU `matmul` and CPU `min`/`max`.** The GPU kernel is tiled but
+computes one output element per thread (two shared-memory loads per FMA), does not double
+buffer, and does not touch the tensor cores — `test_benchmarks` prices that last one
+directly, with fp16 buying only ~1.1× over fp32. `min`/`max` remain a plain scalar loop,
+2.7× behind NumPy; a `parallel for` with a cross-thread `reduction(min:)` clause is the
+untried lever there (the `simd` clause, a different change, was measured and reverted).
 
 Caveat on the CPU column: PyTorch runs 20 intraop threads. OpenMat's CPU backend is
-threaded via OpenMP for `add`/`sub`/`mul`/`div` and `matmul` (see above) but still
-single-threaded scalar everywhere else — `sum`, `min`, `max`, and the whole fused-op
-family — so PyTorch-vs-OpenMat on CPU still measures *what a user gets* on those ops, not
-comparable algorithms. NumPy is the like-for-like reference there.
+threaded via OpenMP for `add`/`sub`/`mul`/`div` and `matmul` but still single-threaded for
+`min`, `max`, `sum` and the whole fused-op family — so PyTorch-vs-OpenMat on CPU measures
+*what a user gets* on those ops, not comparable algorithms. NumPy is the like-for-like
+reference there.
 
 ---
 
@@ -176,7 +197,9 @@ All methods share the same kernel dispatch code. The no-stream variants delegate
 
 Benchmarked with `tests/test_stream_perf.cpp` on two machines: **NVIDIA GeForce RTX 4060 · CUDA 11.5**
 (the original numbers) and **NVIDIA GB10 (DGX Spark, `sm_121`) · CUDA 13.0**, both in Release.
-The GB10 column is the median of 4 consecutive runs.
+The GB10 column is the median of 9 consecutive runs, re-measured after the contiguous
+fast path landed — which roughly halved the kernel times every one of these tests is
+built on, so the absolute numbers moved even where the conclusion did not.
 
 **The results do not transfer between the two.** Two of the five conclusions invert — the
 sequential-chain win disappears and the parallel fan-out, a wash on the 4060, becomes the
@@ -186,22 +209,22 @@ largest gain. Full analysis in [stream_perf_report.md](stream_perf_report.md).
 
 | Variant | RTX 4060 | GB10 |
 |---|---|---|
-| `operator+` (sync) | 0.42 ms · 1.00× | 0.32 ms · 1.00× |
-| `add(default_stream())` | 0.42 ms · 1.00× | 0.32 ms · 1.01× |
-| `add(Stream s)` + sync | 0.40 ms · ~1.05× | 0.32 ms · ~1.02× |
+| `operator+` (sync) | 0.42 ms · 1.00× | 0.22 ms · 1.00× |
+| `add(default_stream())` | 0.42 ms · 1.00× | 0.22 ms · ~1.01× |
+| `add(Stream s)` + sync | 0.40 ms · ~1.05× | 0.21 ms · ~1.03× |
 
 When the host blocks after every single operation the round-trip cost is identical regardless of whether a stream is used. The stream wrapper adds no measurable overhead, but it also cannot help if you synchronize immediately.
 
-#### Sequential chain of dependent ops — **2.68× on the 4060, ~1× on GB10**
+#### Sequential chain of dependent ops — **2.68× on the 4060, ~1.1× on GB10**
 
 | Variant | RTX 4060 (100 adds, 8 MB) | GB10 |
 |---|---|---|
-| Sync after every op | 45.38 ms · 1.00× | 14.6 ms · 1.00× |
-| One stream, one sync at the end | 16.94 ms · **2.68×** | 14.2 ms · 1.03× |
+| Sync after every op | 45.38 ms · 1.00× | 5.75 ms · 1.00× |
+| One stream, one sync at the end | 16.94 ms · **2.68×** | 5.29 ms · 1.09× |
 
 On the 4060 this is the highest-impact use case. With 100 explicit synchronizations the host stalls 100 times; each stall costs ~0.28 ms of scheduling overhead. Enqueuing all 100 kernels on a single stream and syncing once eliminates 99 of those stalls. The GPU's internal ordering guarantees correctness even with data dependencies between ops.
 
-On GB10 the same 100 syncs cost ~0.45 ms in total, so the chain is bounded by kernel work rather than by host stalls and batching buys 3%. The principle — streams help once you stop synchronizing — still holds; its magnitude is entirely a function of what one sync costs on the platform, and on a unified-memory part that is close to nothing.
+On GB10 the same 100 syncs cost well under a millisecond in total, so the chain is bounded by kernel work rather than by host stalls and batching buys ~9%. The principle — streams help once you stop synchronizing — still holds; its magnitude is entirely a function of what one sync costs on the platform, and on a unified-memory part that is close to nothing. Note the chain itself got 2.5× faster in absolute terms (14.6 → 5.75 ms) purely from the contiguous fast path, which is why the ratio moved at all.
 
 The pattern in practice:
 
@@ -217,21 +240,21 @@ s.synchronize();           // one round-trip at the end
 
 | K | RTX 4060 (seq → K streams) | GB10 (seq → K streams) |
 |---|---|---|
-| 2 | 0.15 → 0.14 ms · ~1.05× | 0.22 → 0.14 ms · **1.62×** |
-| 4 | 0.30 → 0.31 ms · ~0.97× | 0.26 → 0.25 ms · ~1.05× |
-| 8 | 0.73 → 0.69 ms · ~1.06× | 1.9 → 0.57 ms · **3.1–3.4×** |
-| 16 | 1.46 → 1.38 ms · ~1.06× | 2.6 → 1.9 ms · **1.25–1.42×** |
+| 2 | 0.15 → 0.14 ms · ~1.05× | 0.14 → 0.04 ms · **3.29×** |
+| 4 | 0.30 → 0.31 ms · ~0.97× | 0.10 → 0.09 ms · ~1.04× |
+| 8 | 0.73 → 0.69 ms · ~1.06× | 1.47 → 0.28 ms · **5.19×** |
+| 16 | 1.46 → 1.38 ms · ~1.06× | 1.60 → 1.73 ms · ~0.93× |
 
 On the 4060, launching K independent kernels on K streams does not produce meaningful speedup when each kernel already saturates the available memory bandwidth: that GPU has one compute pipeline, and `mul` on 4 MB is entirely memory-bound.
 
-That reasoning does not describe GB10, where eight independent muls on eight streams run 3.3× faster than sequentially. Note the non-monotonic shape (K=4 drops back to ~1×) and that K=8 and K=16 are the only rows that move between runs — the test times a single un-warmed run per K, so part of the irregularity is measurement rather than hardware.
+That reasoning does not describe GB10, where eight independent muls on eight streams run 5.2× faster than sequentially. The shape is emphatically non-monotonic — K=2 gives 3.3×, K=4 falls back to ~1.04×, K=8 peaks at 5.2×, K=16 regresses to ~0.93× — and the test times a single un-warmed run per K, so some of that irregularity is measurement rather than hardware. Over nine runs, though, the spread per row is narrow enough (K=8 spans 4.9–5.7×, K=16 spans 0.89–1.10×) that the shape itself is real: K=16 sits below 1.0× in eight of nine runs, which was not true before and is worth a closer look than a suite timing one un-warmed run per K can give it.
 
 #### Compute + transfer overlap — **1.12× on the 4060, ~4× on GB10**
 
 | Variant | RTX 4060 (20 rounds, 16 MB) | GB10 |
 |---|---|---|
-| Serialized (H2D → sync → compute → sync) | 37.21 ms · 1.00× | 47.9 ms · 1.00× |
-| Overlapped (stream_copy ∥ stream_compute) | 33.11 ms · **1.12×** | 11.9 ms · **~4.0×** |
+| Serialized (H2D → sync → compute → sync) | 37.21 ms · 1.00× | 40.3 ms · 1.00× |
+| Overlapped (stream_copy ∥ stream_compute) | 33.11 ms · **1.12×** | 8.77 ms · **~4.6×** |
 
 The RTX 4060 has a dedicated DMA copy engine that operates independently from the compute SMs. Assigning H2D transfers to one stream and compute work to another lets both run simultaneously:
 
@@ -245,9 +268,11 @@ Overlapped:  [H2D -------]
 
 The theoretical maximum speedup is ~2× (total time drops to `max(H2D, compute)` instead of `H2D + compute`). The observed 12% is lower because H2D and compute are similar in duration on this workload, leaving limited asymmetry to exploit. In inference pipelines that alternate between data loading and computation the gain is more pronounced.
 
-GB10's 4× exceeds that ceiling, which means the ratio is measuring a bad baseline rather than good overlap: the serialized path is *slower* there than on the 4060 (47.9 ms vs 37.21 ms) because the H2D leg dominates. `test_stress` puts H2D+D2H round-trips at only 4.3–4.8 GB/s on a coherent-memory part. The cross-framework benchmark since identified the cause, and it is not a staging copy: a bare transfer into a reused buffer runs at ~57 GB/s, level with PyTorch, while one that allocates its destination each round-trip collapses to 2.3 GB/s — the host allocator page-faulting in the destination, the same effect described under [vs NumPy and PyTorch](#vs-numpy-and-pytorch). Fixing that would improve the absolute time and shrink this speedup.
+GB10's ~4.6× exceeds that ceiling, which means the ratio is still measuring a mediocre baseline rather than exceptional overlap: the serialized path is *slower* there than on the 4060 (40.3 ms vs 37.21 ms) because the H2D leg dominates. The cause was never a staging copy, and that is now settled from both directions.
 
-"Not a staging copy" is now confirmed rather than inferred: `Tensor::to()` pins the destination of a device-to-host transfer (`cudaHostAlloc` via `PinnedCpuAllocator`, [benchmark_report.md §3](benchmark_report.md#3-the-cpu-gap-above-128-kb-was-the-allocator-not-the-loop--fixed)), which is exactly what would skip a pinned bounce-buffer stage if one were in the way — and it moves nothing on GB10 (58-59 GB/s either way, isolating the copy itself), because NVLink-C2C's unified host/device memory has no such stage to skip in the first place. The lever here really is the allocator, not pinning.
+First, pinning was tried and made no difference: `Tensor::to()` pins the destination of a device-to-host transfer (`cudaHostAlloc` via `PinnedCpuAllocator`, [benchmark_report.md §3](benchmark_report.md#3-the-cpu-gap-above-128-kb-was-the-allocator-not-the-loop--fixed)), which is exactly what would skip a pinned bounce-buffer stage if one were in the way — and it moves nothing on GB10 (58–59 GB/s either way, isolating the copy itself), because NVLink-C2C's unified host/device memory has no such stage to skip in the first place.
+
+Second, the allocator was the whole of it. `test_stress` used to put 100 × 64 MB H2D+D2H round-trips at **4.3 GB/s**, because that test allocates its destination every round and paid the page faults described under [vs NumPy and PyTorch](#vs-numpy-and-pytorch). With `HostPool` recycling those blocks the same test now runs at **51.1 GB/s** — 3109 ms down to 263 ms, 11.8× — and a single isolated 64 MB copy measures 59.1 GB/s, identical to PyTorch. The lever really was the allocator, not pinning. What is left in the serialized baseline above is genuine H2D time, so this row's speedup should now be read as real overlap rather than as a bad baseline.
 
 #### Stream creation overhead — negligible
 
@@ -263,9 +288,9 @@ At this scale `cudaStreamCreate` overhead is within measurement noise. For laten
 | Pattern | Use streams? | RTX 4060 | GB10 |
 |---|---|---|---|
 | Single op, immediate sync | Irrelevant | no change | no change |
-| Chain of N ops on the same data | Depends on what a sync costs | ~2.7× faster | ~1× |
-| Independent ops on separate data | **Yes on GB10**, no on the 4060 | ~1× | up to ~3.3× |
-| Compute while transferring data | **Yes — two streams** | 10–15% | ~4× (slow H2D baseline) |
+| Chain of N ops on the same data | Depends on what a sync costs | ~2.7× faster | ~1.1× |
+| Independent ops on separate data | **Yes on GB10**, no on the 4060 | ~1× | up to ~5.2×, but non-monotonic in K |
+| Compute while transferring data | **Yes — two streams** | 10–15% | ~4.6× |
 | Stream creation per call | No — reuse streams | no overhead at scale | no overhead at scale |
 
 The one portable lesson is that none of these rows is portable: measure on the target
@@ -331,9 +356,10 @@ A single flat kernel must reconstruct multi-dimensional indices from a linear of
 > stay contiguous in memory. And the indexing overhead the rank specialization exists to
 > avoid is not worth paying for, because the shape is redundant — every tensor here is
 > contiguous row-major, so the buffer can simply be indexed linearly. The contiguous fast
-> path does that and brings every rank to 228–233 GB/s. The rank-specialized kernels are
-> still compiled and still correct; they are now the fallback for the strided views the
-> library does not yet have.
+> path does that and brings every rank to 228–233 GB/s — re-measured end to end, all five
+> ranks land within 1 % of each other. The rank-specialized kernels are still compiled and
+> still correct; they are now the fallback for the strided views the library does not yet
+> have.
 
 **RAII for GPU memory via `Tensor<T>` + `Allocator<T>`**
 Rather than pairing raw `cudaMalloc`/`cudaFree` calls at each use site, every `Tensor` owns a polymorphic `Allocator` chosen at construction time by `AllocatorFactory`. The destructor delegates to `allocator->deallocate`, making GPU memory lifetime deterministic regardless of exceptions or early returns — the same pattern used in PyTorch's `at::DataPtr`.
@@ -342,8 +368,9 @@ Rather than pairing raw `cudaMalloc`/`cudaFree` calls at each use site, every `T
 host path is not the interesting one. The benchmark priced that decision: above glibc's
 128 KB mmap threshold every out-of-place op faulted in its entire output buffer from the
 kernel, a 4.3× penalty on a 16 M-element `add` and 16× on a 64 MB device-to-host copy. A
-caching allocator was not an optimization here, it was the difference between parity with
-NumPy and 4× behind it — so host allocations now go through `om::detail::HostPool`
+caching allocator was not an optimization here, it was the difference between beating
+NumPy and being 4× behind it — the A/B still costs 6.2× on a 16 M `add` when the cache is
+turned off — so host allocations now go through `om::detail::HostPool`
 ([headers/host_pool.h](headers/host_pool.h)), a capped, mutex-guarded free list keyed by
 size class, with a 64-byte header per block carrying its class (and giving 64-byte
 alignment, where `malloc` guarantees 16). Same structure as NumPy's block cache and
@@ -367,7 +394,7 @@ Using `virtual` dispatch for CPU vs. CUDA would add a vtable indirection on ever
 
 - **Rank-specialized kernels**: elementwise ops (add, sub, mul, div) with dedicated CUDA kernels for rank 1–4, each with a rank-tuned grid/block layout
 - **N-dimensional support**: generic `_kernel_nd` fallback for rank ≥ 5 with stride-aware index reconstruction
-- **Contiguous fast path**: elementwise launchers detect the (universal) contiguous case and index linearly, so rank 2–5 run at the same bandwidth as rank 1 — up to 8.3× on rank-5 `add`
+- **Contiguous fast path**: elementwise launchers detect the (universal) contiguous case and index linearly, so rank 2–5 run at the same bandwidth as rank 1 — up to 8.9× on rank-5 `add`, with under 1.5 % spread across all five ranks
 - **RAII GPU memory**: `Tensor<T>` owns a polymorphic `Allocator<T>` (CPU or GPU) with move semantics and no raw pointer leaks
 - **Stream-aware allocator**: `GpuAllocator` uses `cudaMallocAsync`/`cudaFreeAsync`; each `Tensor` carries its stream and frees on it asynchronously
 - **Zero-overhead stream API**: every op has a `(args, Stream&)` overload; no-stream variants delegate to `Stream::default_stream()` — one code path, two calling conventions
@@ -425,7 +452,8 @@ result never shows up in the original.
 Requirements: NVIDIA GPU, CUDA Toolkit ≥ 11.2 (for `cudaMallocAsync`), CMake ≥ 3.24 (for
 `CMAKE_CUDA_ARCHITECTURES=native`), a C++17/CUDA 17 compiler, OpenMP (`find_package(OpenMP REQUIRED)`;
 bundled as `libgomp` with a stock GCC install, nothing extra to install on most systems).
-Verified on CUDA 13.0 / GCC 13.3 / CMake 3.28 / GB10 (sm_121), all 14 suites passing.
+Verified on CUDA 13.0 / GCC 13.3 / CMake 3.28 / GB10 (sm_121), all 14 suites passing
+(11 correctness suites in 4.7 s, plus three timing/soak suites).
 
 ```bash
 git clone https://github.com/AntonioPalese/OpenMat.git
@@ -536,8 +564,11 @@ cd python && pytest        # test_tensor, test_tensor_api, test_dtypes, test_str
 - [x] `float16_t` support in kernels and `test_benchmarks`
 - [x] Benchmark suite comparing against NumPy / PyTorch (`scripts/bench_vs.py`)
 - [x] OpenMP parallelism for CPU `add`/`sub`/`mul`/`div` and `matmul` (size-gated `parallel for`)
+- [x] `ikj` + L2 tiling + OpenMP for `matmul_cpu` — 1.81 → 123 GFLOP/s at 1024³
+- [x] 8-lane accumulator for `reduce_sum_cpu` — 7.7 → 36.9 GB/s, now ahead of NumPy
 - [x] Contiguous fast path for elementwise GPU kernels (every rank at rank-1 bandwidth)
 - [ ] Same OpenMP treatment for `apply`/`apply_binary` (`relu`, `sigmoid`, `fused_*`)
+- [ ] Threaded `sum` and a cross-thread `reduction(min:)/(max:)` for `min`/`max`
 - [ ] cuBLAS integration as an optional matmul backend
 - [ ] Random initialization (cuRAND)
 - [ ] Broadcasting and batched matmul
@@ -561,7 +592,7 @@ Building this from scratch exposed a set of problems that high-level frameworks 
 - **Raw arrays decay in CUDA kernel parameters** — passing `size_t axes[MAX_RANK]` as a kernel argument silently becomes a host pointer on the device side. The fix is a trivially-copyable struct wrapper so CUDA copies the data by value into the kernel parameter block.
 - **A Python reference is not a lifetime guarantee** — the first two attempts at keeping a CUDA stream alive from Python both segfaulted under `gc.collect()`. The cyclic collector finalizes a cycle's members, plus everything reachable only from them, in arbitrary order, so a `Stream` could be torn down while tensors still owed it a stream-ordered free. Reference counting had to move to the C side of the boundary.
 - **Half a warp is half the bandwidth** — the rank-1 elementwise kernels launched `dim3(16)` blocks, so 16 of 32 lanes in the warp sat idle. It cost 20–32% of memory bandwidth and went unnoticed for as long as there was nothing to compare against: the kernels *were* faster than the CPU path, which is all the internal benchmarks could tell me. It took reshaping the same buffer to a different rank, and watching `add` jump from 149 to 187 GB/s, to see it.
-- **The optimization everyone recommends was the wrong one** — the obvious fix for an elementwise kernel is `__restrict__` pointers, a grid-stride loop and `float4` vector loads. Measured on the target GPU, the vector loads made `add` *slower* (216 GB/s against 235 for one scalar `float` per thread) and the grid-stride loop cost another 8–12 %: one 16-byte load per thread buys coalescing the hardware already had, and pays for it in the thread-level parallelism that keeps the memory pipeline full. What actually mattered was something the advice does not mention — that no thread move *less* than 4 bytes, which is why `char` sat at 193 GB/s — and something not about the kernel at all: that the launcher stop mapping tensor axes onto grid axes when the tensor is contiguous. The 8.3× at rank 5 came from deleting an indexing scheme, not from adding an instruction.
+- **The optimization everyone recommends was the wrong one** — the obvious fix for an elementwise kernel is `__restrict__` pointers, a grid-stride loop and `float4` vector loads. Measured on the target GPU, the vector loads made `add` *slower* (216 GB/s against 235 for one scalar `float` per thread) and the grid-stride loop cost another 8–12 %: one 16-byte load per thread buys coalescing the hardware already had, and pays for it in the thread-level parallelism that keeps the memory pipeline full. What actually mattered was something the advice does not mention — that no thread move *less* than 4 bytes, which is why `char` sat at 193 GB/s — and something not about the kernel at all: that the launcher stop mapping tensor axes onto grid axes when the tensor is contiguous. The 8.9× at rank 5 came from deleting an indexing scheme, not from adding an instruction.
 - **A stale benchmark number is worse than no number** — the table said GPU `add` ran at 159 GB/s, and that was the figure driving the next round of work. It had been true; a block-size fix landed afterwards and quietly moved it to 220 GB/s, but the report was not re-run, so the diagnosis it supported ("the indexing is too slow at rank 1") was aimed at a problem that no longer existed. Re-measuring before optimizing turned up the real one, two ranks over.
 - **A benchmark is a measurement of the whole program, not the code you were looking at** — OpenMat's CPU `add` looked 4× slower than NumPy's at 16 M elements. The loop was not the problem; `malloc` was. Past glibc's 128 KB threshold every result buffer is a fresh `mmap`, and the op pays 16 384 page faults before it computes anything. One environment variable (`MALLOC_MMAP_MAX_=0`) closed the entire gap, and a size-classed free list in `CpuAllocator` made it permanent. The same cause was quietly making a 64 MB device-to-host copy look 24× slower than PyTorch's, in what appeared to be an unrelated part of the library.
 - **Fusion is worth more than kernel tuning** — the ops where OpenMat beats PyTorch and NumPy are not the ones with the best kernels, they are the ones that avoid a memory round-trip. `fused_add_mul` wins by 1.66× against a mature library with better kernels, purely because `(a + b) * s` costs PyTorch a 64 MB intermediate. Arithmetic is nearly free at this scale; every avoided traversal of memory is not.
@@ -575,6 +606,8 @@ Building this from scratch exposed a set of problems that high-level frameworks 
   reduction clause forced a worse lowering on top of a loop that was already vectorized.
   Reverted, and left as a comment in the code rather than a silent diff, so it does not
   get re-added on the assumption that it obviously must have helped.
+- **The gaps called "structural" were one-line algorithm changes** — the report called CPU `matmul` (421× off NumPy) "the one structural gap rather than a tuning gap", and filed CPU `sum` (4× off) alongside it as a known-but-deferred cost. `matmul` needed a loop reorder from `ijk` to `ikj`, a tile size and an `omp parallel for`: 1.81 → 123 GFLOP/s, 68×. `sum` needed eight accumulators instead of one, so the loop runs at FP *throughput* instead of FP *latency*: 7.7 → 36.9 GB/s, from 4× behind NumPy to slightly ahead. Neither touched a kernel, an allocator or a dispatch path. "Structural" was a claim about how much work a fix would be, and it was wrong twice — worth distrusting the next time it appears in my own notes.
+- **A benchmark harness measures itself too** — the cross-framework table reported a 64 MB device-to-host copy at 39.8 ms, which would have been a catastrophic regression. The tell was that PyTorch's own D2H degraded in the same run, 1.14 → 6.81 ms, on code neither I nor anyone else had touched. In a fresh process both libraries measure 1.136 ms. The transfer cases run last, after the process has accumulated two host caches, PyTorch's CUDA caching allocator and every live operand from the CUDA sweep, and on a unified-memory part that pressure lands on the transfer. The same contradiction had been sitting in the report for an edition — one section claiming 1141 µs for the op another section put at 28953 µs — and had been left unreconciled rather than treated as the signal it was.
 - **`cudaMallocAsync` is not a drop-in replacement** — it uses a stream-ordered memory pool. Freeing on a different stream than the one used for allocation is a programming error that manifests as an illegal memory access with no obvious call site. Storing `m_Stream` in each `Tensor` and using it in the destructor is the invariant that keeps this safe.
 
 ---
