@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build
 
-Requirements: NVIDIA GPU, CUDA Toolkit ≥ 11.2 (for `cudaMallocAsync`), CMake ≥ 3.24 (for `CMAKE_CUDA_ARCHITECTURES=native`), C++17/CUDA 17 compiler, OpenMP (`find_package(OpenMP REQUIRED)` in `CMakeLists.txt`; bundled as `libgomp` with a stock GCC install, nothing extra to install on most systems). Verified building and passing all 14 suites on CUDA 13.0 / GCC 13.3 / CMake 3.28 / GB10 (sm_121) — the 11 correctness suites run in 4.7 s; the three timing/soak suites are separate.
+Requirements: NVIDIA GPU, CUDA Toolkit ≥ 11.2 (for `cudaMallocAsync`), CMake ≥ 3.24 (for `CMAKE_CUDA_ARCHITECTURES=native`), C++17/CUDA 17 compiler, OpenMP (`find_package(OpenMP REQUIRED)` in `CMakeLists.txt`; bundled as `libgomp` with a stock GCC install, nothing extra to install on most systems). Verified building and passing all 15 suites on CUDA 13.0 / GCC 13.3 / CMake 3.28 / GB10 (sm_121) — the 12 correctness suites run in 5.2 s; the three timing/soak suites are separate.
 
 ```bash
 # Full clean rebuild (also refreshes compile_commands.json in the repo root)
@@ -38,11 +38,11 @@ cd build && ctest                       # all suites
 ./build/tests/test_arithmetic --gtest_filter="TensorArithmetic.CPUOperations"
 ```
 
-Suites: `test_arithmetic`, `test_fused_ops`, `test_device_transfer`, `test_factory`, `test_reductions`, `test_benchmarks`, `test_reshape`, `test_transpose`, `test_streams`, `test_allocator_stream`, `test_host_pool`, `test_contiguous`, `test_stress`, `test_stream_perf`.
+Suites: `test_arithmetic`, `test_fused_ops`, `test_device_transfer`, `test_factory`, `test_reductions`, `test_benchmarks`, `test_reshape`, `test_transpose`, `test_streams`, `test_allocator_stream`, `test_host_pool`, `test_contiguous`, `test_inplace`, `test_stress`, `test_stream_perf`.
 
 `test_benchmarks`, `test_stress`, and `test_stream_perf` are timing/soak suites, not correctness suites — they are slow and their numbers are meaningless in a Debug build. `StreamPerf.ParallelFanOut` in particular asserts wall-clock against wall-clock and goes red under load; CI does not gate on those two suites.
 
-**Every test that touches the device starts with `OM_REQUIRE_CUDA();`** ([tests/test_helpers.h](tests/test_helpers.h)) — a `cudaGetDeviceCount` check that `GTEST_SKIP`s instead of failing. That is what makes `ctest` green on a machine with no GPU (110 skipped, 60 host-side tests run) and is what the CPU-only CI job relies on; a new GPU test without it turns that job red. The Python equivalents are the `requires_cuda` marker and the `device` fixture in [python/tests/conftest.py](python/tests/conftest.py).
+**Every test that touches the device starts with `OM_REQUIRE_CUDA();`** ([tests/test_helpers.h](tests/test_helpers.h)) — a `cudaGetDeviceCount` check that `GTEST_SKIP`s instead of failing. That is what makes `ctest` green on a machine with no GPU (130 skipped, 88 host-side tests run) and is what the CPU-only CI job relies on; a new GPU test without it turns that job red. The Python equivalents are the `requires_cuda` marker and the `device` fixture in [python/tests/conftest.py](python/tests/conftest.py).
 
 ## Debugging asynchronous kernel errors
 
@@ -68,7 +68,7 @@ OPENMAT_DEBUG_SYNC=1 ./build/tests/test_streams          # no rebuild needed
 [.github/workflows/ci.yml](.github/workflows/ci.yml), on every push and PR. Two jobs:
 
 - **cpu** — a `nvidia/cuda:*-devel` container on a GitHub-hosted runner: toolkit, no driver, no device. It configures with an explicit `-DCMAKE_CUDA_ARCHITECTURES="75;86;89"` (the `native` default needs a GPU to resolve) and puts `/usr/local/cuda/lib64/stubs` first in `CMAKE_LIBRARY_PATH`, where the link-time-only `libcuda.so` lives. Its job is the full compile+link — the macro machinery and the mandatory explicit instantiations only fail there — plus the host-side tests.
-- **gpu** — a self-hosted runner labelled `self-hosted,linux,gpu`, needing nvcc and CMake ≥ 3.24 on PATH. Release build at `native` arch, the correctness suites (`ctest -E "test_benchmarks|test_stream_perf"` — 12 of the 14, `test_stress` included), the Python suite, then `compute-sanitizer --tool memcheck --leak-check full` over `test_stress`, `test_allocator_stream` and `test_streams` (~30 s total). memcheck is the only thing that reports a stream-ownership violation near the call site instead of as an illegal access in an unrelated kernel later on.
+- **gpu** — a self-hosted runner labelled `self-hosted,linux,gpu`, needing nvcc and CMake ≥ 3.24 on PATH. Release build at `native` arch, the correctness suites (`ctest -E "test_benchmarks|test_stream_perf"` — 13 of the 15, `test_stress` included), the Python suite, then `compute-sanitizer --tool memcheck --leak-check full` over `test_stress`, `test_allocator_stream` and `test_streams` (~30 s total). memcheck is the only thing that reports a stream-ownership violation near the call site instead of as an illegal access in an unrelated kernel later on.
 
 ## Python package
 
@@ -87,7 +87,7 @@ OPENMAT_LIB=build/OpenMat.so python python/test_bindings.py   # smoke script
 cd python && pytest                                            # pytest suite (python/tests/)
 ```
 
-Python suites: `test_tensor.py` (the original surface), `test_tensor_api.py` (metadata, indexing, shape/fused ops, buffer protocols), `test_dtypes.py`, `test_streams.py`. [python/tests/conftest.py](python/tests/conftest.py) provides a `device` fixture that runs a test on both backends and a `requires_cuda` marker.
+Python suites: `test_tensor.py` (the original surface), `test_tensor_api.py` (metadata, indexing, shape/fused ops, buffer protocols), `test_dtypes.py`, `test_streams.py`, `test_inplace.py`. [python/tests/conftest.py](python/tests/conftest.py) provides a `device` fixture that runs a test on both backends and a `requires_cuda` marker.
 
 [python/hatch_build.py](python/hatch_build.py) is the custom hatch hook `pyproject.toml` points at: it copies `build/OpenMat.so` (or `$OPENMAT_LIB`) into `openmat/` so the wheel bundles it, and only warns if no library is present — an sdist should not need a CUDA toolchain. The copied `openmat/OpenMat.so` is gitignored by the root `*.so` rule.
 
@@ -108,7 +108,7 @@ auto c = a.add(b, s);              // enqueues on s; caller must s.synchronize()
 
 `om::Stream` ([headers/stream.h](headers/stream.h)) is a move-only RAII wrapper. The default constructor calls `cudaStreamCreate` and owns the handle; `Stream(cudaStream_t)` wraps an existing handle without owning it; `Stream::default_stream()` returns a non-owning wrapper around `nullptr`, which is how the synchronous API reuses the async code path with zero duplication.
 
-**When adding an op, implement the `(args, const Stream&)` overload and make the no-stream one a one-line delegate.** Doing it the other way round breaks the single-source-of-truth invariant the whole `tensor.inl` is built on.
+**When adding an op, implement the `(args, out, const Stream&)` overload and make everything else a one-line delegate.** Doing it the other way round breaks the single-source-of-truth invariant the whole `tensor.inl` is built on. See "In-place ops and caller-provided destinations" below for the three forms and which one is the real implementation.
 
 ### Dispatch: two paths, one of them mostly dead
 
@@ -117,16 +117,45 @@ auto c = a.add(b, s);              // enqueues on s; caller must s.synchronize()
 - `DEFINE_DEVICE_DISPATCH_BINARY_INL(OP)` — defines the free function `_OP(lhs, rhs, dst, DEVICE_TYPE)` that switches at runtime.
 - `DEFINE_DEVICE_DISPATCH_UNARY_H/INL` — same for tensor⊕scalar ops.
 
-**But `Tensor<T>`'s stream overloads no longer go through them.** Since the stream refactor, [headers/tensor.inl](headers/tensor.inl) branches on `device_type()` itself and calls `add_cpu(...)` / `launch_add(..., s.get())` directly, because the `_dispatch` structs have no `cudaStream_t` parameter. Today only `_fill` still uses the dispatch path (from `Tensor::fill`). Treat the `_dispatch` macros as legacy: adding a new op means wiring `tensor.inl` directly, and adding a dispatch registration only if you also need the stream-less free function.
+**But `Tensor<T>` no longer goes through them at all.** Since the stream refactor, [headers/tensor.inl](headers/tensor.inl) branches on `device_type()` itself and calls `add_cpu(...)` / `launch_add(..., s.get())` directly, because the `_dispatch` structs have no `cudaStream_t` parameter. `fill` was the last holdout and is now `fill_(value, s)` for the same reason, so the `_dispatch` machinery has **no callers left**. Treat it as legacy: adding a new op means wiring `tensor.inl` directly, and adding a dispatch registration only if you actually want the stream-less free function.
 
 Effective data flow for `a + b`:
 
 ```
 Tensor<T>::operator+()
   → Tensor<T>::add(rhs, Stream::default_stream())          [tensor.inl]
-    → add_cpu(...)  or  launch_add(..., stream)            [ops/cpu/ or ops/kernels/]
-      → flat CPU loop  or  rank-specialized CUDA kernel
+    → allocates the result, then
+      Tensor<T>::add_out(rhs, out, stream)                 [tensor.inl — the real body]
+        → add_cpu(...)  or  launch_add(..., stream)        [ops/cpu/ or ops/kernels/]
+          → flat CPU loop  or  contiguous fast path / rank-specialized CUDA kernel
 ```
+
+`a.add_(b)` enters the same chain one level down, at `add_out(b, *this, stream)`.
+
+### In-place ops and caller-provided destinations
+
+Every op exists in three forms, and only one of them is a real implementation:
+
+```cpp
+auto c = a.add(b, s);        // allocates a result, then calls add_out
+a.add_out(b, out, s);        // ← the body: writes into a destination that exists
+a.add_(b, s);                // == a.add_out(b, a, s)
+```
+
+`add_out` returns `Tensor&` (the destination), so calls chain; `add_` returns `*this`. The no-stream spelling of each is a one-line delegate with `Stream::default_stream()`. `operator+=`/`-=`/`*=`/`/=` are delegates to the `_` family.
+
+The families: `add`/`sub`/`mul`/`div` (tensor and scalar), `apply`, `apply_binary`, `relu`, `sigmoid` and `fill_` have all three forms. `matmul`, `transpose` and `permute` have `_out` but **no** in-place form — their kernels read elements they do not write, so a destination sharing a buffer with an operand would read values already overwritten. `_check_alias_none` rejects that at the call site instead of returning a plausible wrong answer.
+
+Why the elementwise family *can* alias: the CPU loop, the contiguous GPU fast path and the rank-specialized kernels all read index i and write index i, so `dst == lhs` is exactly as correct as a separate buffer. That rests on each buffer being one flat run, which is true of every tensor the library builds — `_check_alias_elementwise` re-checks `is_contiguous()` anyway, so the day a strided view can alias a *different* region of the same allocation (roadmap P2) it throws rather than computing the wrong thing.
+
+Two consequences worth knowing:
+
+- **The contiguous kernels dropped `__restrict__`** ([headers/ops/kernels/contiguous.cuh](headers/ops/kernels/contiguous.cuh)) — in-place calls them with `dst` equal to a source, which is precisely the aliasing the qualifier promises does not happen. Measured, it cost nothing: `add` at 16 M went 230.2-233.4 → 228.6-230.7 GB/s, `relu` 232.9-234.6 → 233.4-235.5. The read-only path comes from the explicit `__ldg` in `device_load`, not from restrict, and each pointer is touched once per thread. Re-measure before putting it back.
+- **A destination that is not freshly allocated carries a stream caveat the allocating path does not.** `cudaMallocAsync` memory is stream-ordered, so enqueueing into `out` on a stream other than the one `out` was allocated on is only correct once the caller has ordered the two (an event, or a synchronize). `Tensor` cannot check that, so it is documented, not enforced — unlike the ownership invariant below, which it does enforce by storing `m_Stream`.
+
+The `_out` core is also where operand validation now lives: shape and device are checked before dispatch, so a GPU `add` between mismatched shapes throws instead of running off the end of a buffer the way it used to.
+
+`scripts/bench_inplace.py` is the harness; [benchmark_report.md §9](benchmark_report.md#9-every-op-allocated-its-own-result--in-place-and-out-forms-added) has the numbers. The short version: 1.2-1.6× below ~64 K on both backends where allocation is a large fraction of the op, shrinking to 1.04× at 16 M where the kernel dominates. The memory argument does not shrink — `tests/test_inplace.cpp` and `python/tests/test_inplace.py` assert `data_ptr` is unchanged across a 100-step loop, which is the property a correct-but-reallocating implementation would fail while passing every value check.
 
 ### Memory and views
 
@@ -203,7 +232,7 @@ Every consumer that includes `tensor.cuh` — and therefore re-instantiates thes
 
 **Explicit instantiations** in [src/ops/kernels/fused_op.cu](src/ops/kernels/fused_op.cu) must list every `(T, Op)` pair used from a `.cpp` translation unit. A new functor or a new `Compose` combination without an instantiation is a link error. Calls from `.cu` files instantiate implicitly and hide the problem.
 
-`Tensor<T>` surface: `apply(op[, stream])`, `apply_binary(rhs, op)`, `scale_shift`, `shift_scale`, `relu`, `sigmoid`, `fused_add_mul`, `fused_sub_mul`, `fused_mul_add`, `fused_div_add`. `apply` and `apply_binary` both have a real CPU loop branch — the CUDA-only limitation noted in [docs/roadmap.md](docs/roadmap.md) §4.2 has been fixed.
+`Tensor<T>` surface: `apply(op[, stream])`, `apply_binary(rhs, op[, stream])`, `scale_shift`, `shift_scale`, `relu`, `sigmoid`, `fused_add_mul`, `fused_sub_mul`, `fused_mul_add`, `fused_div_add`, plus the `_out` and `_` forms of `apply`, `apply_binary`, `relu` and `sigmoid`. `apply` and `apply_binary` both have a real CPU loop branch — the CUDA-only limitation noted in [docs/roadmap.md](docs/roadmap.md) §4.2 has been fixed, and `apply_binary` gained the stream overload §4.4 was asking for when it was rebuilt on `apply_binary_out`. The fused `fused_*` helpers have no dedicated in-place spelling: `apply_binary_(rhs, BinaryCompose<…>{…})` with the same functor is the way to get one.
 
 ## Reductions
 
@@ -244,15 +273,18 @@ Beyond the tensor families the library exports a dtype-independent runtime API: 
 
 Adding a Python-visible method means three edits: the function in [openmat_capi_impl.inc](src/python/openmat_capi_impl.inc) (once — both dtypes get it), the `ctypes` `restype`/`argtypes` in `_declare_dtype()` in [python/openmat/_clib.py](python/openmat/_clib.py), and the wrapper in [python/openmat/tensor.py](python/openmat/tensor.py). Ops with a `(args, const Stream&)` C++ overload get a `_stream` sibling in the `.inc` and a `stream=None` kwarg in Python.
 
+The in-place and destination-provided families cross the boundary as **int-returning** functions (`om_tensor_float_add_inplace`, `..._add_out`, `..._add_scalar_inplace`, …), not handle-returning ones: nothing is allocated and no ownership changes hands, so there is no pointer to check and no `_wrap` to do. The C symbols spell the C++ trailing underscore as `_inplace` — `add_` would be a legal C identifier but a confusing export. Python's `add_`/`add_out` return `self`/`out` so calls chain, and `__iadd__` and friends return `self` so `a += b` does not silently rebind the name to a new tensor.
+
 The Python package is `Tensor` + `Stream` + a `DType` registry ([python/openmat/_dtypes.py](python/openmat/_dtypes.py)); host tensors expose `__array_interface__` (zero-copy `np.asarray`), CUDA tensors `__cuda_array_interface__`. See [python/README.md](python/README.md) for the user-facing surface.
 
 ## Benchmarking
 
-Four harnesses, all requiring a **Release** build (`build-release/`) — Debug numbers are meaningless — and a `bench-env` venv holding NumPy and PyTorch, which the library itself does not need:
+Five harnesses, all requiring a **Release** build (`build-release/`) — Debug numbers are meaningless — and a `bench-env` venv holding NumPy and PyTorch, which the library itself does not need:
 
 - [scripts/bench_vs.py](scripts/bench_vs.py) — the main cross-framework table (CPU + CUDA + transfers). `--quick` for a smoke run, `--no-cuda` to skip the device.
 - [scripts/bench_rank_sweep.py](scripts/bench_rank_sweep.py) — the same 16 M buffer reshaped to ranks 1–5, which is what verifies the contiguous fast path is actually engaging. `bench_vs.py` only ever uses rank-1 shapes and would not notice a regression here.
 - [scripts/bench_omp.py](scripts/bench_omp.py) — run once per `OMP_NUM_THREADS` value; the 1-vs-20 delta is the OpenMP A/B, and a `1.00×` row is how you confirm an op is *not* parallelized (`min`/`max`, `sum`, `apply`/`apply_binary`).
+- [scripts/bench_inplace.py](scripts/bench_inplace.py) — the in-place / `out=` families against the allocating forms, per op and over a 32-step chain. Every case builds its own operands: an earlier draft that reused one destination across the three ops at each size reported a CUDA `relu_` "regression" of 0.38× that does not exist (1.05× re-measured).
 - `OPENMAT_HOST_CACHE_BYTES=0` — restores the pre-`HostPool` allocator, the A/B behind §3.
 
 Two traps that have already produced wrong conclusions in the reports:

@@ -4,7 +4,7 @@ Questo documento elenca le funzionalità del framework, il loro stato attuale e 
 
 **Legenda:** ✅ implementato · ⚠️ implementato parzialmente o con divergenze rispetto al progetto originale · ❌ da fare
 
-Ultimo allineamento al codice: 4 settembre 2026 (benchmark rieseguiti su GB10, Release; vedi [`benchmark_report.md`](../benchmark_report.md)).
+Ultimo allineamento al codice: 4 settembre 2026 (in-place / `out=` aggiunti, §8; benchmark rieseguiti su GB10, Release; vedi [`benchmark_report.md`](../benchmark_report.md)).
 
 ---
 
@@ -205,11 +205,9 @@ Il bug latente è risolto. `apply` e `apply_binary` in [`headers/tensor.inl`](..
 
 Entrambi passano per `float` internamente (`static_cast<float>(x) > 0.0f`, `expf(-static_cast<float>(x))`): è ciò che li fa funzionare senza modifiche su `float16_t`.
 
-### 4.4 Overload sullo stream per `apply_binary` ❌
+### 4.4 Overload sullo stream per `apply_binary` ✅
 
-Asimmetria residua: `apply` ha l'overload `(Op, const Stream&)`, `apply_binary` no. Di conseguenza `scale_shift`, `shift_scale` e i quattro `fused_*_*` sono chiamate sincrone sullo stream di default, mentre `relu` e `sigmoid` no.
-
-Il lavoro è meccanico e segue `apply`: accettare `const Stream& s`, costruire l'output con il costruttore privato `Tensor(shape, device, Stream)` e passare `s.get()` al launcher — `launch_apply_binary_op` accetta già un `cudaStream_t`.
+Risolto come effetto collaterale di §8: `apply_binary` è stato riscritto sopra `apply_binary_out(rhs, op, out, s)`, che uno stream lo prende per costruzione, e le forme allocante e in-place ci delegano. `scale_shift`, `shift_scale` e i quattro `fused_*_*` restano sincroni sullo stream di default perché non hanno un overload proprio — chiamarli su uno stream significa passare per `apply`/`apply_binary` con lo stesso functor.
 
 ---
 
@@ -347,6 +345,34 @@ Suite di test: `python/tests/test_tensor.py`, `test_tensor_api.py`, `test_dtypes
 
 ---
 
+## 8. Operazioni in-place e destinazione fornita dal chiamante ✅
+
+Ogni metodo di `Tensor` era `const` e allocava il risultato. In un ciclo di training questo significa un'allocazione **e** una deallocazione per operazione per iterazione, e un picco di memoria pari a tutto il grafo dell'espressione invece che al working set. PyTorch espone `add_`, `mul_` e `out=` esattamente per questo.
+
+I launcher accettavano già una `dst` separata, quindi il lavoro era tutto sulla superficie pubblica. Ogni operazione ha ora tre forme, di cui **una sola è un'implementazione vera**:
+
+```cpp
+auto c = a.add(b, s);        // alloca il risultato, poi chiama add_out
+a.add_out(b, out, s);        // ← il corpo: scrive in una destinazione che esiste già
+a.add_(b, s);                // == a.add_out(b, a, s)
+```
+
+`add_out` restituisce `Tensor&` (la destinazione) e `add_` restituisce `*this`, quindi le chiamate si concatenano; le forme senza stream sono delegate di una riga con `Stream::default_stream()`. Ci sono anche `operator+=`/`-=`/`*=`/`/=`.
+
+**Famiglie coperte:** `add`/`sub`/`mul`/`div` (tensore e scalare), `apply`, `apply_binary`, `relu`, `sigmoid`, `fill_`. `matmul`, `transpose` e `permute` hanno solo `_out`: i loro kernel leggono elementi che non scrivono, quindi una destinazione che condivide il buffer con un operando leggerebbe valori già sovrascritti — `_check_alias_none` lo rifiuta al call site invece di restituire un risultato plausibile e sbagliato.
+
+**Perché la famiglia elementwise *può* fare aliasing:** il loop CPU, il fast path contiguo GPU e i kernel per rank leggono l'indice i e scrivono l'indice i, quindi `dst == lhs` è corretto esattamente quanto un buffer separato. Questo dipende dal fatto che ogni buffer sia una singola sequenza piatta: `_check_alias_elementwise` ricontrolla `is_contiguous()`, così il giorno in cui una view con stride potrà puntare a una regione *diversa* della stessa allocazione (§2.1b) l'operazione solleva un'eccezione invece di calcolare la cosa sbagliata.
+
+Conseguenza collaterale: i tre kernel di [`contiguous.cuh`](../headers/ops/kernels/contiguous.cuh) hanno perso `__restrict__`, che è precisamente la promessa che l'in-place viola. Misurato, non è costato nulla (`add` a 16M da 230.2-233.4 a 228.6-230.7 GB/s, `relu` da 232.9-234.6 a 233.4-235.5): il percorso read-only viene dall'`__ldg` esplicito in `device_load`, non da inferenza sul restrict.
+
+Il `_out` è anche il punto in cui vive ora la validazione degli operandi (shape e device controllati prima del dispatch), quindi un `add` GPU fra shape diverse solleva un'eccezione invece di leggere oltre la fine di un buffer come faceva prima.
+
+**Numeri** ([`benchmark_report.md` §9](../benchmark_report.md#9-every-op-allocated-its-own-result--in-place-and-out-forms-added), harness `scripts/bench_inplace.py`): 1.2-1.6× sotto i ~64 K elementi su entrambi i backend, dove l'allocazione è una frazione grande dell'operazione, che si riduce a 1.04× a 16 M dove domina il kernel e `HostPool`/`cudaMallocAsync` stanno già riciclando il blocco. L'argomento sulla memoria invece non si riduce: `tests/test_inplace.cpp` e `python/tests/test_inplace.py` verificano che `data_ptr` non cambi lungo un ciclo di 100 passi — la proprietà che un'implementazione corretta ma ri-allocante fallirebbe superando ogni controllo sui valori.
+
+**Non fatto:** `matmul` batch/in-place resta fuori (§5.1), e i quattro `fused_*_*` non hanno una forma in-place dedicata — `apply_binary_(rhs, BinaryCompose<…>{…})` con lo stesso functor è il modo di ottenerla.
+
+---
+
 ## Priorità suggerite
 
 | Done | Priorità | Item |
@@ -367,7 +393,8 @@ Suite di test: `python/tests/test_tensor.py`, `test_tensor_api.py`, `test_dtypes
 | ✅ | — | 6.6 — `matmul_cpu` `ikj` + tiling L2 + OpenMP: 1.81 → 123 GFLOP/s a 1024³ (§5) |
 | ✅ | — | 6.7 — `reduce_sum_cpu` a 8 lane: 7.7 → 36.9 GB/s, ora davanti a NumPy (§1.2) |
 | ✅ | — | 6.8 — `HostPool`/`PinnedHostPool`: round-trip 100 × 64 MB da 4.3 a 51.1 GB/s |
-| | **Alta** | 4.4 — Overload stream per `apply_binary` (chiude l'asimmetria di 6.1) |
+| ✅ | — | 8 — Operazioni in-place (`add_`, `mul_`, `relu_`, `fill_`) e overload `_out` con destinazione fornita dal chiamante |
+| ✅ | — | 4.4 — Overload stream per `apply_binary` (arrivato con §8: `apply_binary_out` prende lo stream per costruzione) |
 | | **Alta** | 1.1 — Unarie `abs`, `sqrt`, `exp`, `log` via `apply` (costo basso, alto valore) |
 | | **Alta** | 6.4b — OpenMP su `apply`/`apply_binary`: stesso `if(_total > 65536)` di 6.4, ~2× atteso a 16M su tutta la famiglia fused |
 | | Media | 6.4c — `min`/`max` con `parallel for reduction(min:)/(max:)` fra thread (2.7× dietro NumPy); **non** la clausola `simd`, già misurata e rimossa |

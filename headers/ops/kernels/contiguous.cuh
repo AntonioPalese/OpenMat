@@ -47,6 +47,16 @@
 // A grid-stride loop was also tried and is not used: capping the grid to a few
 // waves per SM costs 8-12 %, and at the exact block count the loop body runs
 // once and buys nothing over a plain bounds check.
+//
+// None of the three kernels marks its pointers __restrict__, and that is
+// deliberate: the in-place family (Tensor::add_, relu_, …) calls them with dst
+// equal to one of the sources, which is exactly the aliasing __restrict__
+// promises does not happen. The promise bought nothing here — each pointer is
+// read or written once per thread, and the read-only path comes from the
+// explicit __ldg in device_load, not from restrict-driven inference. Measured
+// on the reference GB10 at 16 M elements, removing it moved `add` from
+// 230.2-233.4 GB/s to 228.6-230.7 and `relu` from 232.9-234.6 to 233.4-235.5,
+// i.e. nothing outside run-to-run spread. Re-measure before putting it back.
 // ─────────────────────────────────────────────────────────────────────────────
 
 namespace om {
@@ -83,8 +93,8 @@ namespace detail {
     // ill-formed and a member-wise copy is free to lower to two 2-byte accesses,
     // which is the whole thing this path exists to avoid.
     template <typename T, int V, typename Op>
-    __global__ void contig_binary_kernel(const T* __restrict__ a, const T* __restrict__ b,
-                                         T* __restrict__ dst, size_t n_pack, size_t n, Op op)
+    __global__ void contig_binary_kernel(const T* a, const T* b,
+                                         T* dst, size_t n_pack, size_t n, Op op)
     {
         const size_t i = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
 
@@ -114,7 +124,7 @@ namespace detail {
     }
 
     template <typename T, int V, typename Op>
-    __global__ void contig_unary_kernel(const T* __restrict__ src, T* __restrict__ dst,
+    __global__ void contig_unary_kernel(const T* src, T* dst,
                                         size_t n_pack, size_t n, Op op)
     {
         const size_t i = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
@@ -141,7 +151,7 @@ namespace detail {
     }
 
     template <typename T, int V>
-    __global__ void contig_fill_kernel(T* __restrict__ dst, T value, size_t n_pack, size_t n)
+    __global__ void contig_fill_kernel(T* dst, T value, size_t n_pack, size_t n)
     {
         const size_t i = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
 

@@ -88,10 +88,9 @@ namespace om
         }
         
 
-        void fill(const value_type& value)
-        {
-            _fill(this->view(), value, this->device_type());
-        }
+        // Kept for source compatibility; fill_ is the canonical spelling and
+        // the one that takes a stream.
+        void fill(const value_type& value) { this->fill_(value); }
         
         
         Tensor<value_type> add(const Tensor<value_type>& rhs) const;   
@@ -160,6 +159,9 @@ namespace om
         Tensor<value_type> shift_scale(value_type shift, value_type scale) const;
 
         template<typename Op>
+        Tensor<value_type> apply_binary(const Tensor<value_type>& rhs, Op op, const Stream& s) const;
+
+        template<typename Op>
         Tensor<value_type> apply_binary(const Tensor<value_type>& rhs, Op op) const;
 
 
@@ -173,6 +175,116 @@ namespace om
         Tensor<value_type> fused_mul_add(const Tensor<value_type>& rhs, value_type shift) const;
     
         Tensor<value_type> fused_div_add(const Tensor<value_type>& rhs, value_type shift) const;
+
+        // ── Destination-provided overloads ──────────────────────────────────
+        //
+        // `a.add_out(b, out)` writes a+b into `out`'s existing buffer and
+        // returns a reference to it, so a loop running the same op every
+        // iteration allocates once instead of once per iteration. `out` must
+        // already carry the result's shape and sit on the same device; it may
+        // be one of the operands (that is what the in-place family below is).
+        //
+        // These are the single implementation of each op: the allocating forms
+        // above build the result and call straight into them, and the in-place
+        // forms pass *this as the destination. Nothing else branches on
+        // device_type().
+
+        Tensor<value_type>& add_out(const Tensor<value_type>& rhs, Tensor<value_type>& out, const Stream& s) const;
+        Tensor<value_type>& add_out(const Tensor<value_type>& rhs, Tensor<value_type>& out) const;
+        Tensor<value_type>& sub_out(const Tensor<value_type>& rhs, Tensor<value_type>& out, const Stream& s) const;
+        Tensor<value_type>& sub_out(const Tensor<value_type>& rhs, Tensor<value_type>& out) const;
+        Tensor<value_type>& mul_out(const Tensor<value_type>& rhs, Tensor<value_type>& out, const Stream& s) const;
+        Tensor<value_type>& mul_out(const Tensor<value_type>& rhs, Tensor<value_type>& out) const;
+        Tensor<value_type>& div_out(const Tensor<value_type>& rhs, Tensor<value_type>& out, const Stream& s) const;
+        Tensor<value_type>& div_out(const Tensor<value_type>& rhs, Tensor<value_type>& out) const;
+
+        Tensor<value_type>& add_out(const value_type& scalar, Tensor<value_type>& out, const Stream& s) const;
+        Tensor<value_type>& add_out(const value_type& scalar, Tensor<value_type>& out) const;
+        Tensor<value_type>& sub_out(const value_type& scalar, Tensor<value_type>& out, const Stream& s) const;
+        Tensor<value_type>& sub_out(const value_type& scalar, Tensor<value_type>& out) const;
+        Tensor<value_type>& mul_out(const value_type& scalar, Tensor<value_type>& out, const Stream& s) const;
+        Tensor<value_type>& mul_out(const value_type& scalar, Tensor<value_type>& out) const;
+        Tensor<value_type>& div_out(const value_type& scalar, Tensor<value_type>& out, const Stream& s) const;
+        Tensor<value_type>& div_out(const value_type& scalar, Tensor<value_type>& out) const;
+
+        // matmul, transpose and permute each read an index they do not write,
+        // so unlike the elementwise family `out` may not be an operand.
+        Tensor<value_type>& matmul_out(const Tensor<value_type>& rhs, Tensor<value_type>& out, const Stream& s) const;
+        Tensor<value_type>& matmul_out(const Tensor<value_type>& rhs, Tensor<value_type>& out) const;
+        Tensor<value_type>& transpose_out(Tensor<value_type>& out, const Stream& s) const;
+        Tensor<value_type>& transpose_out(Tensor<value_type>& out) const;
+        Tensor<value_type>& permute_out(const std::vector<size_t>& axes, Tensor<value_type>& out, const Stream& s) const;
+        Tensor<value_type>& permute_out(const std::vector<size_t>& axes, Tensor<value_type>& out) const;
+
+        template<typename Op>
+        Tensor<value_type>& apply_out(Op op, Tensor<value_type>& out, const Stream& s) const;
+        template<typename Op>
+        Tensor<value_type>& apply_out(Op op, Tensor<value_type>& out) const;
+        template<typename Op>
+        Tensor<value_type>& apply_binary_out(const Tensor<value_type>& rhs, Op op,
+                                             Tensor<value_type>& out, const Stream& s) const;
+        template<typename Op>
+        Tensor<value_type>& apply_binary_out(const Tensor<value_type>& rhs, Op op,
+                                             Tensor<value_type>& out) const;
+
+        Tensor<value_type>& relu_out(Tensor<value_type>& out, const Stream& s) const;
+        Tensor<value_type>& relu_out(Tensor<value_type>& out) const;
+        Tensor<value_type>& sigmoid_out(Tensor<value_type>& out, const Stream& s) const;
+        Tensor<value_type>& sigmoid_out(Tensor<value_type>& out) const;
+
+        // ── In-place ops ────────────────────────────────────────────────────
+        //
+        // Trailing underscore, as in PyTorch: the result replaces this
+        // tensor's contents, no allocation and no free happen, and the return
+        // is *this so calls chain. Every one of them is `X_out(..., *this)`.
+        //
+        // They are only defined for ops whose kernels read and write the same
+        // index — the elementwise families, `apply`, `apply_binary` and
+        // `fill`. matmul, transpose and permute have no in-place form.
+
+        Tensor<value_type>& add_(const Tensor<value_type>& rhs, const Stream& s);
+        Tensor<value_type>& add_(const Tensor<value_type>& rhs);
+        Tensor<value_type>& sub_(const Tensor<value_type>& rhs, const Stream& s);
+        Tensor<value_type>& sub_(const Tensor<value_type>& rhs);
+        Tensor<value_type>& mul_(const Tensor<value_type>& rhs, const Stream& s);
+        Tensor<value_type>& mul_(const Tensor<value_type>& rhs);
+        Tensor<value_type>& div_(const Tensor<value_type>& rhs, const Stream& s);
+        Tensor<value_type>& div_(const Tensor<value_type>& rhs);
+
+        Tensor<value_type>& add_(const value_type& scalar, const Stream& s);
+        Tensor<value_type>& add_(const value_type& scalar);
+        Tensor<value_type>& sub_(const value_type& scalar, const Stream& s);
+        Tensor<value_type>& sub_(const value_type& scalar);
+        Tensor<value_type>& mul_(const value_type& scalar, const Stream& s);
+        Tensor<value_type>& mul_(const value_type& scalar);
+        Tensor<value_type>& div_(const value_type& scalar, const Stream& s);
+        Tensor<value_type>& div_(const value_type& scalar);
+
+        Tensor<value_type>& operator+=(const Tensor<value_type>& rhs);
+        Tensor<value_type>& operator-=(const Tensor<value_type>& rhs);
+        Tensor<value_type>& operator*=(const Tensor<value_type>& rhs);
+        Tensor<value_type>& operator/=(const Tensor<value_type>& rhs);
+        Tensor<value_type>& operator+=(const value_type& scalar);
+        Tensor<value_type>& operator-=(const value_type& scalar);
+        Tensor<value_type>& operator*=(const value_type& scalar);
+        Tensor<value_type>& operator/=(const value_type& scalar);
+
+        template<typename Op>
+        Tensor<value_type>& apply_(Op op, const Stream& s);
+        template<typename Op>
+        Tensor<value_type>& apply_(Op op);
+        template<typename Op>
+        Tensor<value_type>& apply_binary_(const Tensor<value_type>& rhs, Op op, const Stream& s);
+        template<typename Op>
+        Tensor<value_type>& apply_binary_(const Tensor<value_type>& rhs, Op op);
+
+        Tensor<value_type>& relu_(const Stream& s);
+        Tensor<value_type>& relu_();
+        Tensor<value_type>& sigmoid_(const Stream& s);
+        Tensor<value_type>& sigmoid_();
+
+        Tensor<value_type>& fill_(const value_type& value, const Stream& s);
+        Tensor<value_type>& fill_(const value_type& value);
 
         Tensor<value_type> to(const Device& target) const;
         Tensor<value_type> cpu() const;
@@ -213,6 +325,34 @@ namespace om
         // device-default allocator. `dv` must be CPU when `pinned` is true —
         // there is no such thing as pinned device memory.
         Tensor(const std::vector<size_t>& shape, const Device& dv, Stream stream, bool pinned);
+
+        // Throws unless `out` can receive a result of shape `shape` produced on
+        // this tensor's device. `who` names the caller in the message.
+        void _check_out(const Tensor<value_type>& out,
+                        const std::vector<size_t>& shape,
+                        const char* who) const;
+
+        // Throws unless `rhs` is a legal second operand for an elementwise op.
+        void _check_operand(const Tensor<value_type>& rhs, const char* who) const;
+
+        // Every elementwise path — the CPU loop, the contiguous GPU fast path
+        // and the rank-specialized kernels — reads index i and writes index i,
+        // so a destination that *is* an operand is exactly as correct as a
+        // separate one. That equivalence rests on all three buffers being one
+        // flat run each; it says nothing about a strided view aliasing a
+        // different region of the same allocation, which is what a real view
+        // type (roadmap P2) would make possible. Nothing in the library can
+        // build one today, so this throws when it meets one rather than
+        // quietly computing the wrong answer.
+        void _check_alias_elementwise(const Tensor<value_type>& out,
+                                      const Tensor<value_type>* rhs,
+                                      const char* who) const;
+
+        // For ops that read an index they do not write (matmul, transpose,
+        // permute), where sharing a buffer is simply wrong.
+        void _check_alias_none(const Tensor<value_type>& out,
+                               const Tensor<value_type>* rhs,
+                               const char* who) const;
 
         void _compute_strides();
         inline size_t _compute_flat_index(const std::vector<size_t>& indices) const;

@@ -409,11 +409,19 @@ class Tensor:
         _check_int(self._fn("to_device")(self._h, dest.data_ptr(), eb, _ERR_LEN), eb)
         return dest
 
-    def fill(self, value: Scalar) -> "Tensor":
+    def fill(self, value: Scalar, stream: Optional[Stream] = None) -> "Tensor":
         eb = _errbuf()
-        _check_int(self._fn("fill")(self._h, self._dt.ctype(self._dt.py_type(value)),
-                                    eb, _ERR_LEN), eb)
+        val = self._dt.ctype(self._dt.py_type(value))
+        if stream is None:
+            _check_int(self._fn("fill")(self._h, val, eb, _ERR_LEN), eb)
+        else:
+            _check_int(self._fn("fill_stream")(self._h, val, _handle_of(stream),
+                                               eb, _ERR_LEN), eb)
         return self
+
+    def fill_(self, value: Scalar, stream: Optional[Stream] = None) -> "Tensor":
+        """Alias of fill(), spelled like the rest of the in-place family."""
+        return self.fill(value, stream)
 
     def _index_array(self, key):
         idx = key if isinstance(key, tuple) else (key,)
@@ -522,6 +530,184 @@ class Tensor:
 
     def matmul(self, other: "Tensor", stream: Optional[Stream] = None) -> "Tensor":
         return self._binop_tt(other, "matmul", stream)
+
+    # ── in-place and destination-provided ops ─────────────────────────────
+    #
+    # Every method here writes into a buffer that already exists — this
+    # tensor's own for the trailing-underscore family, the caller's `out` for
+    # the `_out` family — and returns the tensor it wrote to, so calls chain.
+    # No handle is created or destroyed, which is the point: a loop that runs
+    # the same op every iteration stops allocating one result per iteration.
+    #
+    # A destination that is not freshly allocated carries a caveat the
+    # allocating forms do not: memory from cudaMallocAsync is stream-ordered,
+    # so passing a `stream` other than the one `out` (or self) was allocated
+    # on is only safe once the caller has ordered the two.
+
+    def _check_out(self, out: "Tensor"):
+        self._same_dtype(out)
+        if out._h is None:
+            raise ValueError("destination tensor has been closed")
+
+    def _inplace_tt(self, other: "Tensor", name: str,
+                    stream: Optional[Stream] = None) -> "Tensor":
+        self._same_dtype(other)
+        eb = _errbuf()
+        if stream is None:
+            rc = self._fn(f"{name}_inplace")(self._h, other._h, eb, _ERR_LEN)
+        else:
+            rc = self._fn(f"{name}_inplace_stream")(self._h, other._h,
+                                                    _handle_of(stream), eb, _ERR_LEN)
+        _check_int(rc, eb)
+        return self
+
+    def _inplace_ts(self, scalar: Scalar, name: str,
+                    stream: Optional[Stream] = None) -> "Tensor":
+        if not isinstance(scalar, (int, float)):
+            raise TypeError(
+                f"expected a Tensor or a number, got {type(scalar).__name__}")
+        val = self._dt.ctype(self._dt.py_type(scalar))
+        eb = _errbuf()
+        if stream is None:
+            rc = self._fn(f"{name}_scalar_inplace")(self._h, val, eb, _ERR_LEN)
+        else:
+            rc = self._fn(f"{name}_scalar_inplace_stream")(self._h, val,
+                                                           _handle_of(stream), eb, _ERR_LEN)
+        _check_int(rc, eb)
+        return self
+
+    def _dispatch_inplace(self, other, name, stream=None) -> "Tensor":
+        if isinstance(other, Tensor):
+            return self._inplace_tt(other, name, stream)
+        return self._inplace_ts(other, name, stream)
+
+    def add_(self, other, stream: Optional[Stream] = None) -> "Tensor":
+        """self += other, without allocating. Returns self."""
+        return self._dispatch_inplace(other, "add", stream)
+
+    def sub_(self, other, stream: Optional[Stream] = None) -> "Tensor":
+        return self._dispatch_inplace(other, "sub", stream)
+
+    def mul_(self, other, stream: Optional[Stream] = None) -> "Tensor":
+        return self._dispatch_inplace(other, "mul", stream)
+
+    def div_(self, other, stream: Optional[Stream] = None) -> "Tensor":
+        return self._dispatch_inplace(other, "div", stream)
+
+    def relu_(self, stream: Optional[Stream] = None) -> "Tensor":
+        return self._inplace_unary("relu", stream)
+
+    def sigmoid_(self, stream: Optional[Stream] = None) -> "Tensor":
+        return self._inplace_unary("sigmoid", stream)
+
+    def _inplace_unary(self, name: str, stream: Optional[Stream] = None) -> "Tensor":
+        eb = _errbuf()
+        if stream is None:
+            rc = self._fn(f"{name}_inplace")(self._h, eb, _ERR_LEN)
+        else:
+            rc = self._fn(f"{name}_inplace_stream")(self._h, _handle_of(stream),
+                                                    eb, _ERR_LEN)
+        _check_int(rc, eb)
+        return self
+
+    def __iadd__(self, other):
+        return self._dispatch_inplace(other, "add") if _is_operand(other) else NotImplemented
+
+    def __isub__(self, other):
+        return self._dispatch_inplace(other, "sub") if _is_operand(other) else NotImplemented
+
+    def __imul__(self, other):
+        return self._dispatch_inplace(other, "mul") if _is_operand(other) else NotImplemented
+
+    def __itruediv__(self, other):
+        return self._dispatch_inplace(other, "div") if _is_operand(other) else NotImplemented
+
+    def _out_tt(self, other: "Tensor", name: str, out: "Tensor",
+                stream: Optional[Stream] = None) -> "Tensor":
+        self._same_dtype(other)
+        self._check_out(out)
+        eb = _errbuf()
+        if stream is None:
+            rc = self._fn(f"{name}_out")(self._h, other._h, out._h, eb, _ERR_LEN)
+        else:
+            rc = self._fn(f"{name}_out_stream")(self._h, other._h, out._h,
+                                                _handle_of(stream), eb, _ERR_LEN)
+        _check_int(rc, eb)
+        return out
+
+    def _out_ts(self, scalar: Scalar, name: str, out: "Tensor",
+                stream: Optional[Stream] = None) -> "Tensor":
+        if not isinstance(scalar, (int, float)):
+            raise TypeError(
+                f"expected a Tensor or a number, got {type(scalar).__name__}")
+        self._check_out(out)
+        val = self._dt.ctype(self._dt.py_type(scalar))
+        eb = _errbuf()
+        if stream is None:
+            rc = self._fn(f"{name}_scalar_out")(self._h, val, out._h, eb, _ERR_LEN)
+        else:
+            rc = self._fn(f"{name}_scalar_out_stream")(self._h, val, out._h,
+                                                       _handle_of(stream), eb, _ERR_LEN)
+        _check_int(rc, eb)
+        return out
+
+    def _dispatch_out(self, other, name, out, stream=None) -> "Tensor":
+        if isinstance(other, Tensor):
+            return self._out_tt(other, name, out, stream)
+        return self._out_ts(other, name, out, stream)
+
+    def add_out(self, other, out: "Tensor", stream: Optional[Stream] = None) -> "Tensor":
+        """Write self + other into `out` (same shape and device). Returns out."""
+        return self._dispatch_out(other, "add", out, stream)
+
+    def sub_out(self, other, out: "Tensor", stream: Optional[Stream] = None) -> "Tensor":
+        return self._dispatch_out(other, "sub", out, stream)
+
+    def mul_out(self, other, out: "Tensor", stream: Optional[Stream] = None) -> "Tensor":
+        return self._dispatch_out(other, "mul", out, stream)
+
+    def div_out(self, other, out: "Tensor", stream: Optional[Stream] = None) -> "Tensor":
+        return self._dispatch_out(other, "div", out, stream)
+
+    def matmul_out(self, other: "Tensor", out: "Tensor",
+                   stream: Optional[Stream] = None) -> "Tensor":
+        """Write self @ other into `out`. `out` may not be an operand."""
+        return self._out_tt(other, "matmul", out, stream)
+
+    def _out_unary(self, name: str, out: "Tensor",
+                   stream: Optional[Stream] = None) -> "Tensor":
+        self._check_out(out)
+        eb = _errbuf()
+        if stream is None:
+            rc = self._fn(f"{name}_out")(self._h, out._h, eb, _ERR_LEN)
+        else:
+            rc = self._fn(f"{name}_out_stream")(self._h, out._h, _handle_of(stream),
+                                                eb, _ERR_LEN)
+        _check_int(rc, eb)
+        return out
+
+    def relu_out(self, out: "Tensor", stream: Optional[Stream] = None) -> "Tensor":
+        return self._out_unary("relu", out, stream)
+
+    def sigmoid_out(self, out: "Tensor", stream: Optional[Stream] = None) -> "Tensor":
+        return self._out_unary("sigmoid", out, stream)
+
+    def transpose_out(self, out: "Tensor", stream: Optional[Stream] = None) -> "Tensor":
+        return self._out_unary("transpose", out, stream)
+
+    def permute_out(self, axes, out: "Tensor", stream: Optional[Stream] = None) -> "Tensor":
+        self._check_out(out)
+        if len(axes) == 1 and isinstance(axes[0], (list, tuple)):
+            axes = axes[0]
+        arr, n = _shape_array(axes)
+        eb = _errbuf()
+        if stream is None:
+            rc = self._fn("permute_out")(self._h, arr, n, out._h, eb, _ERR_LEN)
+        else:
+            rc = self._fn("permute_out_stream")(self._h, arr, n, out._h,
+                                                _handle_of(stream), eb, _ERR_LEN)
+        _check_int(rc, eb)
+        return out
 
     # Operators return NotImplemented for foreign operands so Python can fall
     # back to the other object's reflected method (and raise the standard

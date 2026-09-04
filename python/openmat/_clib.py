@@ -132,6 +132,30 @@ def _declare_dtype(dt):
         d(f"{name}_scalar", _p, [_p, C, _cp, _i])
         d(f"{name}_scalar_stream", _p, [_p, C, _p, _cp, _i])
 
+    # in-place and destination-provided ops — all int-returning: nothing is
+    # allocated and no handle changes hands, so there is no pointer to check
+    for name in ("add", "sub", "mul", "div"):
+        d(f"{name}_inplace", _i, [_p, _p, _cp, _i])
+        d(f"{name}_inplace_stream", _i, [_p, _p, _p, _cp, _i])
+        d(f"{name}_out", _i, [_p, _p, _p, _cp, _i])
+        d(f"{name}_out_stream", _i, [_p, _p, _p, _p, _cp, _i])
+        d(f"{name}_scalar_inplace", _i, [_p, C, _cp, _i])
+        d(f"{name}_scalar_inplace_stream", _i, [_p, C, _p, _cp, _i])
+        d(f"{name}_scalar_out", _i, [_p, C, _p, _cp, _i])
+        d(f"{name}_scalar_out_stream", _i, [_p, C, _p, _p, _cp, _i])
+    d("matmul_out", _i, [_p, _p, _p, _cp, _i])
+    d("matmul_out_stream", _i, [_p, _p, _p, _p, _cp, _i])
+    for name in ("relu", "sigmoid"):
+        d(f"{name}_inplace", _i, [_p, _cp, _i])
+        d(f"{name}_inplace_stream", _i, [_p, _p, _cp, _i])
+        d(f"{name}_out", _i, [_p, _p, _cp, _i])
+        d(f"{name}_out_stream", _i, [_p, _p, _p, _cp, _i])
+    d("transpose_out", _i, [_p, _p, _cp, _i])
+    d("transpose_out_stream", _i, [_p, _p, _p, _cp, _i])
+    d("permute_out", _i, [_p, _sp, _sz, _p, _cp, _i])
+    d("permute_out_stream", _i, [_p, _sp, _sz, _p, _p, _cp, _i])
+    d("fill_stream", _i, [_p, C, _p, _cp, _i])
+
     # reductions
     for name in ("sum", "mean", "min", "max"):
         d(name, C, [_p, _cp, _i])
