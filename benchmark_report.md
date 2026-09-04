@@ -341,6 +341,85 @@ is unaffected by any of the above.
 were not part of this pass and remain single-threaded on CPU regardless of size;
 the same `if(_total > N)` treatment as §7.1 would apply there unchanged.
 
+## 8. Elementwise kernels ignored contiguity — every rank now runs at rank-1 speed
+
+§2 raised the rank-1 blocks from 16 threads to 256 and closed the rank-1 gap:
+`add` over 16 M floats now measures 913 µs end-to-end, 220 GB/s, not the 159
+GB/s in the table below. What it did not touch is every *other* rank, and that
+turned out to be the larger hole.
+
+The rank-specialized launchers map tensor axes onto grid axes. Only at rank 1
+does that leave a warp's 32 lanes contiguous in memory. A rank-2 `dim3(16,16)`
+block gives each warp two disjoint runs of 16 elements; a rank-3 `dim3(8,8,8)`
+block gives it four runs of 8. Those are 64- and 32-byte requests against a
+128-byte line. Rank 5 has no specialized kernel at all and lands on `_nd`, which
+reconstructs a multi-index with a `%` and a `/` per axis per element.
+
+The shape was never load-bearing. Every tensor OpenMat produces is contiguous
+row-major — `reshape` and friends deep-copy, nothing returns an aliasing view —
+so the launchers can throw the axis structure away and index the buffer
+linearly. `TensorView::is_contiguous()` gates it, so a strided view (roadmap P2)
+falls back to the existing kernels rather than reading the wrong elements.
+
+Kernel time only, 16 M elements, 3× traffic, `add`:
+
+| dtype | rank 1 | rank 2 | rank 3 | rank 4 | rank 5 |
+|---|---|---|---|---|---|
+| `float` before | 229.7 | 206.3 | 141.3 | 104.4 | 26.1 |
+| `float` after | 229.5 | **228.6** | **232.8** | **229.0** | **231.0** |
+| `int` before | 232.9 | 210.3 | 144.4 | | |
+| `int` after | 224.2 | **232.4** | **228.0** | | |
+| `float16_t` before | 241.8 | 107.5 | 68.0 | | |
+| `float16_t` after | 231.5 | **232.1** | **232.2** | | |
+| `char` before | 190.8 | 52.7 | 34.0 | | |
+| `char` after | **270.1** | **270.2** | **269.8** | | |
+
+GB/s. `char` reads high across the board because 16 M elements is only 48 MiB of
+traffic against a 24 MiB L2 — it is not comparable with the `float` row, only
+with the `char` row above it.
+
+`char` is also the one dtype that needed more than flattening. A lane loading
+one `char` puts 32 bytes in front of a warp, and that alone costs bandwidth:
+190.8 GB/s at rank 1, where the layout was already ideal. So the fast path packs
+`4 / sizeof(T)` elements per thread — 1 for `float` and `int`, 2 for
+`float16_t`, 4 for `char` — punned through a 4-byte word.
+
+Four bytes, not sixteen. Vector loads are the standard advice and they measured
+*worse*: one 16-byte `float4` per thread drops `add` to 216 GB/s against 235 for
+one scalar `float`, because the launch gives up the thread-level parallelism it
+needs to keep the memory pipeline busy. A grid-stride loop capped at a few waves
+per SM costs another 8–12 %. Neither is used. Isolated, 16 M elements:
+
+| bytes per thread | `float` | `float16_t` | `char` |
+|---|---|---|---|
+| 1 | | | 193 |
+| 2 | | 235 | |
+| 4 | **235** | **239** | **236** |
+| 8 | 227 | 227 | 227 |
+| 16 | 216 | 223 | 223 |
+
+Block size stays at 256. 512 and 1024 buy 2–3 % once the working set passes L2
+and lose up to 35 % below it, where occupancy rather than bandwidth is the
+limit; 256 is never more than 2.5 % off the best at any size.
+
+End-to-end through the Python bindings, same method as the rest of this report
+(`min` of 7 batches, allocation and synchronization included), 16 M `float32`:
+
+| op | shape | before | after |
+|---|---|---|---|
+| `add` | `(16777216,)` | 913.7 µs | 919.9 µs |
+| `add` | `(4096, 4096)` | 984.4 µs | **915.2 µs** |
+| `add` | `(256, 256, 256)` | 1442.0 µs | **919.8 µs** |
+| `add` | `(16,16,16,16,256)` | 7644.3 µs | **918.7 µs** |
+| `relu` | `(256, 256, 256)` | 973.9 µs | **618.0 µs** |
+| `relu` | `(16,16,16,16,256)` | 4200.3 µs | **619.0 µs** |
+| `fused (a+b)*s` | `(256, 256, 256)` | 1440.9 µs | **918.9 µs** |
+| `fused (a+b)*s` | `(16,16,16,16,256)` | 7639.0 µs | **919.8 µs** |
+
+Rank 1 is unchanged, as it should be — it was already the layout everything else
+now gets. Every other rank collapses onto it: 8.3× at rank 5, 1.57× at rank 3,
+1.08× at rank 2, and the op no longer cares how the buffer is shaped.
+
 ## Full results
 
 ### CPU, default threading

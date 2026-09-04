@@ -56,7 +56,7 @@ Full tables, root-cause analysis and reproduction steps in
 | CPU elementwise (`add`/`sub`/`mul`/`div`), ≥1 M elem, OpenMP | **now faster than NumPy** — up to 10.6× over single-thread at 1 M elem |
 | H2D / D2H transfer | parity, within 5 % |
 | GPU `sum`, 16 M elem | 1.15× slower — 320 µs vs 278 µs |
-| GPU elementwise `add`, 16 M elem | 1.47× slower — 159 GB/s vs 234 GB/s |
+| GPU elementwise `add`, 16 M elem | 1.07× slower — 219 GB/s vs 234 GB/s, at **any rank** |
 | Per-op dispatch floor | 1.7 µs on CPU, 8.7 µs on CUDA (PyTorch: 0.8 / 3.2 µs) |
 | CPU `sum`, 16 M elem | 4.1× slower — 7.7 GB/s vs ~93 GB/s |
 | CPU `matmul`, 1024³ | **421× slower** — 1.81 GFLOP/s vs 756 GFLOP/s |
@@ -67,6 +67,49 @@ Full tables, root-cause analysis and reproduction steps in
 235 GB/s — the highest effective bandwidth any op reached in the run. The same argument
 runs in reverse on the CPU, where NumPy's `a * 2.0 + 1.0` is two passes over 64 MB and
 `scale_shift` beats both references outright.
+
+**Elementwise kernels ignored contiguity — every rank now runs at rank-1 speed.**
+The rank-specialized launchers map tensor axes onto grid axes, and only at rank 1 does
+that leave a warp's 32 lanes contiguous in memory. A rank-2 `dim3(16,16)` block gives each
+warp two disjoint runs of 16 elements, a rank-3 `dim3(8,8,8)` block four runs of 8: 64- and
+32-byte requests against a 128-byte line. The shape was never load-bearing — every tensor
+OpenMat produces is contiguous row-major, since `reshape` and friends deep-copy — so the
+launchers now index the buffer linearly and give every rank the rank-1 layout. Kernel time
+only, `add` over 16 M elements:
+
+| dtype | rank 1 | rank 2 | rank 3 | rank 4 | rank 5 |
+|---|---|---|---|---|---|
+| `float` before | 229.7 | 206.3 | 141.3 | 104.4 | 26.1 |
+| `float` after | 229.5 | **228.6** | **232.8** | **229.0** | **231.0** |
+| `float16_t` before | 241.8 | 107.5 | 68.0 | | |
+| `float16_t` after | 231.5 | **232.1** | **232.2** | | |
+| `char` before | 190.8 | 52.7 | 34.0 | | |
+| `char` after | **270.1** | **270.2** | **269.8** | | |
+
+GB/s. (`char` reads high throughout because 16 M elements is only 48 MB of traffic against
+a 24 MB L2 — compare it with the `char` row above it, not with `float`.) End-to-end through
+the Python bindings, allocation and synchronization included, `add` on 16 M `float32` goes
+from 7644 µs to **919 µs** at rank 5, 1442 → **920 µs** at rank 3, 984 → **915 µs** at
+rank 2, and is unchanged at rank 1 — which is the point: rank 1 was already the layout
+everything else now gets. `TensorView::is_contiguous()` gates the path, so a strided view
+(when views land) falls back to the existing kernels instead of reading the wrong elements.
+
+`char` was the one dtype that needed more than flattening: a lane loading one `char` puts
+32 bytes in front of a warp, worth 190.8 GB/s even at rank 1, where the layout was already
+ideal. So the fast path packs `4 / sizeof(T)` elements per thread. **Four bytes, not
+sixteen** — `float4` vector loads are the standard advice and they measured *worse* here:
+
+| bytes per thread | `float` | `float16_t` | `char` |
+|---|---|---|---|
+| 1 | | | 193 |
+| 2 | | 235 | |
+| 4 | **235** | **239** | **236** |
+| 16 (`float4`) | 216 | 223 | 223 |
+
+One 16-byte load per thread costs the launch the thread-level parallelism it needs to keep
+the memory pipeline full; a grid-stride loop capped at a few waves per SM costs a further
+8–12 %. Neither is used. Full analysis in
+[benchmark_report.md §8](benchmark_report.md#8-elementwise-kernels-ignored-contiguity--every-rank-now-runs-at-rank-1-speed).
 
 **The CPU gap above 128 KB was the allocator, not the loop — now fixed.** `add` at 16 M
 measured 25.2 ms against NumPy's 6.1 ms, because `CpuAllocator` called `malloc` directly
@@ -94,13 +137,11 @@ of it. Full numbers in [benchmark_report.md §7](benchmark_report.md#7-cpu-eleme
 get this pass and are still single-threaded on CPU regardless of size — same loop shape,
 same fix, just not done yet.
 
-**Two of the remaining gaps have a single, local cause.**
-
-- *Rank-1 CUDA kernels launch 16-thread blocks*, occupying a warp with half its lanes
-  idle — see [Design decisions](#design-decisions).
-- *`sum` accumulates into one serial register.* The loop-carried FP dependency in
-  `reduce_sum_cpu` blocks auto-vectorisation, so it runs at one add per FP latency.
-  Independent partial accumulators would recover most of it. The GPU reduction is fine.
+**One remaining gap has a single, local cause.** *`sum` accumulates into one serial
+register.* The loop-carried FP dependency in `reduce_sum_cpu` blocks auto-vectorisation, so
+it runs at one add per FP latency. Independent partial accumulators would recover most of
+it. The GPU reduction is fine. (The other one — rank-1 kernels launching 16-thread blocks —
+has since been fixed; see [Design decisions](#design-decisions).)
 
 `matmul` is the one structural gap rather than a tuning gap: `matmul_cpu` is the textbook
 `ijk` triple loop indexing `rhs(k, j)` down a column, against OpenBLAS. Reordering to
@@ -261,6 +302,8 @@ Since the stream refactor these are **mostly dead code**: the `_dispatch` struct
 
 **Rank-specialized CUDA kernels** — `DEFINE_BINARY_OP_LAUNCH` generates a `launch_op` function that switches on `tensor.rank` (1–4) and selects a kernel with a rank-tuned grid/block layout. Rank ≥ 5 falls back to a flat 1D kernel (`_kernel_nd`) that reconstructs multi-indices from a linear index. Explicit template instantiations for `float`, `int`, `char`, `float16_t` are emitted per op.
 
+**Contiguous fast path** — [headers/ops/kernels/contiguous.cuh](headers/ops/kernels/contiguous.cuh). Every elementwise launcher tries this first: since all tensors are contiguous row-major, the axis structure carries nothing the kernel needs, so the buffer is indexed linearly and every rank gets the rank-1 layout. Threads move `4 / sizeof(T)` elements each (1 for `float`/`int`, 2 for `float16_t`, 4 for `char`), packed through a 4-byte word. `TensorView::is_contiguous()` gates it, so the day a strided view exists it falls back to the rank-specialized kernels rather than reading the wrong elements. Covers `launch_add`/`sub`/`mul`/`div`, the scalar `_k` family, `launch_apply_op`, `launch_apply_binary_op` and `launch_fill`.
+
 ```
 headers/ops/cpu/        ← CPU op declarations (macro-generated inline functions)
 src/ops/cpu/            ← CPU op .cpp translation units
@@ -277,18 +320,20 @@ These are the non-obvious choices made during development, and why.
 **Rank-specialized kernels over a single generic kernel**
 A single flat kernel must reconstruct multi-dimensional indices from a linear offset at runtime, which adds per-thread division and modulo overhead and prevents rank-aware grid/block tuning. For rank 1–4, dedicated kernels use grid shapes matched to the tensor dimensions (e.g. a 2D `dim3(16,16)` block for rank-2), avoiding that overhead. Rank ≥ 5 falls back to `_kernel_nd`, which does the index reconstruction generically.
 
-> **The benchmark partly contradicts this.** The rank-1 launchers use `dim3(16)` — a
-> 16-thread block occupies a warp with half its lanes idle. Reshaping the same 16 M-element
-> buffer so the launcher picks a 256-thread path makes `add` go **149 → 187 GB/s** and
-> `relu` **118 → 174 GB/s**; the generic `_kernel_nd` path, at `dim3(256)`, beats the
-> "specialized" rank-1 one. The single exception is `apply_binary_op_rank1`
-> ([src/ops/kernels/fused_op.cu:205](src/ops/kernels/fused_op.cu)), which already launches
-> 256 threads — and it is the only op in the whole GPU run that reaches the machine's
-> bandwidth roofline. Reshaping a vector to a matrix should not make elementwise addition
-> 25 % faster. The two remaining `threads(16)` sites are
-> [binary_op_macros.cuh:23](headers/ops/kernels/binary_op_macros.cuh) and
-> [fused_op.cu:79](src/ops/kernels/fused_op.cu). Rank specialization is still the right
-> idea for indexing; the block sizes chosen for it were not.
+> **The benchmark contradicted this twice, and both are now fixed.** First the block
+> sizes: the rank-1 launchers used `dim3(16)`, occupying a warp with half its lanes idle,
+> so reshaping the same 16 M-element buffer to rank 2 made `add` go **149 → 187 GB/s**.
+> Every rank-1 site now launches 256 threads.
+>
+> Then the premise itself. With the block sizes fixed, rank 1 was the *fastest* layout, not
+> the slowest — 229.7 GB/s against 206 at rank 2, 141 at rank 3, 104 at rank 4 and 26 at
+> rank 5. Mapping axes onto grid axes is what costs: only at rank 1 does a warp's 32 lanes
+> stay contiguous in memory. And the indexing overhead the rank specialization exists to
+> avoid is not worth paying for, because the shape is redundant — every tensor here is
+> contiguous row-major, so the buffer can simply be indexed linearly. The contiguous fast
+> path does that and brings every rank to 228–233 GB/s. The rank-specialized kernels are
+> still compiled and still correct; they are now the fallback for the strided views the
+> library does not yet have.
 
 **RAII for GPU memory via `Tensor<T>` + `Allocator<T>`**
 Rather than pairing raw `cudaMalloc`/`cudaFree` calls at each use site, every `Tensor` owns a polymorphic `Allocator` chosen at construction time by `AllocatorFactory`. The destructor delegates to `allocator->deallocate`, making GPU memory lifetime deterministic regardless of exceptions or early returns — the same pattern used in PyTorch's `at::DataPtr`.
@@ -322,6 +367,7 @@ Using `virtual` dispatch for CPU vs. CUDA would add a vtable indirection on ever
 
 - **Rank-specialized kernels**: elementwise ops (add, sub, mul, div) with dedicated CUDA kernels for rank 1–4, each with a rank-tuned grid/block layout
 - **N-dimensional support**: generic `_kernel_nd` fallback for rank ≥ 5 with stride-aware index reconstruction
+- **Contiguous fast path**: elementwise launchers detect the (universal) contiguous case and index linearly, so rank 2–5 run at the same bandwidth as rank 1 — up to 8.3× on rank-5 `add`
 - **RAII GPU memory**: `Tensor<T>` owns a polymorphic `Allocator<T>` (CPU or GPU) with move semantics and no raw pointer leaks
 - **Stream-aware allocator**: `GpuAllocator` uses `cudaMallocAsync`/`cudaFreeAsync`; each `Tensor` carries its stream and frees on it asynchronously
 - **Zero-overhead stream API**: every op has a `(args, Stream&)` overload; no-stream variants delegate to `Stream::default_stream()` — one code path, two calling conventions
@@ -379,7 +425,7 @@ result never shows up in the original.
 Requirements: NVIDIA GPU, CUDA Toolkit ≥ 11.2 (for `cudaMallocAsync`), CMake ≥ 3.24 (for
 `CMAKE_CUDA_ARCHITECTURES=native`), a C++17/CUDA 17 compiler, OpenMP (`find_package(OpenMP REQUIRED)`;
 bundled as `libgomp` with a stock GCC install, nothing extra to install on most systems).
-Verified on CUDA 13.0 / GCC 13.3 / CMake 3.28 / GB10 (sm_121), all 12 suites passing.
+Verified on CUDA 13.0 / GCC 13.3 / CMake 3.28 / GB10 (sm_121), all 14 suites passing.
 
 ```bash
 git clone https://github.com/AntonioPalese/OpenMat.git
@@ -415,14 +461,14 @@ Notes:
 GoogleTest, fetched by CMake via FetchContent; one binary per suite.
 
 ```bash
-cd build && ctest                     # all 12 suites
+cd build && ctest                     # all 14 suites
 ./tests/test_arithmetic               # a single suite, per-test output
 ./tests/test_arithmetic --gtest_filter="TensorArithmetic.CPUOperations"
 ```
 
 `test_arithmetic`, `test_fused_ops`, `test_device_transfer`, `test_factory`,
-`test_reductions`, `test_reshape`, `test_transpose`, `test_streams`, `test_allocator_stream`
-are correctness suites. `test_benchmarks`, `test_stress` and `test_stream_perf` are
+`test_reductions`, `test_reshape`, `test_transpose`, `test_streams`, `test_allocator_stream`,
+`test_host_pool` and `test_contiguous` are correctness suites. `test_benchmarks`, `test_stress` and `test_stream_perf` are
 timing/soak suites — slow, and meaningless in a Debug build.
 
 ---
@@ -490,6 +536,7 @@ cd python && pytest        # test_tensor, test_tensor_api, test_dtypes, test_str
 - [x] `float16_t` support in kernels and `test_benchmarks`
 - [x] Benchmark suite comparing against NumPy / PyTorch (`scripts/bench_vs.py`)
 - [x] OpenMP parallelism for CPU `add`/`sub`/`mul`/`div` and `matmul` (size-gated `parallel for`)
+- [x] Contiguous fast path for elementwise GPU kernels (every rank at rank-1 bandwidth)
 - [ ] Same OpenMP treatment for `apply`/`apply_binary` (`relu`, `sigmoid`, `fused_*`)
 - [ ] cuBLAS integration as an optional matmul backend
 - [ ] Random initialization (cuRAND)
@@ -513,7 +560,9 @@ Building this from scratch exposed a set of problems that high-level frameworks 
 - **Streams only help when you stop synchronizing — and how much they help is not portable** — the biggest win on the RTX 4060 (2.68×) came not from running kernels faster but from removing 99 out of 100 host/device sync barriers in a chain. Re-running the same suite on a GB10 returned 1.03× for that case, because a sync round-trip there costs almost nothing, while the parallel fan-out that was a wash on the 4060 became a 3.3× win. Same code, same test, opposite conclusions.
 - **Raw arrays decay in CUDA kernel parameters** — passing `size_t axes[MAX_RANK]` as a kernel argument silently becomes a host pointer on the device side. The fix is a trivially-copyable struct wrapper so CUDA copies the data by value into the kernel parameter block.
 - **A Python reference is not a lifetime guarantee** — the first two attempts at keeping a CUDA stream alive from Python both segfaulted under `gc.collect()`. The cyclic collector finalizes a cycle's members, plus everything reachable only from them, in arbitrary order, so a `Stream` could be torn down while tensors still owed it a stream-ordered free. Reference counting had to move to the C side of the boundary.
-- **Half a warp is half the bandwidth** — the rank-1 elementwise kernels launch `dim3(16)` blocks, so 16 of 32 lanes in the warp sit idle. It cost 20–32% of memory bandwidth and went unnoticed for as long as there was nothing to compare against: the kernels *were* faster than the CPU path, which is all the internal benchmarks could tell me. It took reshaping the same buffer to a different rank, and watching `add` jump from 149 to 187 GB/s, to see it.
+- **Half a warp is half the bandwidth** — the rank-1 elementwise kernels launched `dim3(16)` blocks, so 16 of 32 lanes in the warp sat idle. It cost 20–32% of memory bandwidth and went unnoticed for as long as there was nothing to compare against: the kernels *were* faster than the CPU path, which is all the internal benchmarks could tell me. It took reshaping the same buffer to a different rank, and watching `add` jump from 149 to 187 GB/s, to see it.
+- **The optimization everyone recommends was the wrong one** — the obvious fix for an elementwise kernel is `__restrict__` pointers, a grid-stride loop and `float4` vector loads. Measured on the target GPU, the vector loads made `add` *slower* (216 GB/s against 235 for one scalar `float` per thread) and the grid-stride loop cost another 8–12 %: one 16-byte load per thread buys coalescing the hardware already had, and pays for it in the thread-level parallelism that keeps the memory pipeline full. What actually mattered was something the advice does not mention — that no thread move *less* than 4 bytes, which is why `char` sat at 193 GB/s — and something not about the kernel at all: that the launcher stop mapping tensor axes onto grid axes when the tensor is contiguous. The 8.3× at rank 5 came from deleting an indexing scheme, not from adding an instruction.
+- **A stale benchmark number is worse than no number** — the table said GPU `add` ran at 159 GB/s, and that was the figure driving the next round of work. It had been true; a block-size fix landed afterwards and quietly moved it to 220 GB/s, but the report was not re-run, so the diagnosis it supported ("the indexing is too slow at rank 1") was aimed at a problem that no longer existed. Re-measuring before optimizing turned up the real one, two ranks over.
 - **A benchmark is a measurement of the whole program, not the code you were looking at** — OpenMat's CPU `add` looked 4× slower than NumPy's at 16 M elements. The loop was not the problem; `malloc` was. Past glibc's 128 KB threshold every result buffer is a fresh `mmap`, and the op pays 16 384 page faults before it computes anything. One environment variable (`MALLOC_MMAP_MAX_=0`) closed the entire gap, and a size-classed free list in `CpuAllocator` made it permanent. The same cause was quietly making a 64 MB device-to-host copy look 24× slower than PyTorch's, in what appeared to be an unrelated part of the library.
 - **Fusion is worth more than kernel tuning** — the ops where OpenMat beats PyTorch and NumPy are not the ones with the best kernels, they are the ones that avoid a memory round-trip. `fused_add_mul` wins by 1.66× against a mature library with better kernels, purely because `(a + b) * s` costs PyTorch a 64 MB intermediate. Arithmetic is nearly free at this scale; every avoided traversal of memory is not.
 - **An OpenMP pragma is a request, not a guarantee — measure it like any other change.**

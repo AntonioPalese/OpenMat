@@ -38,7 +38,7 @@ cd build && ctest                       # all suites
 ./build/tests/test_arithmetic --gtest_filter="TensorArithmetic.CPUOperations"
 ```
 
-Suites: `test_arithmetic`, `test_fused_ops`, `test_device_transfer`, `test_factory`, `test_reductions`, `test_benchmarks`, `test_reshape`, `test_transpose`, `test_streams`, `test_allocator_stream`, `test_host_pool`, `test_stress`, `test_stream_perf`.
+Suites: `test_arithmetic`, `test_fused_ops`, `test_device_transfer`, `test_factory`, `test_reductions`, `test_benchmarks`, `test_reshape`, `test_transpose`, `test_streams`, `test_allocator_stream`, `test_host_pool`, `test_contiguous`, `test_stress`, `test_stream_perf`.
 
 `test_benchmarks`, `test_stress`, and `test_stream_perf` are timing/soak suites, not correctness suites — they are slow and their numbers are meaningless in a Debug build. `StreamPerf.ParallelFanOut` in particular asserts wall-clock against wall-clock and goes red under load; CI does not gate on those two suites.
 
@@ -154,6 +154,19 @@ Details that matter if you touch it: requests round up to a size class (8 per oc
 
 **The `_nd` kernel is also the overflow path, not just the rank ≥ 5 path.** `gridDim.y` and `gridDim.z` are capped at 65535 (only `gridDim.x` reaches 2^31-1), so a leading axis large enough overflows the rank-specialized layout — the rank-4 launcher sets `blocks.z = shape[0]`, the rank-3 one `(shape[0] + 7) / 8`. Past that the launch fails synchronously with `invalid configuration argument`, which surfaces to the caller as a generic CUDA error naming nothing useful. Every rank-specialized launcher therefore computes its grid extents as `size_t` and gates the launch on `om::detail::grid_fits(gx, gy, gz)` ([headers/cuda_defines.cuh](headers/cuda_defines.cuh)), falling through to the flat `_nd` kernel when they do not fit. The extents are checked *before* being narrowed into a `dim3` — its members are `unsigned int`, so building one first could truncate an oversized extent into a plausible small one. The same guard is in the unary launcher, `launch_fill`, `launch_apply_op` and `launch_apply_binary_op`; a new rank-switching launcher needs it too.
 
+**Every elementwise launcher tries a contiguous fast path first.** [headers/ops/kernels/contiguous.cuh](headers/ops/kernels/contiguous.cuh) — the rank-specialized layouts only keep a warp's 32 lanes contiguous in memory at rank 1. A rank-2 `dim3(16,16)` block gives each warp two disjoint runs of 16 elements, a rank-3 `dim3(8,8,8)` block four runs of 8: 64- and 32-byte requests against a 128-byte line. Measured on the reference GB10, `add` over 16 M floats ran at 230 GB/s at rank 1, 206 at rank 2, 141 at rank 3, 104 at rank 4 and 26 at rank 5 (`_nd`, which also recomputes a multi-index per element) — same traffic, same op. Since every tensor the library builds is contiguous row-major (reshape and friends deep-copy, nothing returns an aliasing view), the shape carries nothing the kernel needs, so the fast path indexes the buffer linearly and gives every rank the rank-1 layout: all of them now measure 228-233 GB/s. `launch_add`/`launch_sub`/`launch_mul`/`launch_div`, the `_k` scalar family, `launch_apply_op`, `launch_apply_binary_op` and `launch_fill` all take it.
+
+`TensorView::is_contiguous()` is what gates it — the launchers ask rather than assume, so a strided view (roadmap P2) falls back to the existing rank-specialized kernels instead of silently reading the wrong elements. That is the whole reason the guard is a runtime check and not a comment.
+
+Two things about it are counter-intuitive and were measured, not assumed:
+
+- **The pack width is 4 bytes per thread, not 16.** `float4` vector loads are the standard advice and they are *slower* here — one 16-byte `float4` per thread drops `add` to 216 GB/s against 235 for one scalar `float`, because the launch loses the thread-level parallelism that keeps the memory pipeline full. A grid-stride loop capped at a few waves per SM costs a further 8-12 %; at the exact block count its loop body runs once and buys nothing over a bounds check. Neither is used. What does matter is that no thread moves *less* than 4 bytes: a warp of `char` lanes requests 32 bytes and reaches only 193 GB/s even at rank 1. Hence `pack_width<T> = 4 / sizeof(T)` — 1 for `float`/`int`, 2 for `float16_t`, 4 for `char`, which takes `char` to 236 GB/s. The pack is punned through a `unsigned int` with `memcpy`, not a union or a member-wise struct copy: `float16_t` has a user-provided constructor, so a union of it is ill-formed and a member-wise copy is free to lower to two 2-byte accesses, which is exactly what the pack exists to avoid.
+- **A size that is not a multiple of the pack width leaves a tail**, picked up by block 0 after the packed loop. `test_contiguous` runs every dtype at sizes covering all four residues mod 4 precisely because nothing else in the suite would notice the tail being dropped.
+
+Block size is 256, as elsewhere in the library. 512 and 1024 buy 2-3 % once the working set passes L2 and lose up to 35 % below it, where occupancy rather than bandwidth is the limit. Re-measure before changing it.
+
+The kernel definitions and the launch statements sit behind `#if defined(__CUDACC__)`: `tensor.cuh` pulls this header into plain `.cpp` translation units (the Python C-ABI layer among them), where `__global__` expands to nothing and `blockIdx` does not exist. A new elementwise launcher that wants the fast path calls `om::detail::launch_contiguous_binary/unary/fill`, which return the launched kernel's name for `CUDA_CHECK_LAUNCH` or `nullptr` when they decline — declining is not an error, it is how an empty tensor, an unaligned buffer or an unrepresentable grid keeps the old, always-correct path. The four generated op families need one more piece: `DEFINE_BINARY_OP_FUNCTOR_H` / `DEFINE_UNARY_OP_FUNCTOR_H` turn the op's expression into a functor type, because the rank-specialized kernels take it textually but the fast path is generic over the operation. See [benchmark_report.md §8](benchmark_report.md#8-elementwise-kernels-ignored-contiguity--every-rank-now-runs-at-rank-1-speed).
+
 **Ops layout:**
 ```
 headers/ops/cpu/        ← CPU op declarations (macro-generated inline functions)
@@ -164,7 +177,7 @@ src/ops/kernels/        ← CUDA kernel .cu translation units
 
 **Adding a new binary op:**
 1. `src/ops/kernels/binary_ops.cu` — kernel bodies via `DEFINE_BINARY_OP_KERNEL_K1/K2/K3/K4/ND` + `DEFINE_BINARY_OP_LAUNCH` + `DEFINE_BINARY_OP_LAUNCH_FRW_DEC`.
-2. `headers/ops/kernels/binary_op_macros.cuh` — `DEFINE_BINARY_OP_LAUNCH_H` / `DEFINE_BINARY_OP_KERNEL_H`.
+2. `headers/ops/kernels/binary_op_macros.cuh` — `DEFINE_BINARY_OP_LAUNCH_H` / `DEFINE_BINARY_OP_KERNEL_H`, plus `DEFINE_BINARY_OP_FUNCTOR_H(OP, expr in a and b)` — the launch macro references `OP_fn<T>` for the contiguous fast path, so omitting it is a compile error, not a silent slow path.
 3. `src/ops/cpu/binary_ops.cpp` + `headers/ops/cpu/binary_op_macros.h` — CPU side.
 4. `headers/tensor.cuh` / `.inl` — the `(rhs, const Stream&)` method plus the one-line no-stream delegate.
 5. Only if a stream-less free function is wanted: register in `kernel_launcher.h`/`.inl`.

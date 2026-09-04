@@ -341,13 +341,14 @@ Suite di test: `python/tests/test_tensor.py`, `test_tensor_api.py`, `test_dtypes
 | ✅ | — | 7 — Layer Python (ctypes, float32 + int32, stream) |
 | ✅ | — | 6.2 — Errori CUDA: file/riga, `CUDA_CALL`, e `OPENMAT_DEBUG_SYNC` per gli errori asincroni |
 | ⚠️ | — | 6.4 — Parallelismo CPU (OpenMP) su `add`/`sub`/`mul`/`div`, soglia 65536 elementi; `apply`/`apply_binary` non ancora esteso |
+| ✅ | — | 6.5 — Fast path contiguo per i kernel elementwise: indicizzazione lineare al posto del layout per rank, ogni rank alla banda del rank 1 |
 | | **Alta** | 4.4 — Overload stream per `apply_binary` (chiude l'asimmetria di 6.1) |
 | | **Alta** | 1.1 — Unarie `abs`, `sqrt`, `exp`, `log` via `apply` (costo basso, alto valore) |
 | | Media | 6.3 — `operator<<`, `save`, `load` |
 | | Media | 1.2b — Riduzioni per asse `sum(axis)`, `mean(axis)` |
 | | Media | 3.2b — `arange` / `linspace` nativi in C++ |
 | | Media | 1.3 — Operazioni di confronto (richiede un launcher con tipo di uscita diverso) |
-| | Bassa | 2.1b — Decisione sul modello di ownership per le view (sblocca 2.3) |
+| | Bassa | 2.1b — Decisione sul modello di ownership per le view (sblocca 2.3); il fast path di 6.5 è già protetto da `TensorView::is_contiguous()`, quindi una view con stride non compatti ricade sui kernel per rank invece di leggere gli elementi sbagliati |
 | | Bassa | 2.3 — `slice`, `operator[]` |
 | | Bassa | 5.1 — Batch matmul (`bmm`) |
 | | Bassa | 5.2 — Integrazione cuBLAS |

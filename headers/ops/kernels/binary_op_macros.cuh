@@ -4,10 +4,20 @@
 #include "tensor_view.cuh"
 #include "device_tensor_view.cuh"
 #include "cuda_defines.cuh"
+#include "ops/kernels/contiguous.cuh"
 #include <stdexcept>
 #include <string>
 #include <cuda_runtime.h>
 
+
+// The scalar body of the op, as a functor. The rank-specialized kernels below
+// get their expression textually from DEFINE_BINARY_OP_KERNEL_K*; the
+// contiguous fast path is generic over the operation and needs it as a type.
+#define DEFINE_BINARY_OP_FUNCTOR_H(OP_NAME, OP_EXPR)\
+    template<typename T>\
+    struct OP_NAME##_fn {\
+        __host__ __device__ T operator()(const T& a, const T& b) const { return OP_EXPR; }\
+    };
 
 // Rank-specialized launch. Each rank maps tensor axes onto grid axes, which
 // caps how large those axes may be: gridDim.y/z stop at 65535. When the grid
@@ -29,6 +39,16 @@
         /* Cleared by a rank-specialized branch that actually launched; a */\
         /* shape whose grid does not fit leaves it set and lands on _nd.  */\
         bool om_use_nd = true;\
+        /* Contiguous fast path: the axis structure is redundant, so index   */\
+        /* the buffers linearly and give every rank the rank-1 layout. Only  */\
+        /* declines for an empty tensor or an unrepresentable grid.          */\
+        if (lhs.is_contiguous() && rhs.is_contiguous() && dst.is_contiguous())\
+        {\
+            om_kernel = ::om::detail::launch_contiguous_binary<T>(\
+                lhs.data, rhs.data, dst.data, dst.size(), OP_NAME##_fn<T>{}, stream);\
+            om_use_nd = (om_kernel == nullptr);\
+        }\
+        if (om_use_nd)\
         switch (lhs.rank)\
         {\
         case 1:\
@@ -193,6 +213,11 @@
 
 namespace om 
 {
+    DEFINE_BINARY_OP_FUNCTOR_H(add, a + b)
+    DEFINE_BINARY_OP_FUNCTOR_H(sub, a - b)
+    DEFINE_BINARY_OP_FUNCTOR_H(mul, a * b)
+    DEFINE_BINARY_OP_FUNCTOR_H(div, div_elem(a, b))
+
     DEFINE_BINARY_OP_LAUNCH_H(add);
     DEFINE_BINARY_OP_KERNEL_H(add);
 

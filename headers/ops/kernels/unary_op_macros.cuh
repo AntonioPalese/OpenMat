@@ -4,10 +4,21 @@
 #include "tensor_view.cuh"
 #include "device_tensor_view.cuh"
 #include "cuda_defines.cuh"
+#include "ops/kernels/contiguous.cuh"
 #include <stdexcept>
 #include <string>
 #include <cuda_runtime.h>
 
+
+// The scalar body of the op, as a functor carrying the operand. The
+// rank-specialized kernels take the expression textually from
+// DEFINE_UNARY_OP_KERNEL_K*; the contiguous fast path needs it as a type.
+#define DEFINE_UNARY_OP_FUNCTOR_H(OP_NAME, OP_EXPR)\
+    template<typename T>\
+    struct OP_NAME##_fn {\
+        T value;\
+        __host__ __device__ T operator()(const T& x) const { return OP_EXPR; }\
+    };
 
 // Rank-specialized launch. Each rank maps tensor axes onto grid axes, and
 // gridDim.y/z stop at 65535: when the specialized grid does not fit, fall back
@@ -26,6 +37,14 @@
         }\
         const char* om_kernel = nullptr;\
         bool om_use_nd = true;\
+        /* Contiguous fast path — see headers/ops/kernels/contiguous.cuh. */\
+        if (lhs.is_contiguous() && dst.is_contiguous())\
+        {\
+            om_kernel = ::om::detail::launch_contiguous_unary<T>(\
+                lhs.data, dst.data, dst.size(), OP_NAME##_fn<T>{value}, stream);\
+            om_use_nd = (om_kernel == nullptr);\
+        }\
+        if (om_use_nd)\
         switch (lhs.rank)\
         {\
         case 1:\
@@ -190,6 +209,11 @@
 
 namespace om 
 {
+    DEFINE_UNARY_OP_FUNCTOR_H(add_k, x + value)
+    DEFINE_UNARY_OP_FUNCTOR_H(sub_k, x - value)
+    DEFINE_UNARY_OP_FUNCTOR_H(mul_k, x * value)
+    DEFINE_UNARY_OP_FUNCTOR_H(div_k, div_elem(x, value))
+
     DEFINE_UNARY_OP_LAUNCH_H(add_k);
     DEFINE_UNARY_OP_KERNEL_H(add_k);
 

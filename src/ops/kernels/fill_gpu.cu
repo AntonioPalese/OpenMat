@@ -1,5 +1,6 @@
 #include <stdexcept>
 #include "ops/kernels/fill_gpu.cuh"
+#include "ops/kernels/contiguous.cuh"
 #include "cuda_defines.cuh"
 #include "type_traits/types.cuh"
 
@@ -78,6 +79,13 @@ namespace om {
     {
         const char* om_kernel = nullptr;
         bool om_use_nd = true;
+        // Contiguous fast path — see headers/ops/kernels/contiguous.cuh.
+        if (tensor.is_contiguous())
+        {
+            om_kernel = detail::launch_contiguous_fill<T>(tensor.data, value, tensor.size(), stream);
+            om_use_nd = (om_kernel == nullptr);
+        }
+        if (om_use_nd)
         switch (tensor.rank)
         {
         case 1:

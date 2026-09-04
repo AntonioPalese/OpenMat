@@ -1,49 +1,49 @@
 [
 {
   "directory": "/home/apalese/OpenMat/build",
-  "command": "/usr/bin/c++ -DOpenMat_EXPORTS -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -g -fPIC -o CMakeFiles/OpenMat.dir/src/cuda_debug.cpp.o -c /home/apalese/OpenMat/src/cuda_debug.cpp",
+  "command": "/usr/bin/c++ -DOpenMat_EXPORTS -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -g -fPIC -fopenmp -o CMakeFiles/OpenMat.dir/src/cuda_debug.cpp.o -c /home/apalese/OpenMat/src/cuda_debug.cpp",
   "file": "/home/apalese/OpenMat/src/cuda_debug.cpp",
   "output": "CMakeFiles/OpenMat.dir/src/cuda_debug.cpp.o"
 },
 {
   "directory": "/home/apalese/OpenMat/build",
-  "command": "/usr/bin/c++ -DOpenMat_EXPORTS -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -g -fPIC -o CMakeFiles/OpenMat.dir/src/mat_utils.cpp.o -c /home/apalese/OpenMat/src/mat_utils.cpp",
+  "command": "/usr/bin/c++ -DOpenMat_EXPORTS -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -g -fPIC -fopenmp -o CMakeFiles/OpenMat.dir/src/mat_utils.cpp.o -c /home/apalese/OpenMat/src/mat_utils.cpp",
   "file": "/home/apalese/OpenMat/src/mat_utils.cpp",
   "output": "CMakeFiles/OpenMat.dir/src/mat_utils.cpp.o"
 },
 {
   "directory": "/home/apalese/OpenMat/build",
-  "command": "/usr/bin/c++ -DOpenMat_EXPORTS -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -g -fPIC -o CMakeFiles/OpenMat.dir/src/ops/cpu/binary_ops.cpp.o -c /home/apalese/OpenMat/src/ops/cpu/binary_ops.cpp",
+  "command": "/usr/bin/c++ -DOpenMat_EXPORTS -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -g -fPIC -fopenmp -o CMakeFiles/OpenMat.dir/src/ops/cpu/binary_ops.cpp.o -c /home/apalese/OpenMat/src/ops/cpu/binary_ops.cpp",
   "file": "/home/apalese/OpenMat/src/ops/cpu/binary_ops.cpp",
   "output": "CMakeFiles/OpenMat.dir/src/ops/cpu/binary_ops.cpp.o"
 },
 {
   "directory": "/home/apalese/OpenMat/build",
-  "command": "/usr/bin/c++ -DOpenMat_EXPORTS -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -g -fPIC -o CMakeFiles/OpenMat.dir/src/ops/cpu/fill_cpu.cpp.o -c /home/apalese/OpenMat/src/ops/cpu/fill_cpu.cpp",
+  "command": "/usr/bin/c++ -DOpenMat_EXPORTS -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -g -fPIC -fopenmp -o CMakeFiles/OpenMat.dir/src/ops/cpu/fill_cpu.cpp.o -c /home/apalese/OpenMat/src/ops/cpu/fill_cpu.cpp",
   "file": "/home/apalese/OpenMat/src/ops/cpu/fill_cpu.cpp",
   "output": "CMakeFiles/OpenMat.dir/src/ops/cpu/fill_cpu.cpp.o"
 },
 {
   "directory": "/home/apalese/OpenMat/build",
-  "command": "/usr/bin/c++ -DOpenMat_EXPORTS -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -g -fPIC -o CMakeFiles/OpenMat.dir/src/ops/cpu/matmul_cpu.cpp.o -c /home/apalese/OpenMat/src/ops/cpu/matmul_cpu.cpp",
+  "command": "/usr/bin/c++ -DOpenMat_EXPORTS -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -g -fPIC -fopenmp -o CMakeFiles/OpenMat.dir/src/ops/cpu/matmul_cpu.cpp.o -c /home/apalese/OpenMat/src/ops/cpu/matmul_cpu.cpp",
   "file": "/home/apalese/OpenMat/src/ops/cpu/matmul_cpu.cpp",
   "output": "CMakeFiles/OpenMat.dir/src/ops/cpu/matmul_cpu.cpp.o"
 },
 {
   "directory": "/home/apalese/OpenMat/build",
-  "command": "/usr/bin/c++ -DOpenMat_EXPORTS -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -g -fPIC -o CMakeFiles/OpenMat.dir/src/ops/cpu/unary_ops.cpp.o -c /home/apalese/OpenMat/src/ops/cpu/unary_ops.cpp",
+  "command": "/usr/bin/c++ -DOpenMat_EXPORTS -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -g -fPIC -fopenmp -o CMakeFiles/OpenMat.dir/src/ops/cpu/unary_ops.cpp.o -c /home/apalese/OpenMat/src/ops/cpu/unary_ops.cpp",
   "file": "/home/apalese/OpenMat/src/ops/cpu/unary_ops.cpp",
   "output": "CMakeFiles/OpenMat.dir/src/ops/cpu/unary_ops.cpp.o"
 },
 {
   "directory": "/home/apalese/OpenMat/build",
-  "command": "/usr/bin/c++ -DOpenMat_EXPORTS -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -g -fPIC -o CMakeFiles/OpenMat.dir/src/python/openmat_capi.cpp.o -c /home/apalese/OpenMat/src/python/openmat_capi.cpp",
+  "command": "/usr/bin/c++ -DOpenMat_EXPORTS -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -g -fPIC -fopenmp -o CMakeFiles/OpenMat.dir/src/python/openmat_capi.cpp.o -c /home/apalese/OpenMat/src/python/openmat_capi.cpp",
   "file": "/home/apalese/OpenMat/src/python/openmat_capi.cpp",
   "output": "CMakeFiles/OpenMat.dir/src/python/openmat_capi.cpp.o"
 },
 {
   "directory": "/home/apalese/OpenMat/build",
-  "command": "/usr/bin/c++ -DOpenMat_EXPORTS -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -g -fPIC -o CMakeFiles/OpenMat.dir/src/utils.cpp.o -c /home/apalese/OpenMat/src/utils.cpp",
+  "command": "/usr/bin/c++ -DOpenMat_EXPORTS -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -g -fPIC -fopenmp -o CMakeFiles/OpenMat.dir/src/utils.cpp.o -c /home/apalese/OpenMat/src/utils.cpp",
   "file": "/home/apalese/OpenMat/src/utils.cpp",
   "output": "CMakeFiles/OpenMat.dir/src/utils.cpp.o"
 },
@@ -97,81 +97,93 @@
 },
 {
   "directory": "/home/apalese/OpenMat/build",
-  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -g -o CMakeFiles/OpenMat_app.dir/src/main.cpp.o -c /home/apalese/OpenMat/src/main.cpp",
+  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -g -fopenmp -o CMakeFiles/OpenMat_app.dir/src/main.cpp.o -c /home/apalese/OpenMat/src/main.cpp",
   "file": "/home/apalese/OpenMat/src/main.cpp",
   "output": "CMakeFiles/OpenMat_app.dir/src/main.cpp.o"
 },
 {
   "directory": "/home/apalese/OpenMat/build/tests",
-  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -o CMakeFiles/test_arithmetic.dir/test_arithmetic.cpp.o -c /home/apalese/OpenMat/tests/test_arithmetic.cpp",
+  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -fopenmp -o CMakeFiles/test_arithmetic.dir/test_arithmetic.cpp.o -c /home/apalese/OpenMat/tests/test_arithmetic.cpp",
   "file": "/home/apalese/OpenMat/tests/test_arithmetic.cpp",
   "output": "tests/CMakeFiles/test_arithmetic.dir/test_arithmetic.cpp.o"
 },
 {
   "directory": "/home/apalese/OpenMat/build/tests",
-  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -o CMakeFiles/test_fused_ops.dir/test_fused_ops.cpp.o -c /home/apalese/OpenMat/tests/test_fused_ops.cpp",
+  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -fopenmp -o CMakeFiles/test_fused_ops.dir/test_fused_ops.cpp.o -c /home/apalese/OpenMat/tests/test_fused_ops.cpp",
   "file": "/home/apalese/OpenMat/tests/test_fused_ops.cpp",
   "output": "tests/CMakeFiles/test_fused_ops.dir/test_fused_ops.cpp.o"
 },
 {
   "directory": "/home/apalese/OpenMat/build/tests",
-  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -o CMakeFiles/test_device_transfer.dir/test_device_transfer.cpp.o -c /home/apalese/OpenMat/tests/test_device_transfer.cpp",
+  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -fopenmp -o CMakeFiles/test_device_transfer.dir/test_device_transfer.cpp.o -c /home/apalese/OpenMat/tests/test_device_transfer.cpp",
   "file": "/home/apalese/OpenMat/tests/test_device_transfer.cpp",
   "output": "tests/CMakeFiles/test_device_transfer.dir/test_device_transfer.cpp.o"
 },
 {
   "directory": "/home/apalese/OpenMat/build/tests",
-  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -o CMakeFiles/test_factory.dir/test_factory.cpp.o -c /home/apalese/OpenMat/tests/test_factory.cpp",
+  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -fopenmp -o CMakeFiles/test_factory.dir/test_factory.cpp.o -c /home/apalese/OpenMat/tests/test_factory.cpp",
   "file": "/home/apalese/OpenMat/tests/test_factory.cpp",
   "output": "tests/CMakeFiles/test_factory.dir/test_factory.cpp.o"
 },
 {
   "directory": "/home/apalese/OpenMat/build/tests",
-  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -o CMakeFiles/test_reductions.dir/test_reductions.cpp.o -c /home/apalese/OpenMat/tests/test_reductions.cpp",
+  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -fopenmp -o CMakeFiles/test_reductions.dir/test_reductions.cpp.o -c /home/apalese/OpenMat/tests/test_reductions.cpp",
   "file": "/home/apalese/OpenMat/tests/test_reductions.cpp",
   "output": "tests/CMakeFiles/test_reductions.dir/test_reductions.cpp.o"
 },
 {
   "directory": "/home/apalese/OpenMat/build/tests",
-  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -o CMakeFiles/test_benchmarks.dir/test_benchmarks.cpp.o -c /home/apalese/OpenMat/tests/test_benchmarks.cpp",
+  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -fopenmp -o CMakeFiles/test_benchmarks.dir/test_benchmarks.cpp.o -c /home/apalese/OpenMat/tests/test_benchmarks.cpp",
   "file": "/home/apalese/OpenMat/tests/test_benchmarks.cpp",
   "output": "tests/CMakeFiles/test_benchmarks.dir/test_benchmarks.cpp.o"
 },
 {
   "directory": "/home/apalese/OpenMat/build/tests",
-  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -o CMakeFiles/test_reshape.dir/test_reshape.cpp.o -c /home/apalese/OpenMat/tests/test_reshape.cpp",
+  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -fopenmp -o CMakeFiles/test_reshape.dir/test_reshape.cpp.o -c /home/apalese/OpenMat/tests/test_reshape.cpp",
   "file": "/home/apalese/OpenMat/tests/test_reshape.cpp",
   "output": "tests/CMakeFiles/test_reshape.dir/test_reshape.cpp.o"
 },
 {
   "directory": "/home/apalese/OpenMat/build/tests",
-  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -o CMakeFiles/test_transpose.dir/test_transpose.cpp.o -c /home/apalese/OpenMat/tests/test_transpose.cpp",
+  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -fopenmp -o CMakeFiles/test_transpose.dir/test_transpose.cpp.o -c /home/apalese/OpenMat/tests/test_transpose.cpp",
   "file": "/home/apalese/OpenMat/tests/test_transpose.cpp",
   "output": "tests/CMakeFiles/test_transpose.dir/test_transpose.cpp.o"
 },
 {
   "directory": "/home/apalese/OpenMat/build/tests",
-  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -o CMakeFiles/test_streams.dir/test_streams.cpp.o -c /home/apalese/OpenMat/tests/test_streams.cpp",
+  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -fopenmp -o CMakeFiles/test_streams.dir/test_streams.cpp.o -c /home/apalese/OpenMat/tests/test_streams.cpp",
   "file": "/home/apalese/OpenMat/tests/test_streams.cpp",
   "output": "tests/CMakeFiles/test_streams.dir/test_streams.cpp.o"
 },
 {
   "directory": "/home/apalese/OpenMat/build/tests",
-  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -o CMakeFiles/test_allocator_stream.dir/test_allocator_stream.cpp.o -c /home/apalese/OpenMat/tests/test_allocator_stream.cpp",
+  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -fopenmp -o CMakeFiles/test_allocator_stream.dir/test_allocator_stream.cpp.o -c /home/apalese/OpenMat/tests/test_allocator_stream.cpp",
   "file": "/home/apalese/OpenMat/tests/test_allocator_stream.cpp",
   "output": "tests/CMakeFiles/test_allocator_stream.dir/test_allocator_stream.cpp.o"
 },
 {
   "directory": "/home/apalese/OpenMat/build/tests",
-  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -o CMakeFiles/test_stress.dir/test_stress.cpp.o -c /home/apalese/OpenMat/tests/test_stress.cpp",
+  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -fopenmp -o CMakeFiles/test_stress.dir/test_stress.cpp.o -c /home/apalese/OpenMat/tests/test_stress.cpp",
   "file": "/home/apalese/OpenMat/tests/test_stress.cpp",
   "output": "tests/CMakeFiles/test_stress.dir/test_stress.cpp.o"
 },
 {
   "directory": "/home/apalese/OpenMat/build/tests",
-  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -o CMakeFiles/test_stream_perf.dir/test_stream_perf.cpp.o -c /home/apalese/OpenMat/tests/test_stream_perf.cpp",
+  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -fopenmp -o CMakeFiles/test_stream_perf.dir/test_stream_perf.cpp.o -c /home/apalese/OpenMat/tests/test_stream_perf.cpp",
   "file": "/home/apalese/OpenMat/tests/test_stream_perf.cpp",
   "output": "tests/CMakeFiles/test_stream_perf.dir/test_stream_perf.cpp.o"
+},
+{
+  "directory": "/home/apalese/OpenMat/build/tests",
+  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -fopenmp -o CMakeFiles/test_host_pool.dir/test_host_pool.cpp.o -c /home/apalese/OpenMat/tests/test_host_pool.cpp",
+  "file": "/home/apalese/OpenMat/tests/test_host_pool.cpp",
+  "output": "tests/CMakeFiles/test_host_pool.dir/test_host_pool.cpp.o"
+},
+{
+  "directory": "/home/apalese/OpenMat/build/tests",
+  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -fopenmp -o CMakeFiles/test_contiguous.dir/test_contiguous.cpp.o -c /home/apalese/OpenMat/tests/test_contiguous.cpp",
+  "file": "/home/apalese/OpenMat/tests/test_contiguous.cpp",
+  "output": "tests/CMakeFiles/test_contiguous.dir/test_contiguous.cpp.o"
 },
 {
   "directory": "/home/apalese/OpenMat/build/_deps/googletest-build/googlemock",
