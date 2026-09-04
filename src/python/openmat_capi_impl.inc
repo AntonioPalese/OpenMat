@@ -331,6 +331,212 @@ OM_DEFINE_BINOP_TS(div, div)
 #undef OM_DEFINE_BINOP_TS
 
 // ─────────────────────────────────────────────────────────────────────────────
+// In-place arithmetic and destination-provided ops
+//
+// These return int, not a handle: nothing is allocated and no ownership
+// changes — the result lands in a tensor the caller already owns, and every
+// handle involved stays valid. That is the point of them. A loop that would
+// otherwise create and destroy one tensor per op per iteration keeps a single
+// buffer for its whole life.
+//
+// `_out` takes the destination handle last. It may be one of the operands for
+// the elementwise family (that is what the in-place form is); matmul_out,
+// transpose_out and permute_out reject an aliased destination on the C++ side.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#define OM_DEFINE_INPLACE_TT(name, method)                                      \
+int OM_FN(name##_inplace)(void* lhs, const void* rhs,                           \
+                          char* errbuf, int errbuf_len)                         \
+{                                                                               \
+    OM_GUARD_INT(                                                               \
+        static_cast<OM_TT*>(lhs)->method##_(*static_cast<const OM_TT*>(rhs));   \
+        return 0;                                                               \
+    )                                                                           \
+}                                                                               \
+int OM_FN(name##_inplace_stream)(void* lhs, const void* rhs, void* stream,      \
+                                 char* errbuf, int errbuf_len)                  \
+{                                                                               \
+    OM_GUARD_INT(                                                               \
+        static_cast<OM_TT*>(lhs)->method##_(*static_cast<const OM_TT*>(rhs),    \
+                                            om_deref_stream(stream));           \
+        return 0;                                                               \
+    )                                                                           \
+}                                                                               \
+int OM_FN(name##_out)(const void* lhs, const void* rhs, void* out,              \
+                      char* errbuf, int errbuf_len)                             \
+{                                                                               \
+    OM_GUARD_INT(                                                               \
+        static_cast<const OM_TT*>(lhs)->method##_out(                           \
+            *static_cast<const OM_TT*>(rhs), *static_cast<OM_TT*>(out));        \
+        return 0;                                                               \
+    )                                                                           \
+}                                                                               \
+int OM_FN(name##_out_stream)(const void* lhs, const void* rhs, void* out,       \
+                             void* stream, char* errbuf, int errbuf_len)        \
+{                                                                               \
+    OM_GUARD_INT(                                                               \
+        static_cast<const OM_TT*>(lhs)->method##_out(                           \
+            *static_cast<const OM_TT*>(rhs), *static_cast<OM_TT*>(out),         \
+            om_deref_stream(stream));                                           \
+        return 0;                                                               \
+    )                                                                           \
+}
+
+OM_DEFINE_INPLACE_TT(add, add)
+OM_DEFINE_INPLACE_TT(sub, sub)
+OM_DEFINE_INPLACE_TT(mul, mul)
+OM_DEFINE_INPLACE_TT(div, div)
+
+#undef OM_DEFINE_INPLACE_TT
+
+// matmul has no in-place form: its kernel reads elements it does not write.
+int OM_FN(matmul_out)(const void* lhs, const void* rhs, void* out,
+                      char* errbuf, int errbuf_len)
+{
+    OM_GUARD_INT(
+        static_cast<const OM_TT*>(lhs)->matmul_out(*static_cast<const OM_TT*>(rhs),
+                                                   *static_cast<OM_TT*>(out));
+        return 0;
+    )
+}
+
+int OM_FN(matmul_out_stream)(const void* lhs, const void* rhs, void* out, void* stream,
+                             char* errbuf, int errbuf_len)
+{
+    OM_GUARD_INT(
+        static_cast<const OM_TT*>(lhs)->matmul_out(*static_cast<const OM_TT*>(rhs),
+                                                   *static_cast<OM_TT*>(out),
+                                                   om_deref_stream(stream));
+        return 0;
+    )
+}
+
+#define OM_DEFINE_INPLACE_TS(name, method)                                      \
+int OM_FN(name##_scalar_inplace)(void* handle, OM_T scalar,                     \
+                                 char* errbuf, int errbuf_len)                  \
+{                                                                               \
+    OM_GUARD_INT( static_cast<OM_TT*>(handle)->method##_(scalar); return 0; )    \
+}                                                                               \
+int OM_FN(name##_scalar_inplace_stream)(void* handle, OM_T scalar, void* stream, \
+                                        char* errbuf, int errbuf_len)           \
+{                                                                               \
+    OM_GUARD_INT(                                                               \
+        static_cast<OM_TT*>(handle)->method##_(scalar, om_deref_stream(stream)); \
+        return 0;                                                               \
+    )                                                                           \
+}                                                                               \
+int OM_FN(name##_scalar_out)(const void* handle, OM_T scalar, void* out,        \
+                             char* errbuf, int errbuf_len)                      \
+{                                                                               \
+    OM_GUARD_INT(                                                               \
+        static_cast<const OM_TT*>(handle)->method##_out(scalar,                 \
+                                                        *static_cast<OM_TT*>(out)); \
+        return 0;                                                               \
+    )                                                                           \
+}                                                                               \
+int OM_FN(name##_scalar_out_stream)(const void* handle, OM_T scalar, void* out, \
+                                    void* stream, char* errbuf, int errbuf_len) \
+{                                                                               \
+    OM_GUARD_INT(                                                               \
+        static_cast<const OM_TT*>(handle)->method##_out(scalar,                 \
+                                                        *static_cast<OM_TT*>(out), \
+                                                        om_deref_stream(stream)); \
+        return 0;                                                               \
+    )                                                                           \
+}
+
+OM_DEFINE_INPLACE_TS(add, add)
+OM_DEFINE_INPLACE_TS(sub, sub)
+OM_DEFINE_INPLACE_TS(mul, mul)
+OM_DEFINE_INPLACE_TS(div, div)
+
+#undef OM_DEFINE_INPLACE_TS
+
+#define OM_DEFINE_INPLACE_UNARY(name)                                           \
+int OM_FN(name##_inplace)(void* handle, char* errbuf, int errbuf_len)           \
+{                                                                               \
+    OM_GUARD_INT( static_cast<OM_TT*>(handle)->name##_(); return 0; )            \
+}                                                                               \
+int OM_FN(name##_inplace_stream)(void* handle, void* stream,                    \
+                                 char* errbuf, int errbuf_len)                  \
+{                                                                               \
+    OM_GUARD_INT(                                                               \
+        static_cast<OM_TT*>(handle)->name##_(om_deref_stream(stream));          \
+        return 0;                                                               \
+    )                                                                           \
+}                                                                               \
+int OM_FN(name##_out)(const void* handle, void* out, char* errbuf, int errbuf_len) \
+{                                                                               \
+    OM_GUARD_INT(                                                               \
+        static_cast<const OM_TT*>(handle)->name##_out(*static_cast<OM_TT*>(out)); \
+        return 0;                                                               \
+    )                                                                           \
+}                                                                               \
+int OM_FN(name##_out_stream)(const void* handle, void* out, void* stream,       \
+                             char* errbuf, int errbuf_len)                      \
+{                                                                               \
+    OM_GUARD_INT(                                                               \
+        static_cast<const OM_TT*>(handle)->name##_out(*static_cast<OM_TT*>(out), \
+                                                      om_deref_stream(stream)); \
+        return 0;                                                               \
+    )                                                                           \
+}
+
+OM_DEFINE_INPLACE_UNARY(relu)
+OM_DEFINE_INPLACE_UNARY(sigmoid)
+
+#undef OM_DEFINE_INPLACE_UNARY
+
+int OM_FN(transpose_out)(const void* handle, void* out, char* errbuf, int errbuf_len)
+{
+    OM_GUARD_INT(
+        static_cast<const OM_TT*>(handle)->transpose_out(*static_cast<OM_TT*>(out));
+        return 0;
+    )
+}
+
+int OM_FN(transpose_out_stream)(const void* handle, void* out, void* stream,
+                                char* errbuf, int errbuf_len)
+{
+    OM_GUARD_INT(
+        static_cast<const OM_TT*>(handle)->transpose_out(*static_cast<OM_TT*>(out),
+                                                         om_deref_stream(stream));
+        return 0;
+    )
+}
+
+int OM_FN(permute_out)(const void* handle, const size_t* axes, size_t n, void* out,
+                       char* errbuf, int errbuf_len)
+{
+    OM_GUARD_INT(
+        static_cast<const OM_TT*>(handle)->permute_out(
+            std::vector<size_t>(axes, axes + n), *static_cast<OM_TT*>(out));
+        return 0;
+    )
+}
+
+int OM_FN(permute_out_stream)(const void* handle, const size_t* axes, size_t n, void* out,
+                              void* stream, char* errbuf, int errbuf_len)
+{
+    OM_GUARD_INT(
+        static_cast<const OM_TT*>(handle)->permute_out(
+            std::vector<size_t>(axes, axes + n), *static_cast<OM_TT*>(out),
+            om_deref_stream(stream));
+        return 0;
+    )
+}
+
+// fill() has always existed; this is the same thing with a stream.
+int OM_FN(fill_stream)(void* handle, OM_T value, void* stream,
+                       char* errbuf, int errbuf_len)
+{
+    OM_GUARD_INT(
+        static_cast<OM_TT*>(handle)->fill_(value, om_deref_stream(stream));
+        return 0;
+    )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Reductions — synchronous, return a host scalar
 // ─────────────────────────────────────────────────────────────────────────────
 

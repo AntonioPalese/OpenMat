@@ -186,6 +186,12 @@
   "output": "tests/CMakeFiles/test_contiguous.dir/test_contiguous.cpp.o"
 },
 {
+  "directory": "/home/apalese/OpenMat/build/tests",
+  "command": "/usr/bin/c++  -I/home/apalese/OpenMat/headers -I/usr/local/cuda/targets/sbsa-linux/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -fopenmp -o CMakeFiles/test_inplace.dir/test_inplace.cpp.o -c /home/apalese/OpenMat/tests/test_inplace.cpp",
+  "file": "/home/apalese/OpenMat/tests/test_inplace.cpp",
+  "output": "tests/CMakeFiles/test_inplace.dir/test_inplace.cpp.o"
+},
+{
   "directory": "/home/apalese/OpenMat/build/_deps/googletest-build/googlemock",
   "command": "/usr/bin/c++  -I/home/apalese/OpenMat/build/_deps/googletest-src/googlemock/include -I/home/apalese/OpenMat/build/_deps/googletest-src/googlemock -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest/include -isystem /home/apalese/OpenMat/build/_deps/googletest-src/googletest -g -std=c++17 -Wall -Wshadow -Wno-error=dangling-else -DGTEST_HAS_PTHREAD=1 -fexceptions -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -o CMakeFiles/gmock.dir/src/gmock-all.cc.o -c /home/apalese/OpenMat/build/_deps/googletest-src/googlemock/src/gmock-all.cc",
   "file": "/home/apalese/OpenMat/build/_deps/googletest-src/googlemock/src/gmock-all.cc",

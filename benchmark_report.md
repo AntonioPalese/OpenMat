@@ -494,6 +494,76 @@ the rank-1 layout, GPU `add` at 16 M now runs at **236.4 GB/s against PyTorch's
 232.4** — 1.02× faster, where the previous report had it 1.47× slower. `relu`
 went from 1.9× slower to parity, and `x*s+t` from parity to 1.97× faster.
 
+## 9. Every op allocated its own result — in-place and `out=` forms added
+
+Until now every `Tensor` method was `const` and returned a freshly allocated
+tensor. In a training loop that is one allocation *and* one free per op per
+iteration, and a peak footprint equal to the whole expression graph rather than
+the working set. PyTorch exposes `add_`/`mul_` and `out=` for exactly this.
+
+The launchers already took a separate `dst`, so the work was on the public
+surface: `add_out(rhs, out)` is now the single implementation of each op, the
+allocating form builds `out` and calls it, and `add_(rhs)` calls it with
+`*this` as `out`. See CLAUDE.md for the surface and the aliasing rules.
+
+**One op, measured 2026-09-04, GB10, Release** (min of 7 batches, through the
+Python bindings so allocation and synchronization are inside the timing —
+`scripts/bench_inplace.py`):
+
+| device | n | op | allocating | in-place | `out=` | in-place speedup |
+|---|---:|---|---:|---:|---:|---:|
+| cpu | 1 K | add | 1.79 µs | 1.22 µs | 1.38 µs | 1.47× |
+| cpu | 1 K | relu | 1.31 µs | 0.80 µs | 0.99 µs | 1.65× |
+| cpu | 64 K | add | 6.34 µs | 5.70 µs | 5.81 µs | 1.11× |
+| cpu | 16 M | add | 2029 µs | 1661 µs | 2015 µs | 1.22× |
+| cpu | 16 M | mul (scalar) | 1413 µs | 972 µs | 1340 µs | 1.45× |
+| cuda | 1 K | add | 7.93 µs | 6.48 µs | 6.65 µs | 1.22× |
+| cuda | 64 K | add | 8.21 µs | 6.75 µs | 6.92 µs | 1.22× |
+| cuda | 1 M | add | 14.05 µs | 12.60 µs | 12.72 µs | 1.12× |
+| cuda | 16 M | add | 862 µs | 827 µs | 823 µs | 1.04× |
+
+**A 32-step chain** (`w += g`, the shape a training step actually has):
+
+| device | n | allocating | in-place | speedup |
+|---|---:|---:|---:|---:|
+| cpu | 1 K | 61.4 µs | 39.4 µs | 1.56× |
+| cpu | 64 K | 206 µs | 187 µs | 1.10× |
+| cpu | 16 M | 63.1 ms | 54.6 ms | 1.16× |
+| cuda | 1 K | 264 µs | 212 µs | 1.25× |
+| cuda | 64 K | 273 µs | 221 µs | 1.24× |
+| cuda | 1 M | 489 µs | 412 µs | 1.19× |
+| cuda | 16 M | 30.8 ms | 26.6 ms | 1.16× |
+
+Read the shape of it, not the individual rows. The saving is largest where
+allocation is a large fraction of the op (1.2–1.6× below ~64 K on both
+backends, and it is the same ~1.4 µs per op on CPU and ~1.5 µs on CUDA that §4
+already identified as fixed overhead), and it shrinks toward 1.04× at 16 M
+where the kernel itself dominates and `HostPool` / `cudaMallocAsync` are
+already recycling the block. That last figure is the honest ceiling for the
+*time* argument.
+
+The memory argument does not shrink: an in-place chain holds one buffer whatever
+its length, and the test suite asserts exactly that (`data_ptr` is unchanged
+across a 100-step loop, in `tests/test_inplace.cpp` and
+`python/tests/test_inplace.py`) — a correct-but-reallocating implementation
+would pass every value check and fail those.
+
+**A trap this script already sprang.** An earlier draft reused one destination
+tensor across the three ops at each size and reported CUDA `relu_` at 0.38× —
+a 2.6× *regression* that does not exist. Re-measured with per-case operands it
+is 1.05×. Every case now builds its own; and the CPU rows at 1 M were dropped
+from the table because they swing between 11 µs and 250 µs run to run on a
+loaded machine, which is contention, not the op.
+
+The change also removed `__restrict__` from the three kernels in
+`contiguous.cuh`: in-place calls them with `dst` equal to a source, which is
+exactly the aliasing the qualifier promises does not happen. It cost nothing —
+`add` at 16 M went from 230.2–233.4 GB/s to 228.6–230.7 and `relu` from
+232.9–234.6 to 233.4–235.5, i.e. inside run-to-run spread. The read-only path
+comes from the explicit `__ldg` in `device_load`, not from restrict-driven
+inference, and each pointer is touched once per thread, so there was nothing
+for the qualifier to buy.
+
 ## Full results
 
 ### CPU, default threading (20 OpenMP threads)
@@ -667,6 +737,10 @@ OPENMAT_LIB=build-release/OpenMat.so PYTHONPATH=python \
 # §8 — the rank sweep, end to end
 OPENMAT_LIB=build-release/OpenMat.so PYTHONPATH=python \
   bench-env/bin/python scripts/bench_rank_sweep.py
+
+# §9 — in-place / out= against the allocating forms
+OPENMAT_LIB=build-release/OpenMat.so PYTHONPATH=python \
+  bench-env/bin/python scripts/bench_inplace.py
 
 # §7 — OpenMP scaling, one invocation per thread count
 for t in 1 20; do

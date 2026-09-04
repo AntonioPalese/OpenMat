@@ -77,13 +77,56 @@ s.synchronize()
 ```
 
 `stream=` is accepted by `add`, `sub`, `mul`, `div`, `matmul`, `transpose`,
-`permute`, `relu`, `sigmoid`, `cpu`, `cuda`, `to` and `Tensor.from_list`.
+`permute`, `relu`, `sigmoid`, `cpu`, `cuda`, `to`, `fill`, `Tensor.from_list`,
+and every member of the in-place / `_out` families below.
 
 Memory a tensor got from a stream's pool must be freed on that same stream, so
 every result holds a reference on the stream it was produced on.  The reference
 count lives in the C layer, which is why `Stream.close()` is safe even while
 tensors from that stream are still alive — the `cudaStream_t` goes away when the
 last of them does.
+
+## In-place ops and `out=`
+
+Every op above allocates its result. In a loop that is one allocation and one
+free per op per iteration, and a peak footprint equal to the whole expression.
+The trailing-underscore family writes back into the tensor it is called on, and
+the `_out` family into a destination you already own; both return the tensor
+they wrote to, so calls chain.
+
+```python
+w = om.Tensor.zeros([1024], device="cuda")
+g = om.Tensor.full([1024], 0.5, device="cuda")
+
+for _ in range(steps):
+    w.add_(g)                   # w's buffer never moves
+    w.relu_()
+
+w -= g                          # += -= *= /= are the same thing
+w *= 0.9
+
+out = om.Tensor.zeros([1024], device="cuda")
+for batch in batches:           # one destination for the whole loop
+    a.mul_out(b, out)
+```
+
+In-place: `add_`, `sub_`, `mul_`, `div_` (tensor or scalar), `relu_`,
+`sigmoid_`, `fill_`, and `+= -= *= /=`.
+
+Destination-provided: `add_out`, `sub_out`, `mul_out`, `div_out`, `relu_out`,
+`sigmoid_out`, `matmul_out`, `transpose_out`, `permute_out`. `out` must already
+have the result's shape, dtype and device.
+
+`matmul`, `transpose` and `permute` have no in-place form and reject a
+destination that is one of their operands — their kernels read elements they do
+not write, so the answer would be wrong. The elementwise family is free to
+alias, which is exactly what `add_` is.
+
+One caveat when you pass both `out` and `stream`: memory a tensor got from a
+stream's pool must be used in an order that stream can see, so enqueueing into a
+destination allocated on a *different* stream is only correct once you have
+ordered the two yourself. The allocating forms cannot hit this — they allocate
+on the stream they run on.
 
 ## API
 
@@ -94,6 +137,8 @@ last of them does.
 | data | `numpy()`, `tolist()`, `flat()`, `item()`, `fill()`, `copy()`, `t[i, j]`, `t[i, j] = v` |
 | device | `cpu()`, `cuda()`, `to(device)`, `astype()`, `synchronize()` |
 | arithmetic | `+ - * / @`, reflected and scalar forms, `add`/`sub`/`mul`/`div`/`matmul` |
+| in-place | `add_`, `sub_`, `mul_`, `div_`, `relu_`, `sigmoid_`, `fill_`, `+= -= *= /=` |
+| destination-provided | `add_out`, `sub_out`, `mul_out`, `div_out`, `relu_out`, `sigmoid_out`, `matmul_out`, `transpose_out`, `permute_out` |
 | reductions | `sum()`, `mean()`, `min()`, `max()` |
 | shape | `reshape`, `flatten`, `squeeze`, `unsqueeze`, `transpose`/`T`, `permute` |
 | fused | `relu`, `sigmoid`, `scale_shift`, `shift_scale`, `fused_add_mul`, `fused_sub_mul`, `fused_mul_add`, `fused_div_add` |

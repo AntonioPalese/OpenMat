@@ -1,6 +1,30 @@
 #include "tensor.cuh"
 #include <numeric>
 
+namespace om {
+namespace detail {
+    // Validates `axes` against `shape` and returns the permuted shape. Shared
+    // by permute() and permute_out() so the two cannot drift apart on what
+    // counts as a legal axis list.
+    inline std::vector<size_t> permuted_shape(const std::vector<size_t>& shape,
+                                              const std::vector<size_t>& axes)
+    {
+        const size_t r = shape.size();
+        if (axes.size() != r)
+            throw std::invalid_argument("permute: axes length must match tensor rank");
+        std::vector<bool> seen(r, false);
+        for (size_t a : axes) {
+            if (a >= r) throw std::out_of_range("permute: axis value out of range");
+            if (seen[a]) throw std::invalid_argument("permute: duplicate axis");
+            seen[a] = true;
+        }
+        std::vector<size_t> out(r);
+        for (size_t d = 0; d < r; ++d) out[d] = shape[axes[d]];
+        return out;
+    }
+} // namespace detail
+} // namespace om
+
 template<typename value_type>
 om::Tensor<value_type>::Tensor(const std::vector<size_t>& shape, const Device& dv)
     : m_Shape(shape), m_Device(dv), m_Stream(Stream::default_stream()),
@@ -301,22 +325,19 @@ om::Tensor<value_type> om::Tensor<value_type>::shift_scale(value_type shift, val
 
 template <typename value_type>
 template <typename Op>
+om::Tensor<value_type> om::Tensor<value_type>::apply_binary(const Tensor<value_type>& rhs, Op op,
+                                                            const Stream& s) const
+{
+    Tensor<value_type> out(this->shape(), this->device(), Stream(s.get()));
+    this->apply_binary_out(rhs, op, out, s);
+    return out;
+}
+
+template <typename value_type>
+template <typename Op>
 om::Tensor<value_type> om::Tensor<value_type>::apply_binary(const Tensor<value_type>& rhs, Op op) const
 {
-    Tensor<value_type> out(this->shape(), this->device());
-    if (this->device_type() == DEVICE_TYPE::CPU) {
-        auto lhs_v = this->view();
-        auto rhs_v = rhs.view();
-        auto dst_v = out.view();
-        if (!lhs_v.match(rhs_v))
-            throw std::invalid_argument("apply_binary: tensors must have the same shape");
-        size_t n = lhs_v.size();
-        for (size_t i = 0; i < n; ++i)
-            dst_v[i] = op(lhs_v[i], rhs_v[i]);
-    } else {
-        launch_apply_binary_op<value_type>(this->view(), rhs.view(), out.view(), op);
-    }
-    return out;
+    return this->apply_binary(rhs, op, Stream::default_stream());
 }
 
 template <typename value_type>
@@ -478,15 +499,82 @@ void om::Tensor<value_type>::copyToDevice(value_type *dest) const
         throw std::runtime_error("Tensor::copyToDevice: memory already on device");
 }
 
-// ── Stream overload implementations ─────────────────────────────────────────
-// Each method dispatches CPU ops directly (stream irrelevant on CPU) and GPU
-// ops via the stream-aware launch_* functions. The no-stream methods above
-// delegate here with Stream::default_stream() (wraps nullptr → synchronous).
+// ── Destination-provided implementations ────────────────────────────────────
+//
+// This is where every op actually happens. `X_out` takes the destination the
+// caller already owns; the allocating overload builds one and calls straight
+// in here; the in-place `X_` passes *this. So each op still has exactly one
+// place that branches on device_type(), which is the same single-source-of-
+// truth rule the stream refactor established for the (args, Stream) form.
+//
+// CPU ops ignore the stream; GPU ops enqueue on it via the launch_* family.
+// The no-stream forms delegate with Stream::default_stream() (wraps nullptr →
+// synchronous).
+//
+// A destination that is not the freshly allocated one carries a caveat the
+// allocating path does not have: cudaMallocAsync memory is stream-ordered, so
+// enqueueing into `out` on a stream other than the one `out` was allocated on
+// is only safe once the caller has ordered the two (an event, or a
+// synchronize). Tensor cannot check that, so it is documented, not enforced.
 
 template <typename value_type>
-om::Tensor<value_type> om::Tensor<value_type>::add(const Tensor<value_type>& rhs, const Stream& s) const
+void om::Tensor<value_type>::_check_out(const Tensor<value_type>& out,
+                                        const std::vector<size_t>& shape,
+                                        const char* who) const
 {
-    Tensor<value_type> out(this->shape(), this->device(), Stream(s.get()));
+    if (out.m_Shape != shape)
+        throw std::invalid_argument(std::string(who) +
+            ": destination shape does not match the result shape");
+    if (out.device_type() != this->device_type() || out.m_Device.m_Id != m_Device.m_Id)
+        throw std::invalid_argument(std::string(who) +
+            ": destination must live on the same device as the operands");
+    if (out.m_Data == nullptr)
+        throw std::invalid_argument(std::string(who) + ": destination has been moved from");
+}
+
+template <typename value_type>
+void om::Tensor<value_type>::_check_operand(const Tensor<value_type>& rhs, const char* who) const
+{
+    if (rhs.m_Shape != m_Shape)
+        throw std::invalid_argument(std::string(who) + ": tensors must have the same shape");
+    if (rhs.device_type() != this->device_type() || rhs.m_Device.m_Id != m_Device.m_Id)
+        throw std::invalid_argument(std::string(who) + ": tensors must live on the same device");
+}
+
+template <typename value_type>
+void om::Tensor<value_type>::_check_alias_elementwise(const Tensor<value_type>& out,
+                                                      const Tensor<value_type>* rhs,
+                                                      const char* who) const
+{
+    const bool aliased = (out.m_Data == m_Data) || (rhs && out.m_Data == rhs->m_Data);
+    if (!aliased) return;
+
+    const bool flat = this->view().is_contiguous() && out.view().is_contiguous() &&
+                      (!rhs || rhs->view().is_contiguous());
+    if (!flat)
+        throw std::invalid_argument(std::string(who) +
+            ": destination may only share a buffer with an operand while every "
+            "operand is contiguous");
+}
+
+template <typename value_type>
+void om::Tensor<value_type>::_check_alias_none(const Tensor<value_type>& out,
+                                               const Tensor<value_type>* rhs,
+                                               const char* who) const
+{
+    if (out.m_Data == m_Data || (rhs && out.m_Data == rhs->m_Data))
+        throw std::invalid_argument(std::string(who) +
+            ": destination must not be one of the operands");
+}
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::add_out(const Tensor<value_type>& rhs,
+                                                           Tensor<value_type>& out,
+                                                           const Stream& s) const
+{
+    _check_operand(rhs, "add_out");
+    _check_out(out, m_Shape, "add_out");
+    _check_alias_elementwise(out, &rhs, "add_out");
     if (this->device_type() == DEVICE_TYPE::CPU)
         add_cpu(this->view(), rhs.view(), out.view());
     else
@@ -495,9 +583,34 @@ om::Tensor<value_type> om::Tensor<value_type>::add(const Tensor<value_type>& rhs
 }
 
 template <typename value_type>
-om::Tensor<value_type> om::Tensor<value_type>::sub(const Tensor<value_type>& rhs, const Stream& s) const
+om::Tensor<value_type>& om::Tensor<value_type>::add_out(const Tensor<value_type>& rhs,
+                                                           Tensor<value_type>& out) const
+{ return this->add_out(rhs, out, Stream::default_stream()); }
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::add(const Tensor<value_type>& rhs, const Stream& s) const
 {
     Tensor<value_type> out(this->shape(), this->device(), Stream(s.get()));
+    this->add_out(rhs, out, s);
+    return out;
+}
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::add_(const Tensor<value_type>& rhs, const Stream& s)
+{ return this->add_out(rhs, *this, s); }
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::add_(const Tensor<value_type>& rhs)
+{ return this->add_out(rhs, *this, Stream::default_stream()); }
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::sub_out(const Tensor<value_type>& rhs,
+                                                           Tensor<value_type>& out,
+                                                           const Stream& s) const
+{
+    _check_operand(rhs, "sub_out");
+    _check_out(out, m_Shape, "sub_out");
+    _check_alias_elementwise(out, &rhs, "sub_out");
     if (this->device_type() == DEVICE_TYPE::CPU)
         sub_cpu(this->view(), rhs.view(), out.view());
     else
@@ -506,9 +619,34 @@ om::Tensor<value_type> om::Tensor<value_type>::sub(const Tensor<value_type>& rhs
 }
 
 template <typename value_type>
-om::Tensor<value_type> om::Tensor<value_type>::mul(const Tensor<value_type>& rhs, const Stream& s) const
+om::Tensor<value_type>& om::Tensor<value_type>::sub_out(const Tensor<value_type>& rhs,
+                                                           Tensor<value_type>& out) const
+{ return this->sub_out(rhs, out, Stream::default_stream()); }
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::sub(const Tensor<value_type>& rhs, const Stream& s) const
 {
     Tensor<value_type> out(this->shape(), this->device(), Stream(s.get()));
+    this->sub_out(rhs, out, s);
+    return out;
+}
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::sub_(const Tensor<value_type>& rhs, const Stream& s)
+{ return this->sub_out(rhs, *this, s); }
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::sub_(const Tensor<value_type>& rhs)
+{ return this->sub_out(rhs, *this, Stream::default_stream()); }
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::mul_out(const Tensor<value_type>& rhs,
+                                                           Tensor<value_type>& out,
+                                                           const Stream& s) const
+{
+    _check_operand(rhs, "mul_out");
+    _check_out(out, m_Shape, "mul_out");
+    _check_alias_elementwise(out, &rhs, "mul_out");
     if (this->device_type() == DEVICE_TYPE::CPU)
         mul_cpu(this->view(), rhs.view(), out.view());
     else
@@ -517,9 +655,34 @@ om::Tensor<value_type> om::Tensor<value_type>::mul(const Tensor<value_type>& rhs
 }
 
 template <typename value_type>
-om::Tensor<value_type> om::Tensor<value_type>::div(const Tensor<value_type>& rhs, const Stream& s) const
+om::Tensor<value_type>& om::Tensor<value_type>::mul_out(const Tensor<value_type>& rhs,
+                                                           Tensor<value_type>& out) const
+{ return this->mul_out(rhs, out, Stream::default_stream()); }
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::mul(const Tensor<value_type>& rhs, const Stream& s) const
 {
     Tensor<value_type> out(this->shape(), this->device(), Stream(s.get()));
+    this->mul_out(rhs, out, s);
+    return out;
+}
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::mul_(const Tensor<value_type>& rhs, const Stream& s)
+{ return this->mul_out(rhs, *this, s); }
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::mul_(const Tensor<value_type>& rhs)
+{ return this->mul_out(rhs, *this, Stream::default_stream()); }
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::div_out(const Tensor<value_type>& rhs,
+                                                           Tensor<value_type>& out,
+                                                           const Stream& s) const
+{
+    _check_operand(rhs, "div_out");
+    _check_out(out, m_Shape, "div_out");
+    _check_alias_elementwise(out, &rhs, "div_out");
     if (this->device_type() == DEVICE_TYPE::CPU)
         div_cpu(this->view(), rhs.view(), out.view());
     else
@@ -528,9 +691,33 @@ om::Tensor<value_type> om::Tensor<value_type>::div(const Tensor<value_type>& rhs
 }
 
 template <typename value_type>
-om::Tensor<value_type> om::Tensor<value_type>::add(const value_type& scalar, const Stream& s) const
+om::Tensor<value_type>& om::Tensor<value_type>::div_out(const Tensor<value_type>& rhs,
+                                                           Tensor<value_type>& out) const
+{ return this->div_out(rhs, out, Stream::default_stream()); }
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::div(const Tensor<value_type>& rhs, const Stream& s) const
 {
     Tensor<value_type> out(this->shape(), this->device(), Stream(s.get()));
+    this->div_out(rhs, out, s);
+    return out;
+}
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::div_(const Tensor<value_type>& rhs, const Stream& s)
+{ return this->div_out(rhs, *this, s); }
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::div_(const Tensor<value_type>& rhs)
+{ return this->div_out(rhs, *this, Stream::default_stream()); }
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::add_out(const value_type& scalar,
+                                                           Tensor<value_type>& out,
+                                                           const Stream& s) const
+{
+    _check_out(out, m_Shape, "add_out");
+    _check_alias_elementwise(out, nullptr, "add_out");
     if (this->device_type() == DEVICE_TYPE::CPU)
         add_k_cpu(this->view(), scalar, out.view());
     else
@@ -539,9 +726,33 @@ om::Tensor<value_type> om::Tensor<value_type>::add(const value_type& scalar, con
 }
 
 template <typename value_type>
-om::Tensor<value_type> om::Tensor<value_type>::sub(const value_type& scalar, const Stream& s) const
+om::Tensor<value_type>& om::Tensor<value_type>::add_out(const value_type& scalar,
+                                                           Tensor<value_type>& out) const
+{ return this->add_out(scalar, out, Stream::default_stream()); }
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::add(const value_type& scalar, const Stream& s) const
 {
     Tensor<value_type> out(this->shape(), this->device(), Stream(s.get()));
+    this->add_out(scalar, out, s);
+    return out;
+}
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::add_(const value_type& scalar, const Stream& s)
+{ return this->add_out(scalar, *this, s); }
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::add_(const value_type& scalar)
+{ return this->add_out(scalar, *this, Stream::default_stream()); }
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::sub_out(const value_type& scalar,
+                                                           Tensor<value_type>& out,
+                                                           const Stream& s) const
+{
+    _check_out(out, m_Shape, "sub_out");
+    _check_alias_elementwise(out, nullptr, "sub_out");
     if (this->device_type() == DEVICE_TYPE::CPU)
         sub_k_cpu(this->view(), scalar, out.view());
     else
@@ -550,9 +761,33 @@ om::Tensor<value_type> om::Tensor<value_type>::sub(const value_type& scalar, con
 }
 
 template <typename value_type>
-om::Tensor<value_type> om::Tensor<value_type>::mul(const value_type& scalar, const Stream& s) const
+om::Tensor<value_type>& om::Tensor<value_type>::sub_out(const value_type& scalar,
+                                                           Tensor<value_type>& out) const
+{ return this->sub_out(scalar, out, Stream::default_stream()); }
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::sub(const value_type& scalar, const Stream& s) const
 {
     Tensor<value_type> out(this->shape(), this->device(), Stream(s.get()));
+    this->sub_out(scalar, out, s);
+    return out;
+}
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::sub_(const value_type& scalar, const Stream& s)
+{ return this->sub_out(scalar, *this, s); }
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::sub_(const value_type& scalar)
+{ return this->sub_out(scalar, *this, Stream::default_stream()); }
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::mul_out(const value_type& scalar,
+                                                           Tensor<value_type>& out,
+                                                           const Stream& s) const
+{
+    _check_out(out, m_Shape, "mul_out");
+    _check_alias_elementwise(out, nullptr, "mul_out");
     if (this->device_type() == DEVICE_TYPE::CPU)
         mul_k_cpu(this->view(), scalar, out.view());
     else
@@ -561,9 +796,33 @@ om::Tensor<value_type> om::Tensor<value_type>::mul(const value_type& scalar, con
 }
 
 template <typename value_type>
-om::Tensor<value_type> om::Tensor<value_type>::div(const value_type& scalar, const Stream& s) const
+om::Tensor<value_type>& om::Tensor<value_type>::mul_out(const value_type& scalar,
+                                                           Tensor<value_type>& out) const
+{ return this->mul_out(scalar, out, Stream::default_stream()); }
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::mul(const value_type& scalar, const Stream& s) const
 {
     Tensor<value_type> out(this->shape(), this->device(), Stream(s.get()));
+    this->mul_out(scalar, out, s);
+    return out;
+}
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::mul_(const value_type& scalar, const Stream& s)
+{ return this->mul_out(scalar, *this, s); }
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::mul_(const value_type& scalar)
+{ return this->mul_out(scalar, *this, Stream::default_stream()); }
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::div_out(const value_type& scalar,
+                                                           Tensor<value_type>& out,
+                                                           const Stream& s) const
+{
+    _check_out(out, m_Shape, "div_out");
+    _check_alias_elementwise(out, nullptr, "div_out");
     if (this->device_type() == DEVICE_TYPE::CPU)
         div_k_cpu(this->view(), scalar, out.view());
     else
@@ -572,7 +831,67 @@ om::Tensor<value_type> om::Tensor<value_type>::div(const value_type& scalar, con
 }
 
 template <typename value_type>
-om::Tensor<value_type> om::Tensor<value_type>::matmul(const Tensor<value_type>& rhs, const Stream& s) const
+om::Tensor<value_type>& om::Tensor<value_type>::div_out(const value_type& scalar,
+                                                           Tensor<value_type>& out) const
+{ return this->div_out(scalar, out, Stream::default_stream()); }
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::div(const value_type& scalar, const Stream& s) const
+{
+    Tensor<value_type> out(this->shape(), this->device(), Stream(s.get()));
+    this->div_out(scalar, out, s);
+    return out;
+}
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::div_(const value_type& scalar, const Stream& s)
+{ return this->div_out(scalar, *this, s); }
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::div_(const value_type& scalar)
+{ return this->div_out(scalar, *this, Stream::default_stream()); }
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::operator+=(const Tensor<value_type>& rhs)
+{ return this->add_(rhs); }
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::operator+=(const value_type& scalar)
+{ return this->add_(scalar); }
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::operator-=(const Tensor<value_type>& rhs)
+{ return this->sub_(rhs); }
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::operator-=(const value_type& scalar)
+{ return this->sub_(scalar); }
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::operator*=(const Tensor<value_type>& rhs)
+{ return this->mul_(rhs); }
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::operator*=(const value_type& scalar)
+{ return this->mul_(scalar); }
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::operator/=(const Tensor<value_type>& rhs)
+{ return this->div_(rhs); }
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::operator/=(const value_type& scalar)
+{ return this->div_(scalar); }
+
+// ── matmul / transpose / permute ────────────────────────────────────────────
+// Same destination-provided core, minus the in-place forms: each of these
+// kernels reads elements it does not write, so a destination that shares a
+// buffer with an operand would read values the kernel has already overwritten.
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::matmul_out(const Tensor<value_type>& rhs,
+                                                           Tensor<value_type>& out,
+                                                           const Stream& s) const
 {
     if (this->rank() != 2 || rhs.rank() != 2)
         throw std::runtime_error("matmul: both tensors must be 2D matrices");
@@ -580,7 +899,10 @@ om::Tensor<value_type> om::Tensor<value_type>::matmul(const Tensor<value_type>& 
     if (K != K2)
         throw std::runtime_error("matmul: inner dimensions must match (A.cols=" +
             std::to_string(K) + " != B.rows=" + std::to_string(K2) + ")");
-    Tensor<value_type> out({M, N}, this->device(), Stream(s.get()));
+    if (rhs.device_type() != this->device_type() || rhs.device().m_Id != m_Device.m_Id)
+        throw std::invalid_argument("matmul_out: tensors must live on the same device");
+    _check_out(out, {M, N}, "matmul_out");
+    _check_alias_none(out, &rhs, "matmul_out");
     if (this->device_type() == DEVICE_TYPE::CPU)
         matmul_cpu(this->view(), rhs.view(), out.view());
     else
@@ -589,12 +911,30 @@ om::Tensor<value_type> om::Tensor<value_type>::matmul(const Tensor<value_type>& 
 }
 
 template <typename value_type>
-om::Tensor<value_type> om::Tensor<value_type>::transpose(const Stream& s) const
+om::Tensor<value_type>& om::Tensor<value_type>::matmul_out(const Tensor<value_type>& rhs,
+                                                           Tensor<value_type>& out) const
+{ return this->matmul_out(rhs, out, Stream::default_stream()); }
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::matmul(const Tensor<value_type>& rhs, const Stream& s) const
+{
+    if (this->rank() != 2 || rhs.rank() != 2)
+        throw std::runtime_error("matmul: both tensors must be 2D matrices");
+    if (m_Shape[1] != rhs.shape()[0])
+        throw std::runtime_error("matmul: inner dimensions must match (A.cols=" +
+            std::to_string(m_Shape[1]) + " != B.rows=" + std::to_string(rhs.shape()[0]) + ")");
+    Tensor<value_type> out({m_Shape[0], rhs.shape()[1]}, this->device(), Stream(s.get()));
+    this->matmul_out(rhs, out, s);
+    return out;
+}
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::transpose_out(Tensor<value_type>& out, const Stream& s) const
 {
     if (this->rank() != 2)
         throw std::runtime_error("transpose: tensor must be rank-2 (use permute for higher ranks)");
-    size_t M = m_Shape[0], N = m_Shape[1];
-    Tensor<value_type> out({N, M}, this->device(), Stream(s.get()));
+    _check_out(out, {m_Shape[1], m_Shape[0]}, "transpose_out");
+    _check_alias_none(out, nullptr, "transpose_out");
     if (this->device_type() == DEVICE_TYPE::CPU)
         transpose_cpu<value_type>(this->view(), out.view());
     else
@@ -603,32 +943,55 @@ om::Tensor<value_type> om::Tensor<value_type>::transpose(const Stream& s) const
 }
 
 template <typename value_type>
-om::Tensor<value_type> om::Tensor<value_type>::permute(const std::vector<size_t>& axes, const Stream& s) const
+om::Tensor<value_type>& om::Tensor<value_type>::transpose_out(Tensor<value_type>& out) const
+{ return this->transpose_out(out, Stream::default_stream()); }
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::transpose(const Stream& s) const
 {
-    size_t r = this->rank();
-    if (axes.size() != r)
-        throw std::invalid_argument("permute: axes length must match tensor rank");
-    std::vector<bool> seen(r, false);
-    for (size_t a : axes) {
-        if (a >= r) throw std::out_of_range("permute: axis value out of range");
-        if (seen[a]) throw std::invalid_argument("permute: duplicate axis");
-        seen[a] = true;
-    }
-    std::vector<size_t> out_shape(r);
-    for (size_t d = 0; d < r; ++d) out_shape[d] = m_Shape[axes[d]];
-    Tensor<value_type> out(out_shape, this->device(), Stream(s.get()));
-    if (this->device_type() == DEVICE_TYPE::CPU)
-        permute_cpu<value_type>(this->view(), out.view(), axes.data(), r);
-    else
-        launch_permute<value_type>(this->view(), out.view(), axes.data(), r, s.get());
+    if (this->rank() != 2)
+        throw std::runtime_error("transpose: tensor must be rank-2 (use permute for higher ranks)");
+    Tensor<value_type> out({m_Shape[1], m_Shape[0]}, this->device(), Stream(s.get()));
+    this->transpose_out(out, s);
     return out;
 }
 
 template <typename value_type>
-template <typename Op>
-om::Tensor<value_type> om::Tensor<value_type>::apply(Op op, const Stream& s) const
+om::Tensor<value_type>& om::Tensor<value_type>::permute_out(const std::vector<size_t>& axes,
+                                                            Tensor<value_type>& out,
+                                                            const Stream& s) const
 {
-    Tensor<value_type> out(this->shape(), this->device(), Stream(s.get()));
+    const std::vector<size_t> out_shape = detail::permuted_shape(m_Shape, axes);
+    _check_out(out, out_shape, "permute_out");
+    _check_alias_none(out, nullptr, "permute_out");
+    if (this->device_type() == DEVICE_TYPE::CPU)
+        permute_cpu<value_type>(this->view(), out.view(), axes.data(), this->rank());
+    else
+        launch_permute<value_type>(this->view(), out.view(), axes.data(), this->rank(), s.get());
+    return out;
+}
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::permute_out(const std::vector<size_t>& axes,
+                                                            Tensor<value_type>& out) const
+{ return this->permute_out(axes, out, Stream::default_stream()); }
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::permute(const std::vector<size_t>& axes, const Stream& s) const
+{
+    Tensor<value_type> out(detail::permuted_shape(m_Shape, axes), this->device(), Stream(s.get()));
+    this->permute_out(axes, out, s);
+    return out;
+}
+
+// ── apply / apply_binary / fill ─────────────────────────────────────────────
+
+template <typename value_type>
+template <typename Op>
+om::Tensor<value_type>& om::Tensor<value_type>::apply_out(Op op, Tensor<value_type>& out, const Stream& s) const
+{
+    _check_out(out, m_Shape, "apply_out");
+    _check_alias_elementwise(out, nullptr, "apply_out");
     if (this->device_type() == DEVICE_TYPE::CPU) {
         auto src = this->view();
         auto dst = out.view();
@@ -642,18 +1005,125 @@ om::Tensor<value_type> om::Tensor<value_type>::apply(Op op, const Stream& s) con
 }
 
 template <typename value_type>
-om::Tensor<value_type> om::Tensor<value_type>::relu(const Stream& s) const
+template <typename Op>
+om::Tensor<value_type>& om::Tensor<value_type>::apply_out(Op op, Tensor<value_type>& out) const
+{ return this->apply_out(op, out, Stream::default_stream()); }
+
+template <typename value_type>
+template <typename Op>
+om::Tensor<value_type> om::Tensor<value_type>::apply(Op op, const Stream& s) const
 {
-    return this->apply(ReLU<value_type>{}, s);
+    Tensor<value_type> out(this->shape(), this->device(), Stream(s.get()));
+    this->apply_out(op, out, s);
+    return out;
 }
 
 template <typename value_type>
-om::Tensor<value_type> om::Tensor<value_type>::sigmoid(const Stream& s) const
+template <typename Op>
+om::Tensor<value_type>& om::Tensor<value_type>::apply_(Op op, const Stream& s)
+{ return this->apply_out(op, *this, s); }
+
+template <typename value_type>
+template <typename Op>
+om::Tensor<value_type>& om::Tensor<value_type>::apply_(Op op)
+{ return this->apply_out(op, *this, Stream::default_stream()); }
+
+template <typename value_type>
+template <typename Op>
+om::Tensor<value_type>& om::Tensor<value_type>::apply_binary_out(const Tensor<value_type>& rhs, Op op,
+                                                                 Tensor<value_type>& out,
+                                                                 const Stream& s) const
 {
-    return this->apply(Sigmoid<value_type>{}, s);
+    _check_operand(rhs, "apply_binary_out");
+    _check_out(out, m_Shape, "apply_binary_out");
+    _check_alias_elementwise(out, &rhs, "apply_binary_out");
+    if (this->device_type() == DEVICE_TYPE::CPU) {
+        auto lhs_v = this->view();
+        auto rhs_v = rhs.view();
+        auto dst_v = out.view();
+        size_t n = lhs_v.size();
+        for (size_t i = 0; i < n; ++i)
+            dst_v[i] = op(lhs_v[i], rhs_v[i]);
+    } else {
+        launch_apply_binary_op<value_type>(this->view(), rhs.view(), out.view(), op, s.get());
+    }
+    return out;
 }
 
-// ── End stream overload implementations ──────────────────────────────────────
+template <typename value_type>
+template <typename Op>
+om::Tensor<value_type>& om::Tensor<value_type>::apply_binary_out(const Tensor<value_type>& rhs, Op op,
+                                                                 Tensor<value_type>& out) const
+{ return this->apply_binary_out(rhs, op, out, Stream::default_stream()); }
+
+template <typename value_type>
+template <typename Op>
+om::Tensor<value_type>& om::Tensor<value_type>::apply_binary_(const Tensor<value_type>& rhs, Op op, const Stream& s)
+{ return this->apply_binary_out(rhs, op, *this, s); }
+
+template <typename value_type>
+template <typename Op>
+om::Tensor<value_type>& om::Tensor<value_type>::apply_binary_(const Tensor<value_type>& rhs, Op op)
+{ return this->apply_binary_out(rhs, op, *this, Stream::default_stream()); }
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::relu_out(Tensor<value_type>& out, const Stream& s) const
+{ return this->apply_out(ReLU<value_type>{}, out, s); }
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::relu_out(Tensor<value_type>& out) const
+{ return this->apply_out(ReLU<value_type>{}, out, Stream::default_stream()); }
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::relu(const Stream& s) const
+{ return this->apply(ReLU<value_type>{}, s); }
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::relu_(const Stream& s)
+{ return this->apply_out(ReLU<value_type>{}, *this, s); }
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::relu_()
+{ return this->apply_out(ReLU<value_type>{}, *this, Stream::default_stream()); }
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::sigmoid_out(Tensor<value_type>& out, const Stream& s) const
+{ return this->apply_out(Sigmoid<value_type>{}, out, s); }
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::sigmoid_out(Tensor<value_type>& out) const
+{ return this->apply_out(Sigmoid<value_type>{}, out, Stream::default_stream()); }
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::sigmoid(const Stream& s) const
+{ return this->apply(Sigmoid<value_type>{}, s); }
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::sigmoid_(const Stream& s)
+{ return this->apply_out(Sigmoid<value_type>{}, *this, s); }
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::sigmoid_()
+{ return this->apply_out(Sigmoid<value_type>{}, *this, Stream::default_stream()); }
+
+// fill_ writes into the tensor it is called on by definition, so it is the
+// only member of the in-place family with no allocating counterpart. It is
+// also the last op that went through the legacy _fill dispatch struct, which
+// has no cudaStream_t parameter; going direct is what gives it a stream.
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::fill_(const value_type& value, const Stream& s)
+{
+    if (this->device_type() == DEVICE_TYPE::CPU)
+        fill_cpu(this->view(), value);
+    else
+        launch_fill<value_type>(this->view(), value, s.get());
+    return *this;
+}
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::fill_(const value_type& value)
+{ return this->fill_(value, Stream::default_stream()); }
+
 
 template <typename value_type>
 om::Tensor<value_type> om::Tensor<value_type>::transpose() const
