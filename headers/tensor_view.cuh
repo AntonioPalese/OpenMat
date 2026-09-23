@@ -25,7 +25,20 @@ namespace om {
             }
             return true;
         }
-    
+
+        // Shape only, strides ignored. The binary launchers compare with this
+        // rather than match(): a broadcast operand arrives expanded to the
+        // output shape but with 0 strides on its broadcast axes.
+        template <typename U>
+        __host__
+        bool same_shape(const TensorView<U>& other) const
+        {
+            if (rank != other.rank) return false;
+            for (size_t i = 0; i < rank; i++)
+                if (shape[i] != other.shape[i]) return false;
+            return true;
+        }
+
         template <typename... Indices>
         __host__
         T& operator()(Indices... indices) {

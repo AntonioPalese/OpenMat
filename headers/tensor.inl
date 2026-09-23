@@ -1,4 +1,6 @@
 #include "tensor.cuh"
+#include "broadcast.h"
+#include "ops/cpu/broadcast_cpu.h"
 #include <numeric>
 
 namespace om {
@@ -328,7 +330,8 @@ template <typename Op>
 om::Tensor<value_type> om::Tensor<value_type>::apply_binary(const Tensor<value_type>& rhs, Op op,
                                                             const Stream& s) const
 {
-    Tensor<value_type> out(this->shape(), this->device(), Stream(s.get()));
+    Tensor<value_type> out(detail::broadcast_shapes(m_Shape, rhs.m_Shape, "apply_binary"),
+                           this->device(), Stream(s.get()));
     this->apply_binary_out(rhs, op, out, s);
     return out;
 }
@@ -524,7 +527,8 @@ void om::Tensor<value_type>::_check_out(const Tensor<value_type>& out,
 {
     if (out.m_Shape != shape)
         throw std::invalid_argument(std::string(who) +
-            ": destination shape does not match the result shape");
+            ": destination shape " + detail::shape_str(out.m_Shape) +
+            " does not match the result shape " + detail::shape_str(shape));
     if (out.device_type() != this->device_type() || out.m_Device.m_Id != m_Device.m_Id)
         throw std::invalid_argument(std::string(who) +
             ": destination must live on the same device as the operands");
@@ -533,12 +537,12 @@ void om::Tensor<value_type>::_check_out(const Tensor<value_type>& out,
 }
 
 template <typename value_type>
-void om::Tensor<value_type>::_check_operand(const Tensor<value_type>& rhs, const char* who) const
+std::vector<size_t> om::Tensor<value_type>::_check_operand(const Tensor<value_type>& rhs,
+                                                          const char* who) const
 {
-    if (rhs.m_Shape != m_Shape)
-        throw std::invalid_argument(std::string(who) + ": tensors must have the same shape");
     if (rhs.device_type() != this->device_type() || rhs.m_Device.m_Id != m_Device.m_Id)
         throw std::invalid_argument(std::string(who) + ": tensors must live on the same device");
+    return detail::broadcast_shapes(m_Shape, rhs.m_Shape, who);
 }
 
 template <typename value_type>
@@ -548,6 +552,12 @@ void om::Tensor<value_type>::_check_alias_elementwise(const Tensor<value_type>& 
 {
     const bool aliased = (out.m_Data == m_Data) || (rhs && out.m_Data == rhs->m_Data);
     if (!aliased) return;
+
+    // Broadcasting does not weaken this. A tensor owns its buffer outright, so
+    // sharing a buffer with `out` means *being* `out`, and `out` has the
+    // result shape: an aliased operand is never the broadcast one (whose
+    // expanded view has 0 strides and would re-read elements already
+    // written). Every aliased read is still index i for write index i.
 
     const bool flat = this->view().is_contiguous() && out.view().is_contiguous() &&
                       (!rhs || rhs->view().is_contiguous());
@@ -572,13 +582,15 @@ om::Tensor<value_type>& om::Tensor<value_type>::add_out(const Tensor<value_type>
                                                            Tensor<value_type>& out,
                                                            const Stream& s) const
 {
-    _check_operand(rhs, "add_out");
-    _check_out(out, m_Shape, "add_out");
+    const auto shape = _check_operand(rhs, "add_out");
+    _check_out(out, shape, "add_out");
     _check_alias_elementwise(out, &rhs, "add_out");
+    const auto l = detail::expand_to(m_Shape, m_Stride, shape);
+    const auto r = detail::expand_to(rhs.m_Shape, rhs.m_Stride, shape);
     if (this->device_type() == DEVICE_TYPE::CPU)
-        add_cpu(this->view(), rhs.view(), out.view());
+        add_cpu(l.view(m_Data), r.view(rhs.m_Data), out.view());
     else
-        launch_add<value_type>(this->view(), rhs.view(), out.view(), s.get());
+        launch_add<value_type>(l.view(m_Data), r.view(rhs.m_Data), out.view(), s.get());
     return out;
 }
 
@@ -590,7 +602,8 @@ om::Tensor<value_type>& om::Tensor<value_type>::add_out(const Tensor<value_type>
 template <typename value_type>
 om::Tensor<value_type> om::Tensor<value_type>::add(const Tensor<value_type>& rhs, const Stream& s) const
 {
-    Tensor<value_type> out(this->shape(), this->device(), Stream(s.get()));
+    Tensor<value_type> out(detail::broadcast_shapes(m_Shape, rhs.m_Shape, "add"),
+                           this->device(), Stream(s.get()));
     this->add_out(rhs, out, s);
     return out;
 }
@@ -608,13 +621,15 @@ om::Tensor<value_type>& om::Tensor<value_type>::sub_out(const Tensor<value_type>
                                                            Tensor<value_type>& out,
                                                            const Stream& s) const
 {
-    _check_operand(rhs, "sub_out");
-    _check_out(out, m_Shape, "sub_out");
+    const auto shape = _check_operand(rhs, "sub_out");
+    _check_out(out, shape, "sub_out");
     _check_alias_elementwise(out, &rhs, "sub_out");
+    const auto l = detail::expand_to(m_Shape, m_Stride, shape);
+    const auto r = detail::expand_to(rhs.m_Shape, rhs.m_Stride, shape);
     if (this->device_type() == DEVICE_TYPE::CPU)
-        sub_cpu(this->view(), rhs.view(), out.view());
+        sub_cpu(l.view(m_Data), r.view(rhs.m_Data), out.view());
     else
-        launch_sub<value_type>(this->view(), rhs.view(), out.view(), s.get());
+        launch_sub<value_type>(l.view(m_Data), r.view(rhs.m_Data), out.view(), s.get());
     return out;
 }
 
@@ -626,7 +641,8 @@ om::Tensor<value_type>& om::Tensor<value_type>::sub_out(const Tensor<value_type>
 template <typename value_type>
 om::Tensor<value_type> om::Tensor<value_type>::sub(const Tensor<value_type>& rhs, const Stream& s) const
 {
-    Tensor<value_type> out(this->shape(), this->device(), Stream(s.get()));
+    Tensor<value_type> out(detail::broadcast_shapes(m_Shape, rhs.m_Shape, "sub"),
+                           this->device(), Stream(s.get()));
     this->sub_out(rhs, out, s);
     return out;
 }
@@ -644,13 +660,15 @@ om::Tensor<value_type>& om::Tensor<value_type>::mul_out(const Tensor<value_type>
                                                            Tensor<value_type>& out,
                                                            const Stream& s) const
 {
-    _check_operand(rhs, "mul_out");
-    _check_out(out, m_Shape, "mul_out");
+    const auto shape = _check_operand(rhs, "mul_out");
+    _check_out(out, shape, "mul_out");
     _check_alias_elementwise(out, &rhs, "mul_out");
+    const auto l = detail::expand_to(m_Shape, m_Stride, shape);
+    const auto r = detail::expand_to(rhs.m_Shape, rhs.m_Stride, shape);
     if (this->device_type() == DEVICE_TYPE::CPU)
-        mul_cpu(this->view(), rhs.view(), out.view());
+        mul_cpu(l.view(m_Data), r.view(rhs.m_Data), out.view());
     else
-        launch_mul<value_type>(this->view(), rhs.view(), out.view(), s.get());
+        launch_mul<value_type>(l.view(m_Data), r.view(rhs.m_Data), out.view(), s.get());
     return out;
 }
 
@@ -662,7 +680,8 @@ om::Tensor<value_type>& om::Tensor<value_type>::mul_out(const Tensor<value_type>
 template <typename value_type>
 om::Tensor<value_type> om::Tensor<value_type>::mul(const Tensor<value_type>& rhs, const Stream& s) const
 {
-    Tensor<value_type> out(this->shape(), this->device(), Stream(s.get()));
+    Tensor<value_type> out(detail::broadcast_shapes(m_Shape, rhs.m_Shape, "mul"),
+                           this->device(), Stream(s.get()));
     this->mul_out(rhs, out, s);
     return out;
 }
@@ -680,13 +699,15 @@ om::Tensor<value_type>& om::Tensor<value_type>::div_out(const Tensor<value_type>
                                                            Tensor<value_type>& out,
                                                            const Stream& s) const
 {
-    _check_operand(rhs, "div_out");
-    _check_out(out, m_Shape, "div_out");
+    const auto shape = _check_operand(rhs, "div_out");
+    _check_out(out, shape, "div_out");
     _check_alias_elementwise(out, &rhs, "div_out");
+    const auto l = detail::expand_to(m_Shape, m_Stride, shape);
+    const auto r = detail::expand_to(rhs.m_Shape, rhs.m_Stride, shape);
     if (this->device_type() == DEVICE_TYPE::CPU)
-        div_cpu(this->view(), rhs.view(), out.view());
+        div_cpu(l.view(m_Data), r.view(rhs.m_Data), out.view());
     else
-        launch_div<value_type>(this->view(), rhs.view(), out.view(), s.get());
+        launch_div<value_type>(l.view(m_Data), r.view(rhs.m_Data), out.view(), s.get());
     return out;
 }
 
@@ -698,7 +719,8 @@ om::Tensor<value_type>& om::Tensor<value_type>::div_out(const Tensor<value_type>
 template <typename value_type>
 om::Tensor<value_type> om::Tensor<value_type>::div(const Tensor<value_type>& rhs, const Stream& s) const
 {
-    Tensor<value_type> out(this->shape(), this->device(), Stream(s.get()));
+    Tensor<value_type> out(detail::broadcast_shapes(m_Shape, rhs.m_Shape, "div"),
+                           this->device(), Stream(s.get()));
     this->div_out(rhs, out, s);
     return out;
 }
@@ -1034,19 +1056,15 @@ om::Tensor<value_type>& om::Tensor<value_type>::apply_binary_out(const Tensor<va
                                                                  Tensor<value_type>& out,
                                                                  const Stream& s) const
 {
-    _check_operand(rhs, "apply_binary_out");
-    _check_out(out, m_Shape, "apply_binary_out");
+    const auto shape = _check_operand(rhs, "apply_binary_out");
+    _check_out(out, shape, "apply_binary_out");
     _check_alias_elementwise(out, &rhs, "apply_binary_out");
-    if (this->device_type() == DEVICE_TYPE::CPU) {
-        auto lhs_v = this->view();
-        auto rhs_v = rhs.view();
-        auto dst_v = out.view();
-        size_t n = lhs_v.size();
-        for (size_t i = 0; i < n; ++i)
-            dst_v[i] = op(lhs_v[i], rhs_v[i]);
-    } else {
-        launch_apply_binary_op<value_type>(this->view(), rhs.view(), out.view(), op, s.get());
-    }
+    const auto l = detail::expand_to(m_Shape, m_Stride, shape);
+    const auto r = detail::expand_to(rhs.m_Shape, rhs.m_Stride, shape);
+    if (this->device_type() == DEVICE_TYPE::CPU)
+        detail::binary_elementwise_cpu(l.view(m_Data), r.view(rhs.m_Data), out.view(), op);
+    else
+        launch_apply_binary_op<value_type>(l.view(m_Data), r.view(rhs.m_Data), out.view(), op, s.get());
     return out;
 }
 

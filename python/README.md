@@ -128,6 +128,20 @@ destination allocated on a *different* stream is only correct once you have
 ordered the two yourself. The allocating forms cannot hit this — they allocate
 on the stream they run on.
 
+## Broadcasting
+
+Tensor-tensor arithmetic (`+ - * /`, their in-place and `_out` forms, and the
+`fused_*` ops) follows NumPy's broadcasting rules: shapes are right-aligned,
+and each axis must match or be 1.
+
+```python
+x = om.Tensor.zeros([32, 128])
+bias = om.Tensor.ones([128])
+y = x + bias          # shape [32, 128]; bias is never copied
+x += bias             # in place: the result must have x's shape
+bias.add_(x)          # RuntimeError: the [32, 128] result cannot fit in bias
+```
+
 ## API
 
 | group | members |

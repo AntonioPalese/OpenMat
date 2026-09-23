@@ -31,7 +31,9 @@
     template<typename T>\
     void launch_##OP_NAME(const TensorView<const T> lhs, const TensorView<const T> rhs, TensorView<T> dst, cudaStream_t stream)\
     {\
-        if ( !lhs.match(dst) || !rhs.match(dst) || !lhs.match(rhs) )\
+        /* Shapes, not strides: a broadcast operand arrives expanded to the */\
+        /* output shape with 0 strides on its broadcast axes.               */\
+        if ( !lhs.same_shape(dst) || !rhs.same_shape(dst) )\
         {\
             throw std::runtime_error("Matrix size mismatch in " #OP_NAME);\
         }\
@@ -174,19 +176,24 @@
     template<typename T>\
     __global__ void OP_NAME##_kernel_nd(const DeviceTensorView<const T> lhs, const DeviceTensorView<const T> rhs, DeviceTensorView<T> dst) {\
         size_t idx = blockIdx.x * blockDim.x + threadIdx.x;\
-        size_t total_elements = lhs.size();\
+        size_t total_elements = dst.size();\
 \
         if (idx >= total_elements) return;\
 \
-        size_t offset = 0;\
+        /* One offset per operand: a broadcast operand has 0 strides where  */\
+        /* the others do not. Last axis fastest, so consecutive threads     */\
+        /* write consecutive dst elements.                                  */\
+        size_t lo = 0, ro = 0, doff = 0;\
         size_t tmp = idx;\
-        for (size_t d = 0; d < lhs.rank; ++d) {\
-            size_t coord = tmp % lhs.shape[d];\
-            offset += coord * lhs.stride[d];\
-            tmp /= lhs.shape[d];\
+        for (size_t d = dst.rank; d-- > 0; ) {\
+            const size_t coord = tmp % dst.shape[d];\
+            tmp /= dst.shape[d];\
+            lo   += coord * lhs.stride[d];\
+            ro   += coord * rhs.stride[d];\
+            doff += coord * dst.stride[d];\
         }\
 \
-        dst[offset] = OP_EXPR;\
+        dst[doff] = OP_EXPR;\
     }
 
 #define DEFINE_BINARY_OP_LAUNCH_FRW_DEC(OP_NAME)\

@@ -332,8 +332,10 @@ namespace om
                         const std::vector<size_t>& shape,
                         const char* who) const;
 
-        // Throws unless `rhs` is a legal second operand for an elementwise op.
-        void _check_operand(const Tensor<value_type>& rhs, const char* who) const;
+        // Throws unless `rhs` is a legal second operand for an elementwise op:
+        // same device, and a shape that broadcasts against this one (NumPy
+        // rules). Returns the broadcast result shape.
+        std::vector<size_t> _check_operand(const Tensor<value_type>& rhs, const char* who) const;
 
         // Every elementwise path — the CPU loop, the contiguous GPU fast path
         // and the rank-specialized kernels — reads index i and writes index i,

@@ -6,7 +6,7 @@ namespace om
     DEFINE_BINARY_OP_KERNEL_K2(add, lhs(y, x) + rhs(y, x))
     DEFINE_BINARY_OP_KERNEL_K3(add, lhs(z, y, x) + rhs(z, y, x))
     DEFINE_BINARY_OP_KERNEL_K4(add, lhs(n, c, h, w) + rhs(n, c, h, w))
-    DEFINE_BINARY_OP_KERNEL_ND(add, lhs[offset] + rhs[offset])
+    DEFINE_BINARY_OP_KERNEL_ND(add, lhs[lo] + rhs[ro])
     DEFINE_BINARY_OP_LAUNCH(add)
     DEFINE_BINARY_OP_LAUNCH_FRW_DEC(add)
 
@@ -15,7 +15,7 @@ namespace om
     DEFINE_BINARY_OP_KERNEL_K2(sub, lhs(y, x) - rhs(y, x))
     DEFINE_BINARY_OP_KERNEL_K3(sub, lhs(z, y, x) - rhs(z, y, x))
     DEFINE_BINARY_OP_KERNEL_K4(sub, lhs(n, c, h, w) - rhs(n, c, h, w))
-    DEFINE_BINARY_OP_KERNEL_ND(sub, lhs[offset] - rhs[offset])
+    DEFINE_BINARY_OP_KERNEL_ND(sub, lhs[lo] - rhs[ro])
     DEFINE_BINARY_OP_LAUNCH_FRW_DEC(sub)
 
 
@@ -24,7 +24,7 @@ namespace om
     DEFINE_BINARY_OP_KERNEL_K2(mul, lhs(y, x) * rhs(y, x))
     DEFINE_BINARY_OP_KERNEL_K3(mul, lhs(z, y, x) * rhs(z, y, x))
     DEFINE_BINARY_OP_KERNEL_K4(mul, lhs(n, c, h, w) * rhs(n, c, h, w))
-    DEFINE_BINARY_OP_KERNEL_ND(mul, lhs[offset] * rhs[offset])
+    DEFINE_BINARY_OP_KERNEL_ND(mul, lhs[lo] * rhs[ro])
     DEFINE_BINARY_OP_LAUNCH_FRW_DEC(mul)
 
 
@@ -33,6 +33,6 @@ namespace om
     DEFINE_BINARY_OP_KERNEL_K2(div, div_elem(lhs(y, x), rhs(y, x)))
     DEFINE_BINARY_OP_KERNEL_K3(div, div_elem(lhs(z, y, x), rhs(z, y, x)))
     DEFINE_BINARY_OP_KERNEL_K4(div, div_elem(lhs(n, c, h, w), rhs(n, c, h, w)))
-    DEFINE_BINARY_OP_KERNEL_ND(div, div_elem(lhs[offset], rhs[offset]))
+    DEFINE_BINARY_OP_KERNEL_ND(div, div_elem(lhs[lo], rhs[ro]))
     DEFINE_BINARY_OP_LAUNCH_FRW_DEC(div)
 }
