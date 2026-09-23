@@ -9,11 +9,6 @@ Requirements: NVIDIA GPU, CUDA Toolkit ≥ 11.2 (for `cudaMallocAsync`), CMake �
 ```bash
 # Full clean rebuild (also refreshes compile_commands.json in the repo root)
 ./compile.sh
-
-# Or manually:
-mkdir build && cd build
-cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON ..
-make -j$(nproc)
 ```
 
 Produces `build/OpenMat.so` (shared library — also what the Python package loads), `build/OpenMat_app`, and `build/tests/test_*`.
@@ -38,28 +33,13 @@ cd build && ctest                       # all suites
 ./build/tests/test_arithmetic --gtest_filter="TensorArithmetic.CPUOperations"
 ```
 
-Suites: `test_arithmetic`, `test_fused_ops`, `test_device_transfer`, `test_factory`, `test_reductions`, `test_benchmarks`, `test_reshape`, `test_transpose`, `test_streams`, `test_allocator_stream`, `test_host_pool`, `test_contiguous`, `test_inplace`, `test_stress`, `test_stream_perf`.
-
 `test_benchmarks`, `test_stress`, and `test_stream_perf` are timing/soak suites, not correctness suites — they are slow and their numbers are meaningless in a Debug build. `StreamPerf.ParallelFanOut` in particular asserts wall-clock against wall-clock and goes red under load; CI does not gate on those two suites.
 
 **Every test that touches the device starts with `OM_REQUIRE_CUDA();`** ([tests/test_helpers.h](tests/test_helpers.h)) — a `cudaGetDeviceCount` check that `GTEST_SKIP`s instead of failing. That is what makes `ctest` green on a machine with no GPU (130 skipped, 88 host-side tests run) and is what the CPU-only CI job relies on; a new GPU test without it turns that job red. The Python equivalents are the `requires_cuda` marker and the `device` fixture in [python/tests/conftest.py](python/tests/conftest.py).
 
 ## Debugging asynchronous kernel errors
 
-`OPENMAT_DEBUG_SYNC=1` forces a `cudaStreamSynchronize` after every kernel launch, so an out-of-bounds access is reported at the launching call site with the kernel's name instead of surfacing later as an illegal access in an unrelated call:
-
-```bash
-OPENMAT_DEBUG_SYNC=1 ./build/tests/test_streams          # no rebuild needed
-```
-
-```
-[CUDA ASYNC ERROR] kernel 'add_kernel_rank1' at src/ops/kernels/binary_ops.cu:10
-  in void om::launch_add(...) [with T = float; ...]
-  on stream 0xb0149ef4a290
-  → an illegal memory access was encountered
-```
-
-`cmake -DOM_DEBUG_SYNC=ON` makes it the build's default (the env var still overrides either way, so `OPENMAT_DEBUG_SYNC=0` turns it back off); `cmake -DOM_NO_DEBUG_SYNC=ON` compiles it out entirely. It serializes streams — diagnostic mode, never a default. It complements `compute-sanitizer`: cheap enough to leave on for a whole test run, but it only localizes, it does not tell you which access was bad.
+`OPENMAT_DEBUG_SYNC=1` localizes an async kernel error to its launching call site; see the `debug-cuda-async` skill for the walkthrough and the `compute-sanitizer` follow-up.
 
 **Every kernel launch must be followed by `CUDA_CHECK_LAUNCH(kernel_name, stream)`** ([headers/cuda_defines.cuh](headers/cuda_defines.cuh)), not the older bare `CUDA_CHECK` — that one has no way to know the stream or the kernel, so it can only do the synchronous check. In the rank-switching launcher macros the name is carried in a local `const char* om_kernel` assigned in each branch, with one check after the `switch`. The implementation is deliberately non-`inline`, in [src/cuda_debug.cpp](src/cuda_debug.cpp): both switches are preprocessor-conditional, and an inline definition would let a consumer built with different settings supply a conflicting second definition (ODR violation, linker silently picks one).
 
@@ -67,8 +47,8 @@ OPENMAT_DEBUG_SYNC=1 ./build/tests/test_streams          # no rebuild needed
 
 [.github/workflows/ci.yml](.github/workflows/ci.yml), on every push and PR. Two jobs:
 
-- **cpu** — a `nvidia/cuda:*-devel` container on a GitHub-hosted runner: toolkit, no driver, no device. It configures with an explicit `-DCMAKE_CUDA_ARCHITECTURES="75;86;89"` (the `native` default needs a GPU to resolve) and puts `/usr/local/cuda/lib64/stubs` first in `CMAKE_LIBRARY_PATH`, where the link-time-only `libcuda.so` lives. Its job is the full compile+link — the macro machinery and the mandatory explicit instantiations only fail there — plus the host-side tests.
-- **gpu** — a self-hosted runner labelled `self-hosted,linux,gpu`, needing nvcc and CMake ≥ 3.24 on PATH. Release build at `native` arch, the correctness suites (`ctest -E "test_benchmarks|test_stream_perf"` — 13 of the 15, `test_stress` included), the Python suite, then `compute-sanitizer --tool memcheck --leak-check full` over `test_stress`, `test_allocator_stream` and `test_streams` (~30 s total). memcheck is the only thing that reports a stream-ownership violation near the call site instead of as an illegal access in an unrelated kernel later on.
+- **cpu** — toolkit, no driver, no device. Its job is the full compile+link — the macro machinery and the mandatory explicit instantiations only fail there — plus the host-side tests.
+- **gpu** — a self-hosted runner. Release build, the correctness suites, the Python suite, then `compute-sanitizer --tool memcheck --leak-check full`. memcheck is the only thing that reports a stream-ownership violation near the call site instead of as an illegal access in an unrelated kernel later on.
 
 ## Python package
 
@@ -112,17 +92,6 @@ auto c = a.add(b, s);              // enqueues on s; caller must s.synchronize()
 
 ### Dispatch: two paths, one of them mostly dead
 
-### Broadcasting
-
-Tensor-tensor elementwise ops (`add`/`sub`/`mul`/`div`, `apply_binary`, the `fused_*` helpers built on it, and every `_out`/`_` form) follow NumPy broadcasting. It is done entirely with **zero strides**, in [headers/broadcast.h](headers/broadcast.h): `_check_operand` returns `detail::broadcast_shapes(lhs, rhs)` (which throws `not broadcastable`, and throws for a result rank above `MAX_RANK`), and the `_out` body turns each operand into `detail::expand_to(shape, stride, out_shape)`. That is a view with the output's shape and stride 0 on every axis the operand is really missing or has as extent 1. Every kernel indexes through strides, so no data is copied and no kernel knows broadcasting exists. The `ExpandedLayout` arrays are inline and local to the `_out` call, which outlives the launch; the launch copies them into `DeviceTensorView` by value.
-
-Consequences:
-- When the shapes are equal, `expand_to` returns the operand's own strides, so a same-shape call is bit-for-bit the pre-broadcast call and keeps the contiguous fast path. Verified in a Release A/B: the rank sweep and CPU `add` at 16 M are unchanged.
-- A broadcast operand's view is not `is_contiguous()`, so the fast path declines it and it runs on the rank-specialized kernels (GPU) or the row-wise strided loop in `detail::binary_elementwise_cpu` ([headers/ops/cpu/broadcast_cpu.h](headers/ops/cpu/broadcast_cpu.h)), which is also `apply_binary`'s CPU path now.
-- The binary launchers check `same_shape`, not `match`: `match` also compares strides, which an expanded view never shares with `dst`.
-- In place follows PyTorch: `x.add_(bias)` works, `bias.add_(x)` throws, because the result shape must equal the destination's. Aliasing needs no extra check. A tensor owns its buffer, so an operand sharing `out`'s buffer *is* `out` and has the result shape, which means it is never the broadcast operand.
-- GPU broadcast is at PyTorch parity for the common cases: `(4096,4096)+(4096,)` runs in 541 µs against PyTorch's 544, and `+(4096,1)` in 546 against 542 (GB10, Release, one framework per process). A rank-5 broadcast still goes through the 64-bit `_nd` kernel, at 614 against 546. CPU broadcast is 4.2× ahead of NumPy. Two fixes got it there, and neither was specific to broadcasting (see `DeviceTensorView` and "The device pool" below). A kernel redesign turned out not to be needed: a `(256,1)` block, 4 elements per thread and a flat 1-D layout were all measured, and none of them moved the number.
-
 [headers/kernel_launcher.h](headers/kernel_launcher.h)/[.inl](headers/kernel_launcher.inl) still define the macro-generated dispatch machinery:
 - `DEFINE_DEVICE_DISPATCH_BINARY_H(OP, CPU_FUNC, CUDA_FUNC)` — declares `OP_dispatch<DEVICE_TYPE, T>` structs.
 - `DEFINE_DEVICE_DISPATCH_BINARY_INL(OP)` — defines the free function `_OP(lhs, rhs, dst, DEVICE_TYPE)` that switches at runtime.
@@ -142,6 +111,17 @@ Tensor<T>::operator+()
 ```
 
 `a.add_(b)` enters the same chain one level down, at `add_out(b, *this, stream)`.
+
+### Broadcasting
+
+Tensor-tensor elementwise ops (`add`/`sub`/`mul`/`div`, `apply_binary`, the `fused_*` helpers built on it, and every `_out`/`_` form) follow NumPy broadcasting. It is done entirely with **zero strides**, in [headers/broadcast.h](headers/broadcast.h): `_check_operand` returns `detail::broadcast_shapes(lhs, rhs)` (which throws `not broadcastable`, and throws for a result rank above `MAX_RANK`), and the `_out` body turns each operand into `detail::expand_to(shape, stride, out_shape)`. That is a view with the output's shape and stride 0 on every axis the operand is really missing or has as extent 1. Every kernel indexes through strides, so no data is copied and no kernel knows broadcasting exists. The `ExpandedLayout` arrays are inline and local to the `_out` call, which outlives the launch; the launch copies them into `DeviceTensorView` by value.
+
+Consequences:
+- When the shapes are equal, `expand_to` returns the operand's own strides, so a same-shape call is bit-for-bit the pre-broadcast call and keeps the contiguous fast path. Verified in a Release A/B: the rank sweep and CPU `add` at 16 M are unchanged.
+- A broadcast operand's view is not `is_contiguous()`, so the fast path declines it and it runs on the rank-specialized kernels (GPU) or the row-wise strided loop in `detail::binary_elementwise_cpu` ([headers/ops/cpu/broadcast_cpu.h](headers/ops/cpu/broadcast_cpu.h)), which is also `apply_binary`'s CPU path now.
+- The binary launchers check `same_shape`, not `match`: `match` also compares strides, which an expanded view never shares with `dst`.
+- In place follows PyTorch: `x.add_(bias)` works, `bias.add_(x)` throws, because the result shape must equal the destination's. Aliasing needs no extra check. A tensor owns its buffer, so an operand sharing `out`'s buffer *is* `out` and has the result shape, which means it is never the broadcast operand.
+- GPU broadcast is at PyTorch parity for the common cases: `(4096,4096)+(4096,)` runs in 541 µs against PyTorch's 544, and `+(4096,1)` in 546 against 542 (GB10, Release, one framework per process). A rank-5 broadcast still goes through the 64-bit `_nd` kernel, at 614 against 546. CPU broadcast is 4.2× ahead of NumPy. Two fixes got it there, and neither was specific to broadcasting (see `DeviceTensorView` and "The device pool" below). A kernel redesign turned out not to be needed: a `(256,1)` block, 4 elements per thread and a flat 1-D layout were all measured, and none of them moved the number.
 
 ### In-place ops and caller-provided destinations
 
@@ -209,20 +189,7 @@ Block size is 256, as elsewhere in the library. 512 and 1024 buy 2-3 % once the 
 
 The kernel definitions and the launch statements sit behind `#if defined(__CUDACC__)`: `tensor.cuh` pulls this header into plain `.cpp` translation units (the Python C-ABI layer among them), where `__global__` expands to nothing and `blockIdx` does not exist. A new elementwise launcher that wants the fast path calls `om::detail::launch_contiguous_binary/unary/fill`, which return the launched kernel's name for `CUDA_CHECK_LAUNCH` or `nullptr` when they decline — declining is not an error, it is how an empty tensor, an unaligned buffer or an unrepresentable grid keeps the old, always-correct path. The four generated op families need one more piece: `DEFINE_BINARY_OP_FUNCTOR_H` / `DEFINE_UNARY_OP_FUNCTOR_H` turn the op's expression into a functor type, because the rank-specialized kernels take it textually but the fast path is generic over the operation. See [benchmark_report.md §8](benchmark_report.md#8-elementwise-kernels-ignored-contiguity--every-rank-now-runs-at-rank-1-speed).
 
-**Ops layout:**
-```
-headers/ops/cpu/        ← CPU op declarations (macro-generated inline functions)
-src/ops/cpu/            ← CPU op .cpp translation units
-headers/ops/kernels/    ← CUDA kernel declarations and launch macros (.cuh)
-src/ops/kernels/        ← CUDA kernel .cu translation units
-```
-
-**Adding a new binary op:**
-1. `src/ops/kernels/binary_ops.cu` — kernel bodies via `DEFINE_BINARY_OP_KERNEL_K1/K2/K3/K4/ND` + `DEFINE_BINARY_OP_LAUNCH` + `DEFINE_BINARY_OP_LAUNCH_FRW_DEC`.
-2. `headers/ops/kernels/binary_op_macros.cuh` — `DEFINE_BINARY_OP_LAUNCH_H` / `DEFINE_BINARY_OP_KERNEL_H`, plus `DEFINE_BINARY_OP_FUNCTOR_H(OP, expr in a and b)` — the launch macro references `OP_fn<T>` for the contiguous fast path, so omitting it is a compile error, not a silent slow path.
-3. `src/ops/cpu/binary_ops.cpp` + `headers/ops/cpu/binary_op_macros.h` — CPU side.
-4. `headers/tensor.cuh` / `.inl` — the `(rhs, const Stream&)` method plus the one-line no-stream delegate.
-5. Only if a stream-less free function is wanted: register in `kernel_launcher.h`/`.inl`.
+**Adding a new binary op:** see the `add-binary-op` skill for the file-by-file checklist.
 
 **CPU binary/unary elementwise ops parallelize above a size threshold.** `DEFINE_BINARY_OPS_CPU` ([headers/ops/cpu/binary_op_macros.h](headers/ops/cpu/binary_op_macros.h)) and `DEFINE_UNARY_OPS_CPU` ([headers/ops/cpu/unary_op_macros.h](headers/ops/cpu/unary_op_macros.h)) — the CPU side of `add`/`sub`/`mul`/`div`, both tensor⊕tensor and tensor⊕scalar — wrap their loop in `#pragma omp parallel for schedule(static) if(_total > 65536)`. Since every op generated from these two macros shares the one loop, all of them benefit together. `_Pragma` is used instead of a bare `#pragma` because the pragma sits inside a macro replacement list — `#pragma` cannot appear mid-macro, `_Pragma` can, and it is expanded at the same point. Below the threshold the loop is measurably untouched (within ~2% of the single-thread time — no fork/join tax paid on the hot path for small tensors); above it, `add`/`sub`/`mul`/`div` measured 1.7–11.6× faster on a 20-thread reference machine (largest at 1 M, where the working set is L2-resident and the scalar loop rather than memory was the ceiling; ~2× at 16 M, which is the memory system talking) and beat NumPy outright by 2.9–3.1× at 16 M. See [benchmark_report.md §7](benchmark_report.md#7-cpu-elementwise-ops-were-single-threaded--openmp-closes-most-of-it) for the numbers. `matmul_cpu` ([headers/ops/cpu/matmul_cpu.h](headers/ops/cpu/matmul_cpu.h)) is parallelized the same way (`#pragma omp parallel for` over the outer row loop, on top of `ikj`-order/L2-tiled inner loops) and predates this.
 
@@ -292,18 +259,7 @@ The Python package is `Tensor` + `Stream` + a `DType` registry ([python/openmat/
 
 ## Benchmarking
 
-Five harnesses, all requiring a **Release** build (`build-release/`) — Debug numbers are meaningless — and a `bench-env` venv holding NumPy and PyTorch, which the library itself does not need:
-
-- [scripts/bench_vs.py](scripts/bench_vs.py) — the main cross-framework table (CPU + CUDA + transfers). `--quick` for a smoke run, `--no-cuda` to skip the device.
-- [scripts/bench_rank_sweep.py](scripts/bench_rank_sweep.py) — the same 16 M buffer reshaped to ranks 1–5, which is what verifies the contiguous fast path is actually engaging. `bench_vs.py` only ever uses rank-1 shapes and would not notice a regression here.
-- [scripts/bench_omp.py](scripts/bench_omp.py) — run once per `OMP_NUM_THREADS` value; the 1-vs-20 delta is the OpenMP A/B, and a `1.00×` row is how you confirm an op is *not* parallelized (`min`/`max`, `sum`, `apply`/`apply_binary`).
-- [scripts/bench_inplace.py](scripts/bench_inplace.py) — the in-place / `out=` families against the allocating forms, per op and over a 32-step chain. Every case builds its own operands: an earlier draft that reused one destination across the three ops at each size reported a CUDA `relu_` "regression" of 0.38× that does not exist (1.05× re-measured).
-- `OPENMAT_HOST_CACHE_BYTES=0` — restores the pre-`HostPool` allocator, the A/B behind §3.
-
-Two traps that have already produced wrong conclusions in the reports:
-
-- **`bench_vs.py`'s `transfer/*` rows at 16 M are not transfer measurements.** They run last, after the process has accumulated `HostPool`, `PinnedHostPool`, PyTorch's CUDA caching allocator and every live operand from the CUDA sweep; on a unified-memory part that pressure lands on the copy. The row reported OpenMat's 64 MB D2H at 39.8 ms while a fresh process measures **1.136 ms / 59.1 GB/s, identical to PyTorch**. The tell is that PyTorch's own D2H degrades alongside it in the same run. Measure transfers in a dedicated process.
-- **Re-measure before diagnosing.** A block-size fix once moved GPU `add` from 159 to 220 GB/s without the report being re-run, and the next round of work was aimed at a bottleneck that no longer existed. Every number in [benchmark_report.md](benchmark_report.md) carries the date of the run that produced it for this reason.
+Five harnesses (`bench_vs`, `bench_rank_sweep`, `bench_omp`, `bench_inplace`, the `OPENMAT_HOST_CACHE_BYTES=0` A/B), all requiring a **Release** build — Debug numbers are meaningless. See the `benchmarking` skill for what each one is for and the two traps that have already produced wrong conclusions in the reports.
 
 ## Reference docs
 
