@@ -100,6 +100,7 @@ namespace om
         if (count == 0) return nullptr;
         T* ptr = nullptr;
 #if CUDART_VERSION >= 11020
+        detail::ensure_device_pool_configured();
         CUDA_CALL(cudaMallocAsync((void**)&ptr, sizeof(T) * count, stream));
 #else
         CUDA_CALL(cudaMalloc((void**)&ptr, sizeof(T) * count));

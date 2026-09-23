@@ -6,6 +6,13 @@
 
 namespace om
 {
+    namespace detail
+    {
+        // Once per device: stop the cudaMallocAsync pool from trimming its
+        // memory at every synchronize. See src/device_pool.cpp.
+        void ensure_device_pool_configured();
+    }
+
     template<typename T>
     class Allocator
     {

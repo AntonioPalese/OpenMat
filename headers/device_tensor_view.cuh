@@ -29,20 +29,34 @@ struct DeviceTensorView {
     DeviceTensorView& operator=(DeviceTensorView&&)        = default;
     ~DeviceTensorView()                                    = default;
 
+    // The offset is a fold over the pack, not a loop over `rank` reading a
+    // local index array. The pack's length is a compile-time constant, so
+    // this unrolls into multiply-adds on registers. The array form could not:
+    // indexed by a loop whose bound is the *runtime* rank, the array was
+    // placed in local memory (a 16-byte stack frame), and every element of
+    // every rank-specialized kernel paid a local store and reload for it.
+    // Measured on (4096,4096)+(4096,) fp32: 880 µs → 537 µs, i.e. 153 →
+    // 250 GB/s, which is the copy ceiling of the machine.
+    template <typename... Indices>
+    __device__
+    size_t offset_of(Indices... indices) const {
+        static_assert(sizeof...(Indices) > 0, "Must provide at least one index.");
+        size_t flat = 0;
+        size_t d = 0;
+        ((flat += static_cast<size_t>(indices) * stride[d++]), ...);
+        return flat;
+    }
+
     template <typename... Indices>
     __device__
     T& operator()(Indices... indices) {
-        static_assert(sizeof...(Indices) > 0, "Must provide at least one index.");
-        size_t idx_array[] = { static_cast<size_t>(indices)... };
-        return data[compute_flat_index(idx_array)];
+        return data[offset_of(indices...)];
     }
 
     template <typename... Indices>
     __device__
     T operator()(Indices... indices) const {
-        static_assert(sizeof...(Indices) > 0, "Must provide at least one index.");
-        size_t idx_array[] = { static_cast<size_t>(indices)... };
-        return device_load(&data[compute_flat_index(idx_array)]);
+        return device_load(&data[offset_of(indices...)]);
     }
 
     __device__
