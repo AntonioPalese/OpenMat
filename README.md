@@ -4,7 +4,7 @@
 
 # OpenMat
 
-**High-performance CUDA tensor framework in C++/CUDA** — rank-specialized kernels, RAII GPU memory management, stream-ordered allocation, and N-dimensional tensor operations, with a ctypes Python package on top.
+**High-performance CUDA tensor framework in C++/CUDA** — rank-specialized kernels, RAII GPU memory management, stream-ordered allocation, zero-copy views, NumPy broadcasting and N-dimensional tensor operations, with a ctypes Python package on top that exchanges tensors with PyTorch and NumPy through DLPack.
 
 > Not a wrapper around cuBLAS/CUDNN. Every kernel is written from scratch.
 
@@ -68,15 +68,17 @@ Full tables, root-cause analysis and reproduction steps in
 64 MB intermediate and reads it back; `fused_add_mul` writes one buffer once. `scale_shift`
 shows it more sharply still — 1.97×, because `x * 2.0 + 1.0` costs PyTorch two full passes.
 The same argument runs in reverse on the CPU, where NumPy's `a * 2.0 + 1.0` is two passes
-over 64 MB and `scale_shift` beats both references *while still single-threaded*.
+over 64 MB and `scale_shift` beat both references *while still single-threaded* — the
+numbers in the table predate `apply` going multithreaded (see below).
 
 **Elementwise kernels ignored contiguity — every rank now runs at rank-1 speed.**
 The rank-specialized launchers map tensor axes onto grid axes, and only at rank 1 does
 that leave a warp's 32 lanes contiguous in memory. A rank-2 `dim3(16,16)` block gives each
 warp two disjoint runs of 16 elements, a rank-3 `dim3(8,8,8)` block four runs of 8: 64- and
-32-byte requests against a 128-byte line. The shape was never load-bearing — every tensor
-OpenMat produces is contiguous row-major, since `reshape` and friends deep-copy — so the
-launchers now index the buffer linearly and give every rank the rank-1 layout. Kernel time
+32-byte requests against a 128-byte line. For a contiguous row-major tensor — every freshly
+allocated one, and every reshape or leading-axis slice of one — the shape is not
+load-bearing, so the launchers index the buffer linearly and give every rank the rank-1
+layout. Kernel time
 only, `add` over 16 M elements:
 
 | dtype | rank 1 | rank 2 | rank 3 | rank 4 | rank 5 |
@@ -93,8 +95,8 @@ a 24 MB L2 — compare it with the `char` row above it, not with `float`.) End-t
 the Python bindings, allocation and synchronization included, the same 16 M `float32` buffer
 now takes **861–865 µs for `add` at every rank from 1 to 5** — a spread of under 1 %, against
 7644 µs at rank 5 and 1442 µs at rank 3 before. `TensorView::is_contiguous()` gates the path,
-so a strided view (when views land) falls back to the existing kernels instead of reading
-the wrong elements.
+so a strided view (a column, a stepped slice, a tensor imported from PyTorch with its own
+strides) falls back to the stride-aware kernels instead of reading the wrong elements.
 
 That is what moved the headline row: GPU `add` at 16 M went from 1.47× *slower* than PyTorch
 to marginally faster, `relu` from 1.9× slower to parity, and `x*s+t` from parity to 1.97×
@@ -140,9 +142,12 @@ been parallelized the same way. The attempt to do the analogous thing for `min`/
 measurement showed it 1.6× *slower*, because GCC 13 already auto-vectorizes that loop
 shape under `-O3` alone and the explicit reduction clause forces a worse lowering on top
 of it. Full numbers in [benchmark_report.md §7](benchmark_report.md#7-cpu-elementwise-ops-were-single-threaded--openmp-closes-most-of-it).
-`apply`/`apply_binary` (`relu`, `sigmoid`, `scale_shift`, the `fused_*` family) did not
-get this pass and are still single-threaded on CPU regardless of size — they beat NumPy
-anyway, on fusion alone, which is why this is a missed opportunity rather than a defect.
+`apply`/`apply_binary` (`relu`, `sigmoid`, `scale_shift`, the `fused_*` family) joined later,
+when the views work routed every CPU elementwise loop through two shared helpers:
+`relu` at 1 M elements went from 69 to 12 µs, at 16 M from 2354 to 1249 µs. The same change
+replaced the pragma's `if()` clause with an explicit size branch — GCC still calls into the
+OpenMP runtime for a region whose `if()` is false, which cost 0.28 µs per op — so `add` and
+`mul` at 1 K elements got 14 % faster too (1.92 → 1.65 µs).
 
 **`sum` was a serial accumulate — now fixed too.** The loop-carried FP dependency in
 `reduce_sum_cpu` blocked auto-vectorisation, so it ran at one add per FP *latency*: 7.7 GB/s
@@ -169,10 +174,10 @@ directly, with fp16 buying only ~1.1× over fp32. `min`/`max` remain a plain sca
 untried lever there (the `simd` clause, a different change, was measured and reverted).
 
 Caveat on the CPU column: PyTorch runs 20 intraop threads. OpenMat's CPU backend is
-threaded via OpenMP for `add`/`sub`/`mul`/`div` and `matmul` but still single-threaded for
-`min`, `max`, `sum` and the whole fused-op family — so PyTorch-vs-OpenMat on CPU measures
-*what a user gets* on those ops, not comparable algorithms. NumPy is the like-for-like
-reference there.
+threaded via OpenMP for every elementwise op (arithmetic, `apply`, the fused family) and
+`matmul`, but still single-threaded for `min`, `max` and `sum` — so PyTorch-vs-OpenMat on
+CPU measures *what a user gets* on those ops, not comparable algorithms. NumPy is the
+like-for-like reference there.
 
 ---
 
@@ -305,29 +310,35 @@ The data flow for a tensor operation (e.g. `a + b`):
 ```
 Tensor<T>::operator+()
   → Tensor<T>::add(rhs, Stream::default_stream())          // tensor.inl
-    → add_cpu(...)  or  launch_add(..., stream)            // ops/cpu/ or ops/kernels/
-      → flat CPU loop  or  rank-specialized CUDA kernel
+    → allocates the result (broadcast shape), then
+      Tensor<T>::add_out(rhs, out, stream)                 // the one real body
+        → add_cpu(...)  or  launch_add(..., stream)        // ops/cpu/ or ops/kernels/
+          → CPU loop  or  contiguous fast path / stride-aware CUDA kernel
 ```
 
-**`Tensor<T>`** — owning N-dimensional tensor. Stores shape, row-major strides, a raw `T*`, a `Device`, an `om::Stream`, and a `unique_ptr<Allocator<T>>`. Copy deep-copies via the allocator; move transfers ownership and nulls the source pointer.
+`a.add_(b)` and `a.add_out(b, out)` enter the same chain at `add_out`.
 
-**`Allocator<T>` / `AllocatorFactory<T>`** — abstract base with two implementations: `CpuAllocator` (malloc/free/memcpy) and `GpuAllocator` (cudaMalloc/cudaFree/cudaMemcpy). Selected at `Tensor` construction time from `DEVICE_TYPE`. The base declares the `*_async` entry points with **synchronous default implementations**, so a subclass overrides only what it can genuinely do asynchronously.
+**`Tensor<T>`** — an N-dimensional view onto a shared buffer: a `std::shared_ptr<Storage<T>>`, an element offset, a shape and strides. Views (`reshape` of a contiguous tensor, `squeeze`, `unsqueeze`, `slice`, `select`) share the storage; copy is a deep copy into a fresh contiguous buffer; move transfers the storage reference.
+
+**`Storage<T>`** — the buffer itself: pointer, `Device`, the `Allocator<T>` that produced it and the stream it was allocated on. The last view to die frees it, on that stream. A storage can also wrap borrowed memory with a release callback, which is how a tensor imported through DLPack hands the memory back to PyTorch or NumPy.
+
+**`Allocator<T>` / `AllocatorFactory<T>`** — abstract base with two implementations: `CpuAllocator` (a size-classed block cache, `HostPool`, plus memcpy; `PinnedCpuAllocator` for page-locked buffers) and `GpuAllocator` (cudaMallocAsync/cudaFreeAsync/cudaMemcpy). Selected at `Tensor` construction time from `DEVICE_TYPE`. The base declares the `*_async` entry points with **synchronous default implementations**, so a subclass overrides only what it can genuinely do asynchronously.
 
 **`TensorView<T>`** — non-owning host-side view (raw pointer + shape/stride pointers + rank). Passed to CPU ops and converted to `DeviceTensorView` via `.as_device_tw()` before kernel launch.
 
 **`DeviceTensorView<T>`** — non-owning device-side view. Shape and stride are stored as fixed inline arrays (`size_t shape[MAX_RANK]`, `size_t stride[MAX_RANK]`, `MAX_RANK = 8`) copied from host at construction — no device allocation. The struct is trivially copyable and passed by value to CUDA kernels, eliminating the 2×`cudaMalloc` + 2×`cudaFree` overhead that occurred on every kernel launch in earlier versions. Operator `()` is `__device__`-only.
 
-**`om::Stream`** — RAII wrapper around `cudaStream_t`. The owning constructor calls `cudaStreamCreate`; `Stream(cudaStream_t)` wraps an existing handle without ownership. `Stream::default_stream()` returns a non-owning wrapper around `nullptr`, giving synchronous semantics without a code-path change. Every `Tensor<T>` stores an `om::Stream m_Stream`; the destructor calls `allocator->deallocate_async(ptr, m_Stream.get())` so memory is freed on the correct stream.
+**`om::Stream`** — RAII wrapper around `cudaStream_t`. The owning constructor calls `cudaStreamCreate`; `Stream(cudaStream_t)` wraps an existing handle without ownership. `Stream::default_stream()` returns a non-owning wrapper around `nullptr`, giving synchronous semantics without a code-path change. Every `Storage<T>` keeps the stream it was allocated on and its destructor calls `allocator->deallocate_async(ptr, stream)`, so memory is freed on the correct stream whichever view of it dies last.
 
 **Kernel dispatch (legacy)** — two macro families in `kernel_launcher.h`/`.inl`:
 - `DEFINE_DEVICE_DISPATCH_BINARY_H` declares `op_dispatch<DEVICE_TYPE, T>` structs routing to `add_cpu` or `launch_add`.
 - `DEFINE_DEVICE_DISPATCH_BINARY_INL` defines the free function `_add(…, DEVICE_TYPE)` that switches at runtime into the correct struct.
 
-Since the stream refactor these are **mostly dead code**: the `_dispatch` structs take no `cudaStream_t`, so `tensor.inl` branches on `device_type()` itself and calls `add_cpu` / `launch_add` directly. Today only `Tensor::fill` still routes through the dispatch path. Adding a new op means wiring `tensor.inl` directly — register in `kernel_launcher` only if you also want the stream-less free function.
+Since the stream refactor these are **dead code**: the `_dispatch` structs take no `cudaStream_t`, so `tensor.inl` branches on `device_type()` itself and calls `add_cpu` / `launch_add` directly. `fill` was the last holdout and now goes direct as `fill_(value, stream)`. Adding a new op means wiring `tensor.inl` directly — register in `kernel_launcher` only if you also want the stream-less free function.
 
 **Rank-specialized CUDA kernels** — `DEFINE_BINARY_OP_LAUNCH` generates a `launch_op` function that switches on `tensor.rank` (1–4) and selects a kernel with a rank-tuned grid/block layout. Rank ≥ 5 falls back to a flat 1D kernel (`_kernel_nd`) that reconstructs multi-indices from a linear index. Explicit template instantiations for `float`, `int`, `char`, `float16_t` are emitted per op.
 
-**Contiguous fast path** — [headers/ops/kernels/contiguous.cuh](headers/ops/kernels/contiguous.cuh). Every elementwise launcher tries this first: since all tensors are contiguous row-major, the axis structure carries nothing the kernel needs, so the buffer is indexed linearly and every rank gets the rank-1 layout. Threads move `4 / sizeof(T)` elements each (1 for `float`/`int`, 2 for `float16_t`, 4 for `char`), packed through a 4-byte word. `TensorView::is_contiguous()` gates it, so the day a strided view exists it falls back to the rank-specialized kernels rather than reading the wrong elements. Covers `launch_add`/`sub`/`mul`/`div`, the scalar `_k` family, `launch_apply_op`, `launch_apply_binary_op` and `launch_fill`.
+**Contiguous fast path** — [headers/ops/kernels/contiguous.cuh](headers/ops/kernels/contiguous.cuh). Every elementwise launcher tries this first: when every operand is contiguous row-major — the common case — the axis structure carries nothing the kernel needs, so the buffer is indexed linearly and every rank gets the rank-1 layout. Threads move `4 / sizeof(T)` elements each (1 for `float`/`int`, 2 for `float16_t`, 4 for `char`), packed through a 4-byte word. `TensorView::is_contiguous()` gates it, so a strided or broadcast view falls back to the rank-specialized kernels rather than reading the wrong elements. Covers `launch_add`/`sub`/`mul`/`div`, the scalar `_k` family, `launch_apply_op`, `launch_apply_binary_op` and `launch_fill`.
 
 ```
 headers/ops/cpu/        ← CPU op declarations (macro-generated inline functions)
@@ -358,8 +369,7 @@ A single flat kernel must reconstruct multi-dimensional indices from a linear of
 > contiguous row-major, so the buffer can simply be indexed linearly. The contiguous fast
 > path does that and brings every rank to 228–233 GB/s — re-measured end to end, all five
 > ranks land within 1 % of each other. The rank-specialized kernels are still compiled and
-> still correct; they are now the fallback for the strided views the library does not yet
-> have.
+> still correct; they are now the path for strided and broadcast views.
 
 **RAII for GPU memory via `Tensor<T>` + `Allocator<T>`**
 Rather than pairing raw `cudaMalloc`/`cudaFree` calls at each use site, every `Tensor` owns a polymorphic `Allocator` chosen at construction time by `AllocatorFactory`. The destructor delegates to `allocator->deallocate`, making GPU memory lifetime deterministic regardless of exceptions or early returns — the same pattern used in PyTorch's `at::DataPtr`.
@@ -380,10 +390,16 @@ PyTorch's CPU caching allocator, for the same reason.
 The original design allocated `shape[]` and `stride[]` in device memory on every `DeviceTensorView` construction (2×`cudaMalloc` + 2×`cudaMemcpy` per object; 6 allocations for a single binary op). Replacing those with fixed inline arrays (`size_t shape[MAX_RANK]`) eliminates all per-launch metadata allocations. The struct is now trivially copyable and passed by value into the kernel parameter block — the same pattern used by cuDNN and CUTLASS. `MAX_RANK = 8` covers practical use without wasting register space.
 
 **Stream-aware allocator: `cudaMallocAsync` / `cudaFreeAsync`**
-`GpuAllocator<T>` overrides `allocate_async` / `deallocate_async` with `cudaMallocAsync` / `cudaFreeAsync` (CUDA ≥ 11.2) so that tensors created on a non-null stream allocate and free memory without stalling the GPU. The base `Allocator<T>` provides sync fallbacks, so `CpuAllocator` and older CUDA versions work without changes. Every `Tensor<T>` stores the stream it was created on; the destructor frees on that same stream, ensuring the free is not issued before pending kernels finish.
+`GpuAllocator<T>` overrides `allocate_async` / `deallocate_async` with `cudaMallocAsync` / `cudaFreeAsync` (CUDA ≥ 11.2) so that tensors created on a non-null stream allocate and free memory without stalling the GPU. The base `Allocator<T>` provides sync fallbacks, so `CpuAllocator` and older CUDA versions work without changes. Every `Storage<T>` keeps the stream it was allocated on and frees on that same stream, ensuring the free is not issued before pending kernels finish — and, once views arrived, that it does not matter which view of the buffer happens to die last.
 
 **CUDA Streams as the canonical execution path**
 All `Tensor<T>` methods have stream overloads (`tensor.add(rhs, stream)`). The no-stream variants are one-liner delegates to the stream version with `Stream::default_stream()` (a non-owning null stream wrapper), which gives synchronous behavior without duplicating any kernel dispatch logic. This makes the stream path the single source of truth and keeps the zero-stream user experience identical to the previous API.
+
+**Views over a shared `Storage`, following PyTorch's rules**
+`reshape` used to copy the whole buffer, and there were no slices. A tensor is now a (storage, offset, shape, stride) tuple and views share the storage: `reshape` of a contiguous tensor, `squeeze`, `unsqueeze`, `slice` and `select` are views; `reshape` of a strided one copies; `transpose`/`permute` still materialize. Two choices matter. Aliasing is checked on memory ranges rather than pointers, so a destination that partially overlaps an operand (`x[:-1].add_(x[1:])`) throws instead of returning a plausible wrong answer — conservatively, since interleaved views are refused too. And strides are unsigned: there are no negative-step views, which keeps "a view's first element is its lowest address" true everywhere the overlap check and the kernels rely on it.
+
+**DLPack instead of a bespoke interop layer**
+The CUDA array interface only describes memory; it has no way to say who frees it. DLPack carries a deleter, which is what lets a PyTorch tensor made from an OpenMat one outlive every OpenMat object — the export keeps a reference on the storage *and* on the stream the storage frees on — and lets an imported PyTorch tensor go back to PyTorch's allocator when the last OpenMat view dies. It is also what PyTorch, NumPy, CuPy and JAX all speak, so one implementation covers all of them.
 
 **Runtime dispatch via macro-generated structs instead of virtual functions**
 Using `virtual` dispatch for CPU vs. CUDA would add a vtable indirection on every element-wise op. Instead, `DEFINE_DEVICE_DISPATCH_BINARY_H` generates `op_dispatch<DEVICE_TYPE, T>` template specializations resolved at compile time. The only runtime branch is a `switch` on `DEVICE_TYPE` in the inlined free function, which the compiler can optimize away when the device is known statically.
@@ -394,15 +410,19 @@ Using `virtual` dispatch for CPU vs. CUDA would add a vtable indirection on ever
 
 - **Rank-specialized kernels**: elementwise ops (add, sub, mul, div) with dedicated CUDA kernels for rank 1–4, each with a rank-tuned grid/block layout
 - **N-dimensional support**: generic `_kernel_nd` fallback for rank ≥ 5 with stride-aware index reconstruction
-- **Contiguous fast path**: elementwise launchers detect the (universal) contiguous case and index linearly, so rank 2–5 run at the same bandwidth as rank 1 — up to 8.9× on rank-5 `add`, with under 1.5 % spread across all five ranks
-- **RAII GPU memory**: `Tensor<T>` owns a polymorphic `Allocator<T>` (CPU or GPU) with move semantics and no raw pointer leaks
-- **Stream-aware allocator**: `GpuAllocator` uses `cudaMallocAsync`/`cudaFreeAsync`; each `Tensor` carries its stream and frees on it asynchronously
+- **Contiguous fast path**: elementwise launchers detect the contiguous case and index linearly, so rank 2–5 run at the same bandwidth as rank 1 — up to 8.9× on rank-5 `add`, with under 1.5 % spread across all five ranks
+- **RAII GPU memory**: a reference-counted `Storage<T>` owns each buffer through a polymorphic `Allocator<T>` (CPU or GPU); no raw pointer leaks
+- **Stream-aware allocator**: `GpuAllocator` uses `cudaMallocAsync`/`cudaFreeAsync`; each storage carries its stream and frees on it asynchronously
+- **Zero-copy views**: `reshape`, `squeeze`, `unsqueeze`, `slice`, `select` and NumPy-style `t[1:, ::2]` indexing share memory with the original; every op reads and writes strided views
+- **NumPy broadcasting**: `x + bias` with `x` of shape `(32, 128)` and `bias` of shape `(128,)`, done with zero strides — no copies, at PyTorch speed on the GPU
+- **In-place and `out=` forms**: `add_`, `relu_`, `fill_`, `add_out(b, out)`, … — every op has one real body that writes into a caller-provided destination
+- **DLPack interop**: tensors cross to and from PyTorch, NumPy, CuPy and JAX without copying, in both directions
 - **Zero-overhead stream API**: every op has a `(args, Stream&)` overload; no-stream variants delegate to `Stream::default_stream()` — one code path, two calling conventions
 - **Inline `DeviceTensorView` metadata**: shape/stride stored as fixed arrays inside the view struct — eliminates 2×`cudaMalloc` + 2×`cudaFree` per kernel launch
 - **Unified CPU/GPU API**: the same `operator+`, `operator-`, etc. work on both devices; dispatch is resolved at runtime from `DEVICE_TYPE`
 - **Fused ops without intermediates**: functor composition (`Compose`, `BinaryCompose`) evaluated inside a single kernel — `relu`, `sigmoid`, `scale_shift`, `fused_add_mul`, …
 - **Reductions**: `sum` / `mean` / `min` / `max` via a two-phase shared-memory tree plus warp shuffle (`__shfl_down_sync`)
-- **Python package**: a ctypes binding over the C-ABI in `OpenMat.so`, exposing the same tensor and stream surface, with `__array_interface__` / `__cuda_array_interface__` for zero-copy interop
+- **Python package**: a ctypes binding over the C-ABI in `OpenMat.so`, exposing the same tensor and stream surface, with DLPack, `__array_interface__` and `__cuda_array_interface__` for zero-copy interop
 
 ---
 
@@ -418,22 +438,29 @@ auto b = Tensor<float>::full({1024, 1024}, 2.0f, a.device());
 auto c = a.matmul(b);            // 2D only
 auto d = (a + b).relu();         // fused, no intermediate for the relu
 float m = d.mean();              // reduction → host scalar
-auto e = d.permute({1, 0}).reshape({1024 * 1024});
-auto h = e.cpu();                // device → host copy
+
+auto row  = d.select(0, 3);                 // view of row 3, shares d's memory
+auto cols = d.slice(1, 0, 1024, 2);         // every other column, a strided view
+cols.add_(1.0f);                            // writes into d
+d.add_(Tensor<float>::ones({1024}, a.device()));   // broadcast in place
+auto flat = d.reshape({1024 * 1024});       // a view: d is contiguous
+auto h = cols.cpu();                        // device → host copy (contiguous)
 ```
 
 | Group | Methods |
 |---|---|
 | Factories | `zeros`, `ones`, `full`, `from_vector`, `fill` |
-| Arithmetic | `add`, `sub`, `mul`, `div` + `+ - * /`, tensor–tensor and tensor–scalar |
+| Arithmetic | `add`, `sub`, `mul`, `div` + `+ - * /`, tensor–tensor (NumPy broadcasting) and tensor–scalar |
+| In-place / destination | `add_`, `sub_`, `mul_`, `div_`, `relu_`, `sigmoid_`, `apply_`, `fill_`, `+= -= *= /=`; `add_out(rhs, out)` and friends, including `matmul_out`, `transpose_out`, `permute_out` |
 | Linear algebra | `matmul` — **2D only**, no batching, no broadcasting |
 | Reductions | `sum`, `mean`, `min`, `max` — synchronous, return a host scalar |
-| Shape | `reshape`, `flatten`, `squeeze`, `unsqueeze` — **deep copies, not views** |
-| Layout | `transpose` (**rank-2 only**, throws otherwise), `permute(axes)` |
+| Shape | `reshape`, `flatten` — views of a contiguous tensor, copies otherwise; `squeeze`, `unsqueeze` — always views |
+| Views | `slice(axis, start, stop, step)`, `select(axis, index)`, `contiguous`, `clone`, `copy_(src)`, `is_contiguous`, `shares_storage` |
+| Layout | `transpose` (**rank-2 only**, throws otherwise), `permute(axes)` — both materialize a copy |
 | Fused | `apply`, `apply_binary`, `relu`, `sigmoid`, `scale_shift`, `shift_scale`, `fused_add_mul`, `fused_sub_mul`, `fused_mul_add`, `fused_div_add` |
 | Transfer | `to(device)`, `cpu()`, `cuda()`, `copyToHost`, `copyToDevice` |
 
-Every op above except the reductions and the host-side shape ops also has a
+Every op above except the reductions and the view methods also has a
 `(args, const Stream&)` overload.
 
 **Dtypes.** `om::dtype<T>()` covers `float`, `double`, `int`, `char`, and `float16_t`
@@ -441,9 +468,11 @@ Every op above except the reductions and the host-side shape ops also has a
 for `float`, `int`, `char`, `float16_t` — **`double` is CPU-only**. Generic code must gate
 on `is_extended_arithmetic<T>` rather than `std::is_arithmetic`, or half precision is rejected.
 
-**No aliasing views.** Unlike NumPy/PyTorch, nothing in this library returns a view onto
-another tensor's buffer — `reshape` and friends allocate and copy, so a write through the
-result never shows up in the original.
+**Views alias, as in NumPy and PyTorch.** A write through `reshape`, `slice` or `select`
+shows up in the original, and the buffer lives until the last view is gone. An op whose
+destination partially overlaps one of its operands throws rather than computing a wrong
+result; the check compares memory ranges, so interleaved views (even and odd columns) are
+refused too even though they do not share elements. Slices take a positive step only.
 
 ---
 
@@ -452,8 +481,8 @@ result never shows up in the original.
 Requirements: NVIDIA GPU, CUDA Toolkit ≥ 11.2 (for `cudaMallocAsync`), CMake ≥ 3.24 (for
 `CMAKE_CUDA_ARCHITECTURES=native`), a C++17/CUDA 17 compiler, OpenMP (`find_package(OpenMP REQUIRED)`;
 bundled as `libgomp` with a stock GCC install, nothing extra to install on most systems).
-Verified on CUDA 13.0 / GCC 13.3 / CMake 3.28 / GB10 (sm_121), all 14 suites passing
-(11 correctness suites in 4.7 s, plus three timing/soak suites).
+Verified on CUDA 13.0 / GCC 13.3 / CMake 3.28 / GB10 (sm_121), all 18 suites passing
+(15 correctness suites plus three timing/soak suites).
 
 ```bash
 git clone https://github.com/AntonioPalese/OpenMat.git
@@ -489,14 +518,16 @@ Notes:
 GoogleTest, fetched by CMake via FetchContent; one binary per suite.
 
 ```bash
-cd build && ctest                     # all 14 suites
+cd build && ctest                     # all 18 suites
 ./tests/test_arithmetic               # a single suite, per-test output
 ./tests/test_arithmetic --gtest_filter="TensorArithmetic.CPUOperations"
 ```
 
 `test_arithmetic`, `test_fused_ops`, `test_device_transfer`, `test_factory`,
 `test_reductions`, `test_reshape`, `test_transpose`, `test_streams`, `test_allocator_stream`,
-`test_host_pool` and `test_contiguous` are correctness suites. `test_benchmarks`, `test_stress` and `test_stream_perf` are
+`test_host_pool`, `test_contiguous`, `test_inplace`, `test_broadcast`, `test_views` and
+`test_dlpack` are correctness suites. Every test that needs a GPU skips cleanly without one,
+so `ctest` is green on a CPU-only machine too. `test_benchmarks`, `test_stress` and `test_stream_perf` are
 timing/soak suites — slow, and meaningless in a Debug build.
 
 ---
@@ -532,17 +563,27 @@ if om.cuda_is_available():
         d = g.add(g, stream=s).sigmoid(stream=s)
         s.synchronize()
         print(d.cpu().tolist())            # or .numpy(), zero-copy via __array_interface__
+
+x = om.zeros([4, 6])
+x[:, ::2] = 1.0                            # NumPy-style views; writes reach x
+row = x[1]                                 # a view of the second row
+
+import torch                               # zero-copy both ways, via DLPack
+t = torch.randn(4096, 4096, device="cuda")
+y = torch.from_dlpack(om.from_dlpack(t).fused_add_mul(om.from_dlpack(t), 2.5))
 ```
 
 - Dtypes exported to Python: **`float32` and `int32`** (`Tensor<double>` and `Tensor<char>` are not exported).
-- Host tensors expose `__array_interface__`, CUDA tensors `__cuda_array_interface__`.
+- Tensors cross to and from PyTorch, NumPy, CuPy and JAX with DLPack (`om.from_dlpack(x)`, `torch.from_dlpack(t)`), float32 and int32 only. Host tensors also expose `__array_interface__`, CUDA tensors `__cuda_array_interface__`.
+- Indexing follows NumPy: an int per axis gives an element, anything else (`t[1]`, `t[:, ::2]`, `t[..., 0]`) a view.
 - Ops with a C++ stream overload take a `stream=None` keyword argument.
 - Streams are **reference-counted on the C side**, not in Python: `cudaMallocAsync` memory must be
   freed on the stream that produced it, and Python's cyclic collector finalizes a cycle in arbitrary
-  order. Each tensor holds one C-side reference, so `Stream.close()` is safe while its tensors are alive.
+  order. Each tensor holds one C-side reference — a view on its parent's stream, a DLPack export on its own —
+  so `Stream.close()` is safe while its tensors are alive.
 
 ```bash
-cd python && pytest        # test_tensor, test_tensor_api, test_dtypes, test_streams
+cd python && pytest        # tensor, tensor_api, dtypes, streams, inplace, broadcast, views, dlpack
 ```
 
 ---
@@ -567,12 +608,19 @@ cd python && pytest        # test_tensor, test_tensor_api, test_dtypes, test_str
 - [x] `ikj` + L2 tiling + OpenMP for `matmul_cpu` — 1.81 → 123 GFLOP/s at 1024³
 - [x] 8-lane accumulator for `reduce_sum_cpu` — 7.7 → 36.9 GB/s, now ahead of NumPy
 - [x] Contiguous fast path for elementwise GPU kernels (every rank at rank-1 bandwidth)
-- [ ] Same OpenMP treatment for `apply`/`apply_binary` (`relu`, `sigmoid`, `fused_*`)
+- [x] Same OpenMP treatment for `apply`/`apply_binary` (`relu`, `sigmoid`, `fused_*`)
+- [x] CI: CPU-only compile + host tests, GPU runner with `compute-sanitizer` memcheck
+- [x] NumPy broadcasting for every elementwise op (zero strides, no copies)
+- [x] In-place ops and caller-provided destinations (`add_`, `add_out`, …)
+- [x] Zero-copy views over a shared `Storage` (`reshape`, `slice`, `select`, NumPy-style indexing)
+- [x] DLPack interop with PyTorch / NumPy / CuPy / JAX, both directions
 - [ ] Threaded `sum` and a cross-thread `reduction(min:)/(max:)` for `min`/`max`
 - [ ] cuBLAS integration as an optional matmul backend
 - [ ] Random initialization (cuRAND)
-- [ ] Broadcasting and batched matmul
-- [ ] Aliasing views for `reshape` / `transpose`
+- [ ] Batched / broadcasting matmul
+- [ ] Stride-permuting views for `transpose` / `permute`
+- [ ] Axis reductions (`sum(axis)`, `argmax`), math unaries (`exp`, `log`, …), comparisons
+- [ ] CUDA events, so cross-stream dependencies (and DLPack exports) need no host sync
 - [ ] Mixed-precision support (BF16)
 - [ ] Autograd prototype
 
@@ -608,7 +656,8 @@ Building this from scratch exposed a set of problems that high-level frameworks 
   get re-added on the assumption that it obviously must have helped.
 - **The gaps called "structural" were one-line algorithm changes** — the report called CPU `matmul` (421× off NumPy) "the one structural gap rather than a tuning gap", and filed CPU `sum` (4× off) alongside it as a known-but-deferred cost. `matmul` needed a loop reorder from `ijk` to `ikj`, a tile size and an `omp parallel for`: 1.81 → 123 GFLOP/s, 68×. `sum` needed eight accumulators instead of one, so the loop runs at FP *throughput* instead of FP *latency*: 7.7 → 36.9 GB/s, from 4× behind NumPy to slightly ahead. Neither touched a kernel, an allocator or a dispatch path. "Structural" was a claim about how much work a fix would be, and it was wrong twice — worth distrusting the next time it appears in my own notes.
 - **A benchmark harness measures itself too** — the cross-framework table reported a 64 MB device-to-host copy at 39.8 ms, which would have been a catastrophic regression. The tell was that PyTorch's own D2H degraded in the same run, 1.14 → 6.81 ms, on code neither I nor anyone else had touched. In a fresh process both libraries measure 1.136 ms. The transfer cases run last, after the process has accumulated two host caches, PyTorch's CUDA caching allocator and every live operand from the CUDA sweep, and on a unified-memory part that pressure lands on the transfer. The same contradiction had been sitting in the report for an edition — one section claiming 1141 µs for the op another section put at 28953 µs — and had been left unreconciled rather than treated as the signal it was.
-- **`cudaMallocAsync` is not a drop-in replacement** — it uses a stream-ordered memory pool. Freeing on a different stream than the one used for allocation is a programming error that manifests as an illegal memory access with no obvious call site. Storing `m_Stream` in each `Tensor` and using it in the destructor is the invariant that keeps this safe.
+- **`cudaMallocAsync` is not a drop-in replacement** — it uses a stream-ordered memory pool. Freeing on a different stream than the one used for allocation is a programming error that manifests as an illegal memory access with no obvious call site. Keeping the allocation stream in each `Storage` and freeing on it — whichever view dies last — is the invariant that keeps this safe.
+- **A new feature is a test of the old code** — two GPU kernels (the unary and `apply` `_nd` fallbacks) had always used the destination's offset to read the source. Correct for as long as every tensor had the same strides as every other, which was always, so no test could see it. The first strided view made them read the wrong elements. The binary kernels had shipped the same bug and been fixed only when broadcasting exposed it; the unary ones waited for views.
 
 ---
 
