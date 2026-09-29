@@ -583,6 +583,62 @@ void* OM_FN(unsqueeze)(const void* handle, size_t axis, char* errbuf, int errbuf
     OM_GUARD_PTR( return new OM_TT(static_cast<const OM_TT*>(handle)->unsqueeze(axis)); )
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Views
+//
+// Each of these returns a handle that shares the source's storage (except
+// contiguous() on a strided tensor, which copies). The storage frees on the
+// stream it was allocated on, so the caller must keep that stream alive for
+// as long as the view: the Python side takes a stream reference per view.
+// ─────────────────────────────────────────────────────────────────────────────
+
+void* OM_FN(slice)(const void* handle, size_t axis, size_t start, size_t stop, size_t step,
+                   char* errbuf, int errbuf_len)
+{
+    OM_GUARD_PTR(
+        return new OM_TT(static_cast<const OM_TT*>(handle)->slice(axis, start, stop, step));
+    )
+}
+
+void* OM_FN(select)(const void* handle, size_t axis, size_t index, char* errbuf, int errbuf_len)
+{
+    OM_GUARD_PTR( return new OM_TT(static_cast<const OM_TT*>(handle)->select(axis, index)); )
+}
+
+void* OM_FN(contiguous)(const void* handle, char* errbuf, int errbuf_len)
+{
+    OM_GUARD_PTR( return new OM_TT(static_cast<const OM_TT*>(handle)->contiguous()); )
+}
+
+int OM_FN(is_contiguous)(const void* handle) {
+    return static_cast<const OM_TT*>(handle)->is_contiguous() ? 1 : 0;
+}
+
+size_t OM_FN(storage_offset)(const void* handle) {
+    return static_cast<const OM_TT*>(handle)->storage_offset();
+}
+
+int OM_FN(shares_storage)(const void* a, const void* b) {
+    return static_cast<const OM_TT*>(a)->shares_storage(*static_cast<const OM_TT*>(b)) ? 1 : 0;
+}
+
+// dst.copy_(src): writes src into dst (a view, typically), broadcasting src.
+int OM_FN(copy_from)(void* dst, const void* src, char* errbuf, int errbuf_len)
+{
+    OM_GUARD_INT(
+        static_cast<OM_TT*>(dst)->copy_(*static_cast<const OM_TT*>(src));
+        return 0;
+    )
+}
+
+int OM_FN(copy_from_stream)(void* dst, const void* src, void* stream, char* errbuf, int errbuf_len)
+{
+    OM_GUARD_INT(
+        static_cast<OM_TT*>(dst)->copy_(*static_cast<const OM_TT*>(src), om_deref_stream(stream));
+        return 0;
+    )
+}
+
 void* OM_FN(transpose)(const void* handle, char* errbuf, int errbuf_len)
 {
     OM_GUARD_PTR( return new OM_TT(static_cast<const OM_TT*>(handle)->transpose()); )

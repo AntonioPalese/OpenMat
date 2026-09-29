@@ -29,57 +29,55 @@ namespace detail {
 
 template<typename value_type>
 om::Tensor<value_type>::Tensor(const std::vector<size_t>& shape, const Device& dv)
-    : m_Shape(shape), m_Device(dv), m_Stream(Stream::default_stream()),
-      m_Allocator(AllocatorFactory<value_type>::create(dv.m_Dt))
-{
-    _compute_strides();
-    size_t n = std::accumulate(shape.begin(), shape.end(), size_t{1}, std::multiplies<>());
-    m_Data = m_Allocator->allocate_async(n, m_Stream.get());
-}
+    : Tensor(shape, dv, Stream::default_stream(), /*pinned=*/false)
+{}
 
 template<typename value_type>
 om::Tensor<value_type>::Tensor(const std::vector<size_t>& shape, const Device& dv, Stream stream)
-    : m_Shape(shape), m_Device(dv), m_Stream(std::move(stream)),
-      m_Allocator(AllocatorFactory<value_type>::create(dv.m_Dt))
-{
-    _compute_strides();
-    size_t n = std::accumulate(shape.begin(), shape.end(), size_t{1}, std::multiplies<>());
-    m_Data = m_Allocator->allocate_async(n, m_Stream.get());
-}
+    : Tensor(shape, dv, std::move(stream), /*pinned=*/false)
+{}
 
 template<typename value_type>
 om::Tensor<value_type>::Tensor(const std::vector<size_t>& shape, const Device& dv, Stream stream, bool pinned)
-    : m_Shape(shape), m_Device(dv), m_Stream(std::move(stream)),
-      m_Allocator(pinned ? AllocatorFactory<value_type>::create_pinned()
-                          : AllocatorFactory<value_type>::create(dv.m_Dt))
+    : m_Shape(shape), m_Device(dv)
 {
     if (pinned && dv.m_Dt != DEVICE_TYPE::CPU)
         throw std::invalid_argument("Tensor: pinned memory is host-only");
 
     _compute_strides();
     size_t n = std::accumulate(shape.begin(), shape.end(), size_t{1}, std::multiplies<>());
-    m_Data = m_Allocator->allocate_async(n, m_Stream.get());
+    m_Storage = std::make_shared<Storage<value_type>>(n, dv, std::move(stream), pinned);
+    m_Data = m_Storage->data();
 }
 
 template<typename value_type>
+om::Tensor<value_type>::Tensor(std::shared_ptr<Storage<value_type>> storage, size_t offset,
+                               std::vector<size_t> shape, std::vector<size_t> stride)
+    : m_Shape(std::move(shape)), m_Stride(std::move(stride)),
+      m_Data(storage->data() + offset), m_Device(storage->device()),
+      m_Offset(offset), m_Storage(std::move(storage))
+{}
+
+// A deep copy is always contiguous, whatever the source's strides: a copy of
+// a view is a fresh tensor that owns exactly its own elements.
+template<typename value_type>
 om::Tensor<value_type>::Tensor(const Tensor& rhs)
-    : m_Shape(rhs.m_Shape), m_Stride(rhs.m_Stride), m_Device(rhs.m_Device),
-      m_Stream(Stream::default_stream()),
-      m_Allocator(AllocatorFactory<value_type>::create(rhs.m_Device.m_Dt))
+    : Tensor(rhs.m_Shape, rhs.m_Device)
 {
-    size_t n = std::accumulate(m_Shape.begin(), m_Shape.end(), size_t{1}, std::multiplies<>());
-    m_Data = m_Allocator->allocate_async(n, m_Stream.get());
-    m_Allocator->copy(m_Data, rhs.m_Data, n);
+    if (rhs.is_contiguous())
+        m_Storage->allocator().copy(m_Data, rhs.m_Data, this->size());
+    else
+        rhs._copy_into(*this, Stream::default_stream());
 }
 
 template <typename value_type>
 om::Tensor<value_type>::Tensor(Tensor &&rhs)
     : m_Shape(std::move(rhs.m_Shape)),
       m_Stride(std::move(rhs.m_Stride)),
-      m_Device(rhs.m_Device),
       m_Data(rhs.m_Data),
-      m_Stream(std::move(rhs.m_Stream)),
-      m_Allocator(std::move(rhs.m_Allocator))
+      m_Device(rhs.m_Device),
+      m_Offset(rhs.m_Offset),
+      m_Storage(std::move(rhs.m_Storage))
 {
     rhs.m_Data = nullptr;
 }
@@ -88,23 +86,33 @@ template <typename value_type>
 om::Tensor<value_type>& om::Tensor<value_type>::operator=(Tensor&& rhs)
 {
     if (this != &rhs) {
-        if (m_Data) m_Allocator->deallocate_async(m_Data, m_Stream.get());
-        m_Shape     = std::move(rhs.m_Shape);
-        m_Stride    = std::move(rhs.m_Stride);
-        m_Device    = rhs.m_Device;
-        m_Data      = rhs.m_Data;
-        m_Stream    = std::move(rhs.m_Stream);
-        m_Allocator = std::move(rhs.m_Allocator);
-        rhs.m_Data  = nullptr;
+        m_Shape   = std::move(rhs.m_Shape);
+        m_Stride  = std::move(rhs.m_Stride);
+        m_Device  = rhs.m_Device;
+        m_Data    = rhs.m_Data;
+        m_Offset  = rhs.m_Offset;
+        m_Storage = std::move(rhs.m_Storage);
+        rhs.m_Data = nullptr;
     }
     return *this;
 }
 
 template <typename value_type>
-om::Tensor<value_type>::~Tensor()
+const om::Stream& om::Tensor<value_type>::stream() const
 {
-    if (m_Data)
-        m_Allocator->deallocate_async(m_Data, m_Stream.get());
+    static const Stream s_default = Stream::default_stream();
+    return m_Storage ? m_Storage->stream() : s_default;
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::_alias(std::vector<size_t> shape,
+                                                      std::vector<size_t> stride,
+                                                      size_t extra_offset) const
+{
+    if (!m_Storage)
+        throw std::invalid_argument("Tensor: cannot take a view of a moved-from tensor");
+    return Tensor<value_type>(m_Storage, m_Offset + extra_offset,
+                              std::move(shape), std::move(stride));
 }
 
 template <typename value_type>
@@ -217,9 +225,13 @@ template <typename value_type>
 om::Tensor<value_type> om::Tensor<value_type>::operator/(const value_type& scalar) const
 { return this->div(scalar); }
 
+// The reductions walk the buffer as one flat run on both backends, so a
+// strided view is reduced through a contiguous copy. contiguous() is a view,
+// not a copy, whenever the tensor already is contiguous.
 template <typename value_type>
 value_type om::Tensor<value_type>::sum() const
 {
+    if (!this->is_contiguous()) return this->contiguous().sum();
     if (device_type() == DEVICE_TYPE::CPU)
         return reduce_sum_cpu<value_type>(this->view());
     return launch_reduce_sum<value_type>(this->view());
@@ -237,6 +249,7 @@ value_type om::Tensor<value_type>::mean() const
 template <typename value_type>
 value_type om::Tensor<value_type>::min() const
 {
+    if (!this->is_contiguous()) return this->contiguous().min();
     if (device_type() == DEVICE_TYPE::CPU)
         return reduce_min_cpu<value_type>(this->view());
     return launch_reduce_min<value_type>(this->view());
@@ -245,6 +258,7 @@ value_type om::Tensor<value_type>::min() const
 template <typename value_type>
 value_type om::Tensor<value_type>::max() const
 {
+    if (!this->is_contiguous()) return this->contiguous().max();
     if (device_type() == DEVICE_TYPE::CPU)
         return reduce_max_cpu<value_type>(this->view());
     return launch_reduce_max<value_type>(this->view());
@@ -253,17 +267,24 @@ value_type om::Tensor<value_type>::max() const
 template <typename value_type>
 om::Tensor<value_type> om::Tensor<value_type>::reshape(const std::vector<size_t>& new_shape) const
 {
+    if (new_shape.empty())
+        throw std::invalid_argument("reshape: new shape must have at least one axis");
+    if (new_shape.size() > MAX_RANK)
+        throw std::invalid_argument("reshape: rank exceeds MAX_RANK (8)");
     size_t new_size = std::accumulate(new_shape.begin(), new_shape.end(), size_t{1}, std::multiplies<size_t>{});
     if (new_size != this->size())
         throw std::invalid_argument("reshape: new shape must have the same total number of elements");
 
-    Tensor<value_type> out(*this);
-    out.m_Shape = new_shape;
-    out.m_Stride.resize(new_shape.size());
-    out.m_Stride.back() = 1;
-    for (int i = static_cast<int>(new_shape.size()) - 2; i >= 0; --i)
-        out.m_Stride[i] = out.m_Stride[i + 1] * new_shape[i + 1];
-    return out;
+    // Only a contiguous tensor can be re-read with row-major strides for any
+    // new shape; anything else is copied first (the copy is contiguous).
+    if (!this->is_contiguous())
+        return this->contiguous().reshape(new_shape);
+
+    std::vector<size_t> stride(new_shape.size());
+    stride.back() = 1;
+    for (size_t i = new_shape.size() - 1; i-- > 0; )
+        stride[i] = stride[i + 1] * new_shape[i + 1];
+    return this->_alias(new_shape, std::move(stride));
 }
 
 template <typename value_type>
@@ -280,13 +301,12 @@ om::Tensor<value_type> om::Tensor<value_type>::squeeze(size_t axis) const
     if (m_Shape[axis] != 1)
         throw std::invalid_argument("squeeze: dimension at axis must be 1");
 
-    std::vector<size_t> new_shape;
-    new_shape.reserve(this->rank() - 1);
+    std::vector<size_t> shape, stride;
     for (size_t i = 0; i < this->rank(); ++i)
-        if (i != axis) new_shape.push_back(m_Shape[i]);
+        if (i != axis) { shape.push_back(m_Shape[i]); stride.push_back(m_Stride[i]); }
 
-    if (new_shape.empty()) new_shape.push_back(1);
-    return this->reshape(new_shape);
+    if (shape.empty()) { shape.push_back(1); stride.push_back(1); }
+    return this->_alias(std::move(shape), std::move(stride));
 }
 
 template <typename value_type>
@@ -294,17 +314,106 @@ om::Tensor<value_type> om::Tensor<value_type>::unsqueeze(size_t axis) const
 {
     if (axis > this->rank())
         throw std::out_of_range("unsqueeze: axis out of range");
+    if (this->rank() + 1 > MAX_RANK)
+        throw std::invalid_argument("unsqueeze: rank exceeds MAX_RANK (8)");
 
-    std::vector<size_t> new_shape;
-    new_shape.reserve(this->rank() + 1);
-    for (size_t i = 0; i < axis; ++i)
-        new_shape.push_back(m_Shape[i]);
-    new_shape.push_back(1);
-    for (size_t i = axis; i < this->rank(); ++i)
-        new_shape.push_back(m_Shape[i]);
+    // The new axis has extent 1, so its stride is never used to step; it is
+    // set to what a row-major layout would give it, which keeps a contiguous
+    // tensor's unsqueeze contiguous by any reading of the strides.
+    const size_t new_stride = axis < this->rank() ? m_Shape[axis] * m_Stride[axis] : 1;
 
-    return this->reshape(new_shape);
+    std::vector<size_t> shape(m_Shape), stride(m_Stride);
+    shape.insert(shape.begin() + axis, 1);
+    stride.insert(stride.begin() + axis, new_stride);
+    return this->_alias(std::move(shape), std::move(stride));
 }
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::slice(size_t axis, size_t start,
+                                                     size_t stop, size_t step) const
+{
+    if (axis >= this->rank())
+        throw std::out_of_range("slice: axis out of range");
+    if (step == 0)
+        throw std::invalid_argument("slice: step must be positive");
+    const size_t extent = m_Shape[axis];
+    if (stop > extent) stop = extent;
+    if (start > stop) start = stop;
+
+    std::vector<size_t> shape(m_Shape), stride(m_Stride);
+    shape[axis]  = (stop - start + step - 1) / step;
+    stride[axis] = m_Stride[axis] * step;
+    // An empty slice keeps the offset at 0 extra elements: `start` may equal
+    // the extent, one past the last element.
+    const size_t offset = shape[axis] == 0 ? 0 : start * m_Stride[axis];
+    return this->_alias(std::move(shape), std::move(stride), offset);
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::select(size_t axis, size_t index) const
+{
+    if (axis >= this->rank())
+        throw std::out_of_range("select: axis out of range");
+    if (index >= m_Shape[axis])
+        throw std::out_of_range("select: index " + std::to_string(index) +
+            " out of range for axis " + std::to_string(axis) +
+            " with size " + std::to_string(m_Shape[axis]));
+
+    std::vector<size_t> shape, stride;
+    for (size_t i = 0; i < this->rank(); ++i)
+        if (i != axis) { shape.push_back(m_Shape[i]); stride.push_back(m_Stride[i]); }
+    if (shape.empty()) { shape.push_back(1); stride.push_back(1); }
+    return this->_alias(std::move(shape), std::move(stride), index * m_Stride[axis]);
+}
+
+template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::contiguous() const
+{
+    if (this->is_contiguous())
+        return this->_alias(m_Shape, m_Stride);
+    return Tensor<value_type>(*this);
+}
+
+template <typename value_type>
+void om::Tensor<value_type>::_copy_into(Tensor<value_type>& out, const Stream& s) const
+{
+    if (this->device_type() == DEVICE_TYPE::CPU)
+        detail::unary_elementwise_cpu(this->view(), out.view(),
+                                      [](const value_type& v) { return v; });
+    else
+        launch_apply_op<value_type>(this->view(), out.view(), Identity<value_type>{}, s.get());
+}
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::copy_(const Tensor<value_type>& src, const Stream& s)
+{
+    if (src.device_type() != this->device_type() || src.m_Device.m_Id != m_Device.m_Id)
+        throw std::invalid_argument("copy_: source and destination must live on the same device");
+    // The result shape must be this tensor's: src broadcasts to it, never the
+    // other way round.
+    if (detail::broadcast_shapes(m_Shape, src.m_Shape, "copy_") != m_Shape)
+        throw std::invalid_argument("copy_: source shape " + detail::shape_str(src.m_Shape) +
+            " cannot be broadcast to destination shape " + detail::shape_str(m_Shape));
+    const auto l = detail::expand_to(src.m_Shape, src.m_Stride, m_Shape);
+    const auto sv = l.view(src.m_Data);
+    // A copy onto itself is a no-op; any other overlap is refused like the
+    // elementwise ops refuse it.
+    src._check_alias_elementwise(*this, sv, nullptr, nullptr, "copy_");
+    if (sv.data == m_Data && sv.same_shape(this->view())) {
+        bool same = true;
+        for (size_t i = 0; i < sv.rank; ++i) same = same && sv.stride[i] == m_Stride[i];
+        if (same) return *this;
+    }
+    if (this->device_type() == DEVICE_TYPE::CPU)
+        detail::unary_elementwise_cpu(sv, this->view(), [](const value_type& v) { return v; });
+    else
+        launch_apply_op<value_type>(sv, this->view(), Identity<value_type>{}, s.get());
+    return *this;
+}
+
+template <typename value_type>
+om::Tensor<value_type>& om::Tensor<value_type>::copy_(const Tensor<value_type>& src)
+{ return this->copy_(src, Stream::default_stream()); }
 
 template <typename value_type>
 template <typename Op>
@@ -382,6 +491,10 @@ om::Tensor<value_type> om::Tensor<value_type>::fused_div_add(const Tensor<value_
 template <typename value_type>
 om::Tensor<value_type> om::Tensor<value_type>::to(const Device& target) const
 {
+    // The copies below move one flat run of bytes; a strided view goes
+    // through a contiguous copy on its own device first.
+    if (target.m_Dt != this->device_type() && !this->is_contiguous())
+        return this->contiguous().to(target);
     if (target.m_Dt == this->device_type()) {
         return Tensor<value_type>(*this);
     }
@@ -417,6 +530,8 @@ om::Tensor<value_type> om::Tensor<value_type>::cuda() const
 template <typename value_type>
 om::Tensor<value_type> om::Tensor<value_type>::to(const Device& target, const Stream& s) const
 {
+    if (target.m_Dt != this->device_type() && !this->is_contiguous())
+        return this->contiguous().to(target, s);
     if (target.m_Dt == this->device_type())
         return Tensor<value_type>(*this);
 
@@ -424,7 +539,7 @@ om::Tensor<value_type> om::Tensor<value_type>::to(const Device& target, const St
 
     if (this->device_type() == DEVICE_TYPE::CPU && target.m_Dt == DEVICE_TYPE::CUDA) {
         Tensor<value_type> out(this->shape(), target);
-        m_Allocator->copy_host_to_device_async(out.m_Data, m_Data, n, s.get());
+        m_Storage->allocator().copy_host_to_device_async(out.m_Data, m_Data, n, s.get());
         return out;
     } else {
         // CUDA → CPU: pin the destination for the same reason as the
@@ -434,7 +549,7 @@ om::Tensor<value_type> om::Tensor<value_type>::to(const Device& target, const St
         // what turns the same cudaMemcpyAsync call into a real DMA once the
         // destination is page-locked.
         Tensor<value_type> out(this->shape(), target, Stream::default_stream(), /*pinned=*/true);
-        m_Allocator->copy_device_to_host_async(out.m_Data, m_Data, n, s.get());
+        m_Storage->allocator().copy_device_to_host_async(out.m_Data, m_Data, n, s.get());
         return out;
     }
 }
@@ -460,7 +575,7 @@ om::Tensor<value_type> om::Tensor<value_type>::pinned(const std::vector<size_t>&
 template <typename value_type>
 bool om::Tensor<value_type>::is_pinned() const
 {
-    return dynamic_cast<PinnedCpuAllocator<value_type>*>(m_Allocator.get()) != nullptr;
+    return m_Storage && dynamic_cast<PinnedCpuAllocator<value_type>*>(&m_Storage->allocator()) != nullptr;
 }
 
 template <typename value_type>
@@ -477,17 +592,18 @@ om::Tensor<value_type> om::Tensor<value_type>::from_vector(const std::vector<val
     if (dv.m_Dt == DEVICE_TYPE::CPU) {
         std::memcpy(t.m_Data, data.data(), sizeof(value_type) * expected);
     } else {
-        t.m_Allocator->copy_host_to_device_async(t.m_Data, data.data(), expected, s.get());
+        t.m_Storage->allocator().copy_host_to_device_async(t.m_Data, data.data(), expected, s.get());
     }
     return t;
 }
 
 template <typename value_type>
 void om::Tensor<value_type>::copyToHost(value_type *dest) const
-{            
+{
+    if (!this->is_contiguous()) return this->contiguous().copyToHost(dest);
     size_t total_size_ = std::accumulate(m_Shape.begin(), m_Shape.end(), size_t{1}, std::multiplies<>());
     if(device_type() == DEVICE_TYPE::CUDA)
-        m_Allocator->copyFromCurrentLoc(dest, m_Data, total_size_);
+        m_Storage->allocator().copyFromCurrentLoc(dest, m_Data, total_size_);
     else
         std::memcpy(dest, m_Data, sizeof(value_type) * total_size_); 
 }
@@ -495,9 +611,10 @@ void om::Tensor<value_type>::copyToHost(value_type *dest) const
 template <typename value_type>
 void om::Tensor<value_type>::copyToDevice(value_type *dest) const
 {
+    if (!this->is_contiguous()) return this->contiguous().copyToDevice(dest);
     size_t total_size_ = std::accumulate(m_Shape.begin(), m_Shape.end(), size_t{1}, std::multiplies<>());
     if(device_type() == DEVICE_TYPE::CPU)
-        m_Allocator->copyFromCurrentLoc(dest, m_Data, total_size_);
+        m_Storage->allocator().copyFromCurrentLoc(dest, m_Data, total_size_);
     else
         throw std::runtime_error("Tensor::copyToDevice: memory already on device");
 }
@@ -532,8 +649,20 @@ void om::Tensor<value_type>::_check_out(const Tensor<value_type>& out,
     if (out.device_type() != this->device_type() || out.m_Device.m_Id != m_Device.m_Id)
         throw std::invalid_argument(std::string(who) +
             ": destination must live on the same device as the operands");
-    if (out.m_Data == nullptr)
+    // The storage, not the pointer: an empty tensor has a null data pointer
+    // and is still a valid destination.
+    if (!out.m_Storage)
         throw std::invalid_argument(std::string(who) + ": destination has been moved from");
+}
+
+// matmul, transpose and permute kernels index their destination as one flat
+// row-major run (permute_kernel writes dst[idx]), so a view there is refused.
+template <typename value_type>
+void om::Tensor<value_type>::_check_out_contiguous(const Tensor<value_type>& out,
+                                                   const char* who) const
+{
+    if (!out.is_contiguous())
+        throw std::invalid_argument(std::string(who) + ": destination must be contiguous");
 }
 
 template <typename value_type>
@@ -547,24 +676,24 @@ std::vector<size_t> om::Tensor<value_type>::_check_operand(const Tensor<value_ty
 
 template <typename value_type>
 void om::Tensor<value_type>::_check_alias_elementwise(const Tensor<value_type>& out,
+                                                      const TensorView<const value_type>& lhs,
                                                       const Tensor<value_type>* rhs,
+                                                      const TensorView<const value_type>* rhs_view,
                                                       const char* who) const
 {
-    const bool aliased = (out.m_Data == m_Data) || (rhs && out.m_Data == rhs->m_Data);
-    if (!aliased) return;
-
-    // Broadcasting does not weaken this. A tensor owns its buffer outright, so
-    // sharing a buffer with `out` means *being* `out`, and `out` has the
-    // result shape: an aliased operand is never the broadcast one (whose
-    // expanded view has 0 strides and would re-read elements already
-    // written). Every aliased read is still index i for write index i.
-
-    const bool flat = this->view().is_contiguous() && out.view().is_contiguous() &&
-                      (!rhs || rhs->view().is_contiguous());
-    if (!flat)
+    const auto dst = out.view();
+    auto check = [&](const Tensor<value_type>& operand, const TensorView<const value_type>& v) {
+        if (!operand.shares_storage(out) || !detail::views_overlap(v, dst)) return;
+        // The in-place case: the operand is the destination, element for
+        // element, so every read of index i precedes its own write.
+        if (detail::same_layout(v, dst)) return;
         throw std::invalid_argument(std::string(who) +
-            ": destination may only share a buffer with an operand while every "
-            "operand is contiguous");
+            ": destination partially overlaps an operand (views of the same storage "
+            "whose element ranges intersect; interleaved views are refused too, "
+            "because the check compares ranges, not elements)");
+    };
+    check(*this, lhs);
+    if (rhs) check(*rhs, *rhs_view);
 }
 
 template <typename value_type>
@@ -572,9 +701,13 @@ void om::Tensor<value_type>::_check_alias_none(const Tensor<value_type>& out,
                                                const Tensor<value_type>* rhs,
                                                const char* who) const
 {
-    if (out.m_Data == m_Data || (rhs && out.m_Data == rhs->m_Data))
+    const auto dst = out.view();
+    auto overlaps = [&](const Tensor<value_type>& operand) {
+        return operand.shares_storage(out) && detail::views_overlap(operand.view(), dst);
+    };
+    if (overlaps(*this) || (rhs && overlaps(*rhs)))
         throw std::invalid_argument(std::string(who) +
-            ": destination must not be one of the operands");
+            ": destination must not overlap an operand");
 }
 
 template <typename value_type>
@@ -584,9 +717,11 @@ om::Tensor<value_type>& om::Tensor<value_type>::add_out(const Tensor<value_type>
 {
     const auto shape = _check_operand(rhs, "add_out");
     _check_out(out, shape, "add_out");
-    _check_alias_elementwise(out, &rhs, "add_out");
     const auto l = detail::expand_to(m_Shape, m_Stride, shape);
     const auto r = detail::expand_to(rhs.m_Shape, rhs.m_Stride, shape);
+    const auto lv = l.view(m_Data), rv = r.view(rhs.m_Data);
+    _check_alias_elementwise(out, lv, &rhs, &rv, "add_out");
+    if (out.size() == 0) return out;
     if (this->device_type() == DEVICE_TYPE::CPU)
         add_cpu(l.view(m_Data), r.view(rhs.m_Data), out.view());
     else
@@ -623,9 +758,11 @@ om::Tensor<value_type>& om::Tensor<value_type>::sub_out(const Tensor<value_type>
 {
     const auto shape = _check_operand(rhs, "sub_out");
     _check_out(out, shape, "sub_out");
-    _check_alias_elementwise(out, &rhs, "sub_out");
     const auto l = detail::expand_to(m_Shape, m_Stride, shape);
     const auto r = detail::expand_to(rhs.m_Shape, rhs.m_Stride, shape);
+    const auto lv = l.view(m_Data), rv = r.view(rhs.m_Data);
+    _check_alias_elementwise(out, lv, &rhs, &rv, "sub_out");
+    if (out.size() == 0) return out;
     if (this->device_type() == DEVICE_TYPE::CPU)
         sub_cpu(l.view(m_Data), r.view(rhs.m_Data), out.view());
     else
@@ -662,9 +799,11 @@ om::Tensor<value_type>& om::Tensor<value_type>::mul_out(const Tensor<value_type>
 {
     const auto shape = _check_operand(rhs, "mul_out");
     _check_out(out, shape, "mul_out");
-    _check_alias_elementwise(out, &rhs, "mul_out");
     const auto l = detail::expand_to(m_Shape, m_Stride, shape);
     const auto r = detail::expand_to(rhs.m_Shape, rhs.m_Stride, shape);
+    const auto lv = l.view(m_Data), rv = r.view(rhs.m_Data);
+    _check_alias_elementwise(out, lv, &rhs, &rv, "mul_out");
+    if (out.size() == 0) return out;
     if (this->device_type() == DEVICE_TYPE::CPU)
         mul_cpu(l.view(m_Data), r.view(rhs.m_Data), out.view());
     else
@@ -701,9 +840,11 @@ om::Tensor<value_type>& om::Tensor<value_type>::div_out(const Tensor<value_type>
 {
     const auto shape = _check_operand(rhs, "div_out");
     _check_out(out, shape, "div_out");
-    _check_alias_elementwise(out, &rhs, "div_out");
     const auto l = detail::expand_to(m_Shape, m_Stride, shape);
     const auto r = detail::expand_to(rhs.m_Shape, rhs.m_Stride, shape);
+    const auto lv = l.view(m_Data), rv = r.view(rhs.m_Data);
+    _check_alias_elementwise(out, lv, &rhs, &rv, "div_out");
+    if (out.size() == 0) return out;
     if (this->device_type() == DEVICE_TYPE::CPU)
         div_cpu(l.view(m_Data), r.view(rhs.m_Data), out.view());
     else
@@ -739,7 +880,8 @@ om::Tensor<value_type>& om::Tensor<value_type>::add_out(const value_type& scalar
                                                            const Stream& s) const
 {
     _check_out(out, m_Shape, "add_out");
-    _check_alias_elementwise(out, nullptr, "add_out");
+    _check_alias_elementwise(out, this->view(), nullptr, nullptr, "add_out");
+    if (out.size() == 0) return out;
     if (this->device_type() == DEVICE_TYPE::CPU)
         add_k_cpu(this->view(), scalar, out.view());
     else
@@ -774,7 +916,8 @@ om::Tensor<value_type>& om::Tensor<value_type>::sub_out(const value_type& scalar
                                                            const Stream& s) const
 {
     _check_out(out, m_Shape, "sub_out");
-    _check_alias_elementwise(out, nullptr, "sub_out");
+    _check_alias_elementwise(out, this->view(), nullptr, nullptr, "sub_out");
+    if (out.size() == 0) return out;
     if (this->device_type() == DEVICE_TYPE::CPU)
         sub_k_cpu(this->view(), scalar, out.view());
     else
@@ -809,7 +952,8 @@ om::Tensor<value_type>& om::Tensor<value_type>::mul_out(const value_type& scalar
                                                            const Stream& s) const
 {
     _check_out(out, m_Shape, "mul_out");
-    _check_alias_elementwise(out, nullptr, "mul_out");
+    _check_alias_elementwise(out, this->view(), nullptr, nullptr, "mul_out");
+    if (out.size() == 0) return out;
     if (this->device_type() == DEVICE_TYPE::CPU)
         mul_k_cpu(this->view(), scalar, out.view());
     else
@@ -844,7 +988,8 @@ om::Tensor<value_type>& om::Tensor<value_type>::div_out(const value_type& scalar
                                                            const Stream& s) const
 {
     _check_out(out, m_Shape, "div_out");
-    _check_alias_elementwise(out, nullptr, "div_out");
+    _check_alias_elementwise(out, this->view(), nullptr, nullptr, "div_out");
+    if (out.size() == 0) return out;
     if (this->device_type() == DEVICE_TYPE::CPU)
         div_k_cpu(this->view(), scalar, out.view());
     else
@@ -924,9 +1069,16 @@ om::Tensor<value_type>& om::Tensor<value_type>::matmul_out(const Tensor<value_ty
     if (rhs.device_type() != this->device_type() || rhs.device().m_Id != m_Device.m_Id)
         throw std::invalid_argument("matmul_out: tensors must live on the same device");
     _check_out(out, {M, N}, "matmul_out");
+    _check_out_contiguous(out, "matmul_out");
     _check_alias_none(out, &rhs, "matmul_out");
-    if (this->device_type() == DEVICE_TYPE::CPU)
+    if (out.size() == 0) return out;
+    if (this->device_type() == DEVICE_TYPE::CPU) {
+        // matmul_cpu walks unit-stride rows with raw pointers; a strided
+        // operand goes through a contiguous copy (a view, if it already is).
+        if (!this->is_contiguous() || !rhs.is_contiguous())
+            return this->contiguous().matmul_out(rhs.contiguous(), out, s);
         matmul_cpu(this->view(), rhs.view(), out.view());
+    }
     else
         launch_matmul<value_type>(this->view(), rhs.view(), out.view(), s.get());
     return out;
@@ -956,7 +1108,9 @@ om::Tensor<value_type>& om::Tensor<value_type>::transpose_out(Tensor<value_type>
     if (this->rank() != 2)
         throw std::runtime_error("transpose: tensor must be rank-2 (use permute for higher ranks)");
     _check_out(out, {m_Shape[1], m_Shape[0]}, "transpose_out");
+    _check_out_contiguous(out, "transpose_out");
     _check_alias_none(out, nullptr, "transpose_out");
+    if (out.size() == 0) return out;
     if (this->device_type() == DEVICE_TYPE::CPU)
         transpose_cpu<value_type>(this->view(), out.view());
     else
@@ -985,7 +1139,9 @@ om::Tensor<value_type>& om::Tensor<value_type>::permute_out(const std::vector<si
 {
     const std::vector<size_t> out_shape = detail::permuted_shape(m_Shape, axes);
     _check_out(out, out_shape, "permute_out");
+    _check_out_contiguous(out, "permute_out");
     _check_alias_none(out, nullptr, "permute_out");
+    if (out.size() == 0) return out;
     if (this->device_type() == DEVICE_TYPE::CPU)
         permute_cpu<value_type>(this->view(), out.view(), axes.data(), this->rank());
     else
@@ -1013,13 +1169,10 @@ template <typename Op>
 om::Tensor<value_type>& om::Tensor<value_type>::apply_out(Op op, Tensor<value_type>& out, const Stream& s) const
 {
     _check_out(out, m_Shape, "apply_out");
-    _check_alias_elementwise(out, nullptr, "apply_out");
+    _check_alias_elementwise(out, this->view(), nullptr, nullptr, "apply_out");
+    if (out.size() == 0) return out;
     if (this->device_type() == DEVICE_TYPE::CPU) {
-        auto src = this->view();
-        auto dst = out.view();
-        size_t n = src.size();
-        for (size_t i = 0; i < n; ++i)
-            dst[i] = op(src[i]);
+        detail::unary_elementwise_cpu(this->view(), out.view(), op);
     } else {
         launch_apply_op<value_type>(this->view(), out.view(), op, s.get());
     }
@@ -1058,9 +1211,11 @@ om::Tensor<value_type>& om::Tensor<value_type>::apply_binary_out(const Tensor<va
 {
     const auto shape = _check_operand(rhs, "apply_binary_out");
     _check_out(out, shape, "apply_binary_out");
-    _check_alias_elementwise(out, &rhs, "apply_binary_out");
     const auto l = detail::expand_to(m_Shape, m_Stride, shape);
     const auto r = detail::expand_to(rhs.m_Shape, rhs.m_Stride, shape);
+    const auto lv = l.view(m_Data), rv = r.view(rhs.m_Data);
+    _check_alias_elementwise(out, lv, &rhs, &rv, "apply_binary_out");
+    if (out.size() == 0) return out;
     if (this->device_type() == DEVICE_TYPE::CPU)
         detail::binary_elementwise_cpu(l.view(m_Data), r.view(rhs.m_Data), out.view(), op);
     else
@@ -1131,6 +1286,7 @@ om::Tensor<value_type>& om::Tensor<value_type>::sigmoid_()
 template <typename value_type>
 om::Tensor<value_type>& om::Tensor<value_type>::fill_(const value_type& value, const Stream& s)
 {
+    if (this->size() == 0) return *this;
     if (this->device_type() == DEVICE_TYPE::CPU)
         fill_cpu(this->view(), value);
     else

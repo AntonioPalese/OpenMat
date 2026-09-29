@@ -96,14 +96,15 @@ namespace om {
             }
         }
         
-        // True when the buffer is one flat row-major run, i.e. when the axis
-        // structure carries nothing the kernel needs and it may index linearly.
-        // Every tensor OpenMat builds today satisfies this — reshape and friends
-        // deep-copy, so no view ever aliases another buffer — but the
-        // elementwise launchers ask rather than assume, so that a strided view
-        // (roadmap P2) falls back to the rank-specialized kernels instead of
-        // reading the wrong elements. An axis of extent 1 is skipped: its stride
-        // is never dereferenced and a view is free to leave it arbitrary.
+        // True when the elements are one flat row-major run starting at
+        // `data`, i.e. when the axis structure carries nothing the kernel needs
+        // and it may index linearly. A freshly allocated tensor always is; a
+        // view (a slice with a step, a column, a tensor imported with foreign
+        // strides) may not be, which is why the elementwise launchers ask
+        // rather than assume: a strided view falls back to the stride-aware
+        // kernels instead of reading the wrong elements. An axis of extent 1 is
+        // skipped: its stride is never dereferenced and a view is free to
+        // leave it arbitrary.
         __host__
         bool is_contiguous() const
         {

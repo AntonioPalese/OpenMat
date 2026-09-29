@@ -3,23 +3,23 @@
 #include "type_traits/types.cuh"
 #include <stdexcept>
 #include "ops/div_policy.h"
+#include "ops/cpu/broadcast_cpu.h"
 
-// Same size-gated parallel-for as DEFINE_BINARY_OPS_CPU (headers/ops/cpu/binary_op_macros.h)
-// — see that file for why the threshold and the _Pragma indirection are needed.
+// The loop — contiguous fast path, strided row walk and the OpenMP threshold —
+// lives in unary_elementwise_cpu (broadcast_cpu.h). OP_EXPR is written in
+// terms of the element x and the scalar `value`.
 #define DEFINE_UNARY_OPS_CPU(OP_NAME, OP_EXPR)\
     template<typename T>\
     void OP_NAME##_cpu(const TensorView<const T> lhs, T value, TensorView<T> dst) {\
         static_assert(is_extended_arithmetic<T>{}, "unary op requires an arithmetic type");\
-        size_t _total = lhs.size();\
-        _Pragma("omp parallel for schedule(static) if(_total > 65536)")\
-        for(size_t idx = 0; idx < _total; ++idx)\
-            dst[idx] = OP_EXPR;\
+        ::om::detail::unary_elementwise_cpu(lhs, dst,\
+            [value](const T& x) -> T { return OP_EXPR; });\
     }
 
-namespace om 
+namespace om
 {
-    DEFINE_UNARY_OPS_CPU(add_k, lhs[idx] + value)
-    DEFINE_UNARY_OPS_CPU(sub_k, lhs[idx] - value)
-    DEFINE_UNARY_OPS_CPU(mul_k, lhs[idx] * value)
-    DEFINE_UNARY_OPS_CPU(div_k, div_elem(lhs[idx], value))
+    DEFINE_UNARY_OPS_CPU(add_k, x + value)
+    DEFINE_UNARY_OPS_CPU(sub_k, x - value)
+    DEFINE_UNARY_OPS_CPU(mul_k, x * value)
+    DEFINE_UNARY_OPS_CPU(div_k, div_elem(x, value))
 }

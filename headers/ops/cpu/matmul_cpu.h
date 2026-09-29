@@ -29,11 +29,11 @@ namespace om
             throw std::runtime_error("matmul_cpu: output dimensions must be (M × N)");
         }
 
-        // Every Tensor buffer reaching here is canonical row-major contiguous
-        // (the library never hands matmul an aliasing/strided view — see
-        // CLAUDE.md's Shape ops section), so the inner dimension always has
-        // unit stride. That lets the hot loop walk raw pointers instead of
-        // paying compute_flat_index's multiply-add per element access.
+        // Tensor::matmul_out hands this only contiguous operands (a strided
+        // view goes through contiguous() first) and refuses a strided
+        // destination, so the inner dimension always has unit stride. That
+        // lets the hot loop walk raw pointers instead of paying
+        // compute_flat_index's multiply-add per element access.
         assert(lhs.stride[1] == 1 && rhs.stride[1] == 1 && dst.stride[1] == 1 &&
                "matmul_cpu: expected contiguous row-major operands");
 

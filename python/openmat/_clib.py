@@ -170,6 +170,16 @@ def _declare_dtype(dt):
     d("permute", _p, [_p, _sp, _sz, _cp, _i])
     d("permute_stream", _p, [_p, _sp, _sz, _p, _cp, _i])
 
+    # views
+    d("slice", _p, [_p, _sz, _sz, _sz, _sz, _cp, _i])
+    d("select", _p, [_p, _sz, _sz, _cp, _i])
+    d("contiguous", _p, [_p, _cp, _i])
+    d("is_contiguous", _i, [_p])
+    d("storage_offset", _sz, [_p])
+    d("shares_storage", _i, [_p, _p])
+    d("copy_from", _i, [_p, _p, _cp, _i])
+    d("copy_from_stream", _i, [_p, _p, _p, _cp, _i])
+
     # fused ops
     for name in ("relu", "sigmoid"):
         d(name, _p, [_p, _cp, _i])

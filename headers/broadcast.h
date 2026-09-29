@@ -75,6 +75,38 @@ namespace om::detail
         }
     };
 
+    // The span of memory a view can touch: from its first element to one past
+    // its last, [data, data + Σ(shape-1)·stride]. Strides are unsigned, so
+    // the first element is always the lowest address. An empty view touches
+    // nothing.
+    template <typename T>
+    inline bool views_overlap(const TensorView<const T>& a, const TensorView<const T>& b)
+    {
+        auto last = [](const TensorView<const T>& v) {
+            size_t off = 0;
+            for (size_t i = 0; i < v.rank; ++i) {
+                if (v.shape[i] == 0) return static_cast<const T*>(nullptr);
+                off += (v.shape[i] - 1) * v.stride[i];
+            }
+            return v.data + off;
+        };
+        const T* a_last = last(a);
+        const T* b_last = last(b);
+        if (!a_last || !b_last) return false;
+        return a.data <= b_last && b.data <= a_last;
+    }
+
+    // Same start, shape and strides: every index names the same element in
+    // both, which is the one overlap an elementwise op can survive.
+    template <typename T>
+    inline bool same_layout(const TensorView<const T>& a, const TensorView<const T>& b)
+    {
+        if (a.data != b.data || !a.same_shape(b)) return false;
+        for (size_t i = 0; i < a.rank; ++i)
+            if (a.shape[i] != 1 && a.stride[i] != b.stride[i]) return false;
+        return true;
+    }
+
     // `out_shape` must come from broadcast_shapes with this shape as one side.
     inline ExpandedLayout expand_to(const std::vector<size_t>& shape,
                                     const std::vector<size_t>& stride,

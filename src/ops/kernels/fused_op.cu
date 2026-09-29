@@ -56,15 +56,19 @@ namespace om {
     
         if (idx >= total_elements) return;
     
-        size_t offset = 0;
+        // One offset per operand: src may be a strided view (a slice) or a
+        // broadcast one with 0 strides, so it cannot reuse dst's offset. Last
+        // axis fastest, so consecutive threads write consecutive dst elements.
+        size_t so = 0, doff = 0;
         size_t tmp = idx;
-        for (size_t d = 0; d < dst.rank; ++d) {
-            size_t coord = tmp % dst.shape[d];
-            offset += coord * dst.stride[d];
+        for (size_t d = dst.rank; d-- > 0; ) {
+            const size_t coord = tmp % dst.shape[d];
             tmp /= dst.shape[d];
+            so   += coord * src.stride[d];
+            doff += coord * dst.stride[d];
         }
     
-        dst[offset] = op(src[offset]);
+        dst[doff] = op(src[so]);
     }
 
     // Rank-specialized launch. Each rank maps tensor axes onto grid axes, and
@@ -77,7 +81,8 @@ namespace om {
     template <typename T, typename Op>
     void launch_apply_op(const TensorView<const T> src, TensorView<T> dst, Op op, cudaStream_t stream)
     {
-        if (!src.match(dst))
+        // Shapes, not strides: src may be a strided or broadcast view.
+        if (!src.same_shape(dst))
             throw std::invalid_argument("Source and destination must have the same shape");
 
         const char* om_kernel = nullptr;
@@ -396,4 +401,11 @@ namespace om {
     template void launch_apply_op<int>      (const TensorView<const int>,       TensorView<int>,       Sigmoid<int>,       cudaStream_t);
     template void launch_apply_op<char>     (const TensorView<const char>,      TensorView<char>,      Sigmoid<char>,      cudaStream_t);
     template void launch_apply_op<float16_t>(const TensorView<const float16_t>, TensorView<float16_t>, Sigmoid<float16_t>, cudaStream_t);
+
+    // Identity: the strided copy behind Tensor::contiguous(), clone of a view,
+    // and copy_. Called from .cpp translation units, so it must be listed here.
+    template void launch_apply_op<float>    (const TensorView<const float>,     TensorView<float>,     Identity<float>,     cudaStream_t);
+    template void launch_apply_op<int>      (const TensorView<const int>,       TensorView<int>,       Identity<int>,       cudaStream_t);
+    template void launch_apply_op<char>     (const TensorView<const char>,      TensorView<char>,      Identity<char>,      cudaStream_t);
+    template void launch_apply_op<float16_t>(const TensorView<const float16_t>, TensorView<float16_t>, Identity<float16_t>, cudaStream_t);
 }

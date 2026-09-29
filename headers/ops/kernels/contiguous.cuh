@@ -18,12 +18,12 @@
 // reference GB10, `add` over 16 M floats runs at 222 GB/s at rank 1, 185 GB/s
 // at rank 2 and 133 GB/s at rank 3, for exactly the same traffic.
 //
-// Every tensor OpenMat produces today is contiguous row-major (reshape and
-// friends deep-copy, nothing returns an aliasing view), so the axis structure
-// carries no information the kernel needs: the whole tensor is one flat run.
-// This path throws the shape away, indexes the buffer linearly and recovers the
-// rank-1 layout for every rank. `is_contiguous()` is what gates it, so the day
-// views arrive (roadmap P2) a strided view simply falls back to the existing
+// Almost every tensor is contiguous row-major — every freshly allocated one,
+// and every view that is a reshape or a leading-axis slice of one — so the axis
+// structure carries no information the kernel needs: the whole tensor is one
+// flat run. This path throws the shape away, indexes the buffer linearly and
+// recovers the rank-1 layout for every rank. `is_contiguous()` is what gates
+// it, so a strided view (a column, a stepped slice) falls back to the
 // rank-specialized kernels instead of silently reading the wrong elements.
 //
 // Per-thread width is 4 bytes, not 16. Vector loads are the usual advice, and

@@ -10,6 +10,7 @@
 
 #include "mat_utils.h"
 #include "allocator.h"
+#include "storage.h"
 #include "tensor_view.cuh"
 #include "device_tensor_view.cuh"
 #include "kernel_launcher.h"
@@ -28,10 +29,12 @@ namespace om
         using value_type = _Ty;
 
         Tensor(const std::vector<size_t>& shape, const Device& dv = Device(0, DEVICE_TYPE::CPU));
-        Tensor(const Tensor& rhs); // copy
-        Tensor(Tensor&& rhs);      // move
-        Tensor& operator=(Tensor&& rhs); // move-assign
-        ~Tensor();
+        // Copy is a deep copy into a fresh contiguous buffer, never a view:
+        // views come only from the methods that say so (reshape, slice, …).
+        Tensor(const Tensor& rhs);
+        Tensor(Tensor&& rhs);
+        Tensor& operator=(Tensor&& rhs);
+        ~Tensor() = default;
 
         static Tensor<value_type> zeros(const std::vector<size_t>& shape,
                                         const Device& dv = Device(0, DEVICE_TYPE::CPU));
@@ -119,10 +122,40 @@ namespace om
         value_type min() const;
         value_type max() const;
 
+        // ── Views ───────────────────────────────────────────────────────────
+        //
+        // A view shares this tensor's Storage: a write through either one is
+        // visible through the other, and the buffer lives until the last of
+        // them is destroyed. reshape/flatten return a view when this tensor is
+        // contiguous and a reshaped copy otherwise (PyTorch's rule);
+        // squeeze, unsqueeze, slice and select always return a view.
+
         Tensor<value_type> reshape(const std::vector<size_t>& new_shape) const;
         Tensor<value_type> flatten() const;
         Tensor<value_type> squeeze(size_t axis) const;
         Tensor<value_type> unsqueeze(size_t axis) const;
+
+        // Elements start, start+step, … below stop along `axis`. step > 0.
+        Tensor<value_type> slice(size_t axis, size_t start, size_t stop, size_t step = 1) const;
+        // Fixes `axis` at `index` and drops it. On a rank-1 tensor the result
+        // has shape {1}, the same convention as squeeze.
+        Tensor<value_type> select(size_t axis, size_t index) const;
+
+        // A view of this tensor when it is already contiguous, a contiguous
+        // copy otherwise.
+        Tensor<value_type> contiguous() const;
+        // Always a contiguous copy; the same as the copy constructor.
+        Tensor<value_type> clone() const { return Tensor<value_type>(*this); }
+
+        bool is_contiguous() const { return this->view().is_contiguous(); }
+        size_t storage_offset() const { return m_Offset; }
+        bool shares_storage(const Tensor<value_type>& other) const
+        { return m_Storage && m_Storage == other.m_Storage; }
+
+        // Writes `src` into this tensor (which may be a view), broadcasting
+        // src to this tensor's shape. Same device only.
+        Tensor<value_type>& copy_(const Tensor<value_type>& src, const Stream& s);
+        Tensor<value_type>& copy_(const Tensor<value_type>& src);
 
         Tensor<value_type> transpose() const;
         Tensor<value_type> permute(const std::vector<size_t>& axes) const;
@@ -314,9 +347,25 @@ namespace om
         std::string dtype() const {return om::dtype<value_type>();}
         size_t size() const {return std::accumulate(m_Shape.begin(), m_Shape.end(), size_t{1}, std::multiplies<>());}
         size_t rank() const {return m_Shape.size();}
-        const Stream& stream() const {return m_Stream;}
+        // The stream the underlying buffer was allocated on and will be freed
+        // on. Every view of a tensor reports its storage's stream.
+        const Stream& stream() const;
 
     private:
+        // A view: shares `storage`, starts `offset` elements into it.
+        Tensor(std::shared_ptr<Storage<_Ty>> storage, size_t offset,
+               std::vector<size_t> shape, std::vector<size_t> stride);
+
+        // A view of this tensor with a new shape and stride over the same
+        // elements' start.
+        Tensor<value_type> _alias(std::vector<size_t> shape, std::vector<size_t> stride,
+                                  size_t extra_offset = 0) const;
+
+        // Fills `out` (already allocated, same shape) with this tensor's
+        // elements, whatever the strides of the two. The CPU loop or the GPU
+        // strided copy kernel; the one place that copies a view.
+        void _copy_into(Tensor<value_type>& out, const Stream& s) const;
+
         // Internal constructor used by stream overloads to associate output
         // tensors with the enqueuing stream for async alloc/free.
         Tensor(const std::vector<size_t>& shape, const Device& dv, Stream stream);
@@ -332,26 +381,31 @@ namespace om
                         const std::vector<size_t>& shape,
                         const char* who) const;
 
+        void _check_out_contiguous(const Tensor<value_type>& out, const char* who) const;
+
         // Throws unless `rhs` is a legal second operand for an elementwise op:
         // same device, and a shape that broadcasts against this one (NumPy
         // rules). Returns the broadcast result shape.
         std::vector<size_t> _check_operand(const Tensor<value_type>& rhs, const char* who) const;
 
         // Every elementwise path — the CPU loop, the contiguous GPU fast path
-        // and the rank-specialized kernels — reads index i and writes index i,
-        // so a destination that *is* an operand is exactly as correct as a
-        // separate one. That equivalence rests on all three buffers being one
-        // flat run each; it says nothing about a strided view aliasing a
-        // different region of the same allocation, which is what a real view
-        // type (roadmap P2) would make possible. Nothing in the library can
-        // build one today, so this throws when it meets one rather than
-        // quietly computing the wrong answer.
+        // and the rank-specialized kernels — reads index i and writes index i
+        // through each operand's own strides. So an operand that is *the same
+        // view* as the destination (same start, shape and strides — the
+        // in-place case) is exactly as correct as a separate buffer. Any other
+        // overlap between an operand and the destination — a shifted slice of
+        // the same storage, a broadcast operand that is also written — would
+        // read elements already overwritten, so it throws. `lhs`/`rhs` are the
+        // operands as the kernel will see them, i.e. already expanded to the
+        // result shape.
         void _check_alias_elementwise(const Tensor<value_type>& out,
+                                      const TensorView<const value_type>& lhs,
                                       const Tensor<value_type>* rhs,
+                                      const TensorView<const value_type>* rhs_view,
                                       const char* who) const;
 
         // For ops that read an index they do not write (matmul, transpose,
-        // permute), where sharing a buffer is simply wrong.
+        // permute), where any overlap with the destination is wrong.
         void _check_alias_none(const Tensor<value_type>& out,
                                const Tensor<value_type>* rhs,
                                const char* who) const;
@@ -361,11 +415,13 @@ namespace om
 
         std::vector<size_t> m_Shape;
         std::vector<size_t> m_Stride;
-        _Ty* m_Data;
+        // m_Storage->data() + m_Offset: where this tensor's element (0,…,0)
+        // lives. Cached because every kernel launch needs it.
+        _Ty* m_Data = nullptr;
         Device m_Device;
-        Stream m_Stream;
+        size_t m_Offset = 0;
 
-        std::unique_ptr<Allocator<_Ty>> m_Allocator;
+        std::shared_ptr<Storage<_Ty>> m_Storage;
     };
 }
 

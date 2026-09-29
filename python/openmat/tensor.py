@@ -12,6 +12,7 @@ Usage:
         d = a.add(a, stream=s)
 """
 import ctypes
+import operator
 from typing import Any, List, Optional, Sequence, Union
 
 from ._clib import CLIB, _errbuf, _check_ptr, _check_int, _ERR_LEN
@@ -108,6 +109,17 @@ class Tensor:
         if t._stream_h:
             CLIB.om_stream_retain(t._stream_h)
         return t
+
+    @classmethod
+    def _wrap_view(cls, handle, parent: "Tensor") -> "Tensor":
+        """Internal: adopt a handle that may share `parent`'s storage.
+
+        A view keeps its storage alive, and the storage frees on the stream
+        it was allocated on — the parent's, not whatever stream produced the
+        view. So the view takes its own reference on the parent's stream.
+        """
+        return cls._wrap(handle, parent._dt, Stream._from_handle(parent._stream_h)
+                         if parent._stream_h else None)
 
     def __del__(self):
         try:
@@ -424,37 +436,110 @@ class Tensor:
         return self.fill(value, stream)
 
     def _index_array(self, key):
+        """ctypes array for a full integer index (one int per axis)."""
         idx = key if isinstance(key, tuple) else (key,)
-        rank = self.rank
-        if len(idx) != rank:
-            raise IndexError(
-                f"expected {rank} indices for a rank-{rank} tensor, got {len(idx)}. "
-                f"Partial indexing would need a view, which OpenMat does not have yet."
-            )
         shape = self.shape
         norm = []
         for axis, i in enumerate(idx):
-            if not isinstance(i, int):
-                raise TypeError(f"index must be an int, got {type(i).__name__}")
+            i = operator.index(i)
             if i < 0:
                 i += shape[axis]
             norm.append(i)
-        return (_sz * rank)(*norm), rank
+        return (_sz * len(norm))(*norm), len(norm)
 
-    def __getitem__(self, key) -> Scalar:
-        arr, rank = self._index_array(key)
-        out = self._dt.ctype()
-        eb = _errbuf()
-        _check_int(self._fn("get_item")(self._h, arr, rank,
-                                        ctypes.byref(out), eb, _ERR_LEN), eb)
-        return out.value
+    def _parse_key(self, key):
+        """Expand `key` to one entry per axis: an int, or (start, stop, step).
 
-    def __setitem__(self, key, value: Scalar):
-        arr, rank = self._index_array(key)
-        eb = _errbuf()
-        _check_int(self._fn("set_item")(self._h, arr, rank,
-                                        self._dt.ctype(self._dt.py_type(value)),
-                                        eb, _ERR_LEN), eb)
+        Accepts ints (negative counts from the end), slices with a positive
+        step, a single Ellipsis, and tuples of those. Missing trailing axes are
+        taken whole, as in NumPy.
+        """
+        idx = key if isinstance(key, tuple) else (key,)
+        shape = self.shape
+        rank = len(shape)
+        n_ellipsis = sum(1 for i in idx if i is Ellipsis)
+        if n_ellipsis > 1:
+            raise IndexError("an index can only have a single ellipsis ('...')")
+        n_real = len(idx) - n_ellipsis
+        if n_real > rank:
+            raise IndexError(
+                f"too many indices for a rank-{rank} tensor: got {n_real}")
+        fill = (slice(None),) * (rank - n_real)
+        if n_ellipsis:
+            pos = idx.index(Ellipsis)
+            idx = idx[:pos] + fill + idx[pos + 1:]
+        else:
+            idx = idx + fill
+
+        parsed = []
+        for axis, (i, n) in enumerate(zip(idx, shape)):
+            if isinstance(i, slice):
+                start, stop, step = i.indices(n)
+                if step <= 0:
+                    raise IndexError("slice step must be positive; OpenMat views "
+                                     "have non-negative strides")
+                parsed.append((start, stop, step))
+                continue
+            if isinstance(i, bool):
+                raise TypeError("boolean indices are not supported")
+            try:
+                i = operator.index(i)
+            except TypeError:
+                raise TypeError(
+                    f"index must be an int, a slice or '...', got {type(i).__name__}"
+                ) from None
+            if not -n <= i < n:
+                raise IndexError(
+                    f"index {i} is out of range for axis {axis} with size {n}")
+            parsed.append(i + n if i < 0 else i)
+        return parsed
+
+    def _view_for(self, parsed) -> "Tensor":
+        """Apply a parsed key: slice every axis first, then drop the int axes
+        from the last one back, so earlier axis numbers stay valid."""
+        view = self
+        for axis, p in enumerate(parsed):
+            if isinstance(p, tuple):
+                if p != (0, view.shape[axis], 1):
+                    view = view.slice(axis, *p)
+        for axis in reversed(range(len(parsed))):
+            if not isinstance(parsed[axis], tuple):
+                view = view.select(axis, parsed[axis])
+        return view if view is not self else self._alias()
+
+    def __getitem__(self, key) -> Union[Scalar, "Tensor"]:
+        """An element for a full integer index, a view for anything else.
+
+        `t[1]` of a rank-2 tensor is its second row, sharing t's memory; a
+        write through it shows up in t. `t[:, ::2]` is a strided view.
+        """
+        parsed = self._parse_key(key)
+        if all(not isinstance(p, tuple) for p in parsed):
+            arr = (_sz * len(parsed))(*parsed)
+            out = self._dt.ctype()
+            eb = _errbuf()
+            _check_int(self._fn("get_item")(self._h, arr, len(parsed),
+                                            ctypes.byref(out), eb, _ERR_LEN), eb)
+            return out.value
+        return self._view_for(parsed)
+
+    def __setitem__(self, key, value):
+        """Write an element, or broadcast a scalar / tensor into a view."""
+        parsed = self._parse_key(key)
+        if all(not isinstance(p, tuple) for p in parsed):
+            arr = (_sz * len(parsed))(*parsed)
+            eb = _errbuf()
+            _check_int(self._fn("set_item")(self._h, arr, len(parsed),
+                                            self._dt.ctype(self._dt.py_type(value)),
+                                            eb, _ERR_LEN), eb)
+            return
+        view = self._view_for(parsed)
+        if isinstance(value, (int, float)):
+            view.fill_(value)
+        else:
+            if not isinstance(value, Tensor):
+                value = Tensor(value, dtype=self._dt, device=self.device)
+            view.copy_(value)
 
     # ── device transfer ───────────────────────────────────────────────────
 
@@ -778,24 +863,90 @@ class Tensor:
         return Tensor._wrap(_check_ptr(h, eb), self._dt, stream)
 
     def reshape(self, *new_shape) -> "Tensor":
+        """A view with a new shape when this tensor is contiguous, a reshaped
+        copy otherwise (PyTorch's rule)."""
         if len(new_shape) == 1 and isinstance(new_shape[0], (list, tuple)):
             new_shape = new_shape[0]
-        return self._shape_op("reshape", new_shape)
+        arr, rank = _shape_array(new_shape)
+        eb = _errbuf()
+        h = self._fn("reshape")(self._h, arr, rank, eb, _ERR_LEN)
+        return Tensor._wrap_view(_check_ptr(h, eb), self)
 
     def flatten(self) -> "Tensor":
         eb = _errbuf()
         h = self._fn("flatten")(self._h, eb, _ERR_LEN)
-        return Tensor._wrap(_check_ptr(h, eb), self._dt)
+        return Tensor._wrap_view(_check_ptr(h, eb), self)
 
     def squeeze(self, axis: int) -> "Tensor":
+        """A view without the size-1 `axis`."""
         eb = _errbuf()
         h = self._fn("squeeze")(self._h, _sz(axis), eb, _ERR_LEN)
-        return Tensor._wrap(_check_ptr(h, eb), self._dt)
+        return Tensor._wrap_view(_check_ptr(h, eb), self)
 
     def unsqueeze(self, axis: int) -> "Tensor":
+        """A view with a new size-1 axis at `axis`."""
         eb = _errbuf()
         h = self._fn("unsqueeze")(self._h, _sz(axis), eb, _ERR_LEN)
-        return Tensor._wrap(_check_ptr(h, eb), self._dt)
+        return Tensor._wrap_view(_check_ptr(h, eb), self)
+
+    # ── views ─────────────────────────────────────────────────────────────
+
+    def _axis(self, axis: int) -> int:
+        rank = self.rank
+        if not -rank <= axis < rank:
+            raise IndexError(f"axis {axis} is out of range for a rank-{rank} tensor")
+        return axis + rank if axis < 0 else axis
+
+    def slice(self, axis: int, start: int, stop: int, step: int = 1) -> "Tensor":
+        """A view of elements start, start+step, … below stop along `axis`."""
+        eb = _errbuf()
+        h = self._fn("slice")(self._h, _sz(self._axis(axis)), _sz(start), _sz(stop),
+                              _sz(step), eb, _ERR_LEN)
+        return Tensor._wrap_view(_check_ptr(h, eb), self)
+
+    def select(self, axis: int, index: int) -> "Tensor":
+        """A view with `axis` fixed at `index` and removed."""
+        eb = _errbuf()
+        h = self._fn("select")(self._h, _sz(self._axis(axis)), _sz(index), eb, _ERR_LEN)
+        return Tensor._wrap_view(_check_ptr(h, eb), self)
+
+    def contiguous(self) -> "Tensor":
+        """This tensor's memory viewed again if already contiguous, else a copy."""
+        eb = _errbuf()
+        h = self._fn("contiguous")(self._h, eb, _ERR_LEN)
+        return Tensor._wrap_view(_check_ptr(h, eb), self)
+
+    def _alias(self) -> "Tensor":
+        """A second handle on exactly this view (t[...], t[:])."""
+        return self.slice(0, 0, self.shape[0]) if self.rank else self.contiguous()
+
+    def clone(self) -> "Tensor":
+        """A contiguous copy that shares nothing with this tensor."""
+        return self.copy()
+
+    def is_contiguous(self) -> bool:
+        return bool(self._fn("is_contiguous")(self._h))
+
+    @property
+    def storage_offset(self) -> int:
+        """Elements between the start of the storage and this view's first one."""
+        return int(self._fn("storage_offset")(self._h))
+
+    def shares_memory(self, other: "Tensor") -> bool:
+        """True when both tensors are views of the same storage."""
+        return isinstance(other, Tensor) and other._dt == self._dt and \
+            bool(self._fn("shares_storage")(self._h, other._h))
+
+    def copy_(self, src: "Tensor", stream: Optional[Stream] = None) -> "Tensor":
+        """Write `src` into this tensor (typically a view), broadcasting it."""
+        self._same_dtype(src)
+        eb = _errbuf()
+        if stream is None:
+            _check_int(self._fn("copy_from")(self._h, src._h, eb, _ERR_LEN), eb)
+        else:
+            _check_int(self._fn("copy_from_stream")(self._h, src._h, _handle_of(stream),
+                                                    eb, _ERR_LEN), eb)
+        return self
 
     def transpose(self, stream: Optional[Stream] = None) -> "Tensor":
         """Rank-2 transpose; use permute() for higher ranks."""

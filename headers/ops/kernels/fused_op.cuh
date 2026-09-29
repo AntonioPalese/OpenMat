@@ -8,6 +8,12 @@
 namespace om 
 {
 
+    // Returns its argument: launch_apply_op with this is a strided copy.
+    template <typename T>
+    struct Identity {
+        __host__ __device__ T operator()(T x) const { return x; }
+    };
+
     template <typename T>
     struct Add {
         T a;

@@ -49,12 +49,15 @@ TEST(Reshape, GPU) {
     EXPECT_FLOAT_EQ(r.sum(), 21.0f);
 }
 
-TEST(Reshape, IndependentCopy) {
+// reshape of a contiguous tensor is a view (PyTorch's rule): a write through
+// either one shows through the other. test_views.cpp covers the strided case,
+// where reshape has to copy.
+TEST(Reshape, SharesStorageWithOriginal) {
     auto t = Tensor<float>::from_vector({1,2,3,4}, {4});
     auto r = t.reshape({2, 2});
-    // modifying original doesn't affect reshape result
-    auto v_before = to_host(r);
-    EXPECT_FLOAT_EQ(v_before[0], 1.0f);
+    EXPECT_TRUE(r.shares_storage(t));
+    t.fill_(9.0f);
+    EXPECT_EQ(to_host(r), (std::vector<float>{9, 9, 9, 9}));
 }
 
 // ---- flatten ----------------------------------------------------------------

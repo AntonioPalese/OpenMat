@@ -96,15 +96,19 @@ def test_setitem(device):
 
 
 def test_index_out_of_range(device):
+    # IndexError, not RuntimeError: Python's fallback iteration over
+    # __getitem__ stops on exactly this exception.
     t = Tensor.zeros([2, 2], device=device)
-    with pytest.raises(RuntimeError, match="out of range"):
+    with pytest.raises(IndexError, match="out of range"):
         t[5, 0]
 
 
-def test_partial_indexing_is_refused():
-    t = Tensor.zeros([2, 3])
-    with pytest.raises(IndexError, match="expected 2 indices"):
-        t[0]
+def test_partial_indexing_returns_a_row_view():
+    t = Tensor.from_list([1, 2, 3, 4, 5, 6], [2, 3])
+    row = t[1]
+    assert row.shape == [3]
+    assert row.tolist() == [4, 5, 6]
+    assert row.shares_memory(t)
 
 
 def test_item(device):

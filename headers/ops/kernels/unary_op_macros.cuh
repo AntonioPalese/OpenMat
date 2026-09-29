@@ -31,7 +31,8 @@
     template<typename T>\
     void launch_##OP_NAME(const TensorView<const T> lhs, T value, TensorView<T> dst, cudaStream_t stream)\
     {\
-        if ( !lhs.match(dst) )\
+        /* Shapes, not strides: lhs may be a strided view of other storage. */\
+        if ( !lhs.same_shape(dst) )\
         {\
             throw std::runtime_error("Matrix size mismatch in " #OP_NAME);\
         }\
@@ -174,15 +175,19 @@
 \
         if (idx >= total_elements) return;\
 \
-        size_t offset = 0;\
+        /* One offset per operand: `offset` is lhs's (OP_EXPR reads   */\
+        /* lhs[offset]), `doff` is dst's. They differ once lhs is a   */\
+        /* strided view. Last axis fastest.                           */\
+        size_t offset = 0, doff = 0;\
         size_t tmp = idx;\
-        for (size_t d = 0; d < lhs.rank; ++d) {\
-            size_t coord = tmp % lhs.shape[d];\
-            offset += coord * lhs.stride[d];\
+        for (size_t d = lhs.rank; d-- > 0; ) {\
+            const size_t coord = tmp % lhs.shape[d];\
             tmp /= lhs.shape[d];\
+            offset += coord * lhs.stride[d];\
+            doff   += coord * dst.stride[d];\
         }\
 \
-        dst[offset] = OP_EXPR;\
+        dst[doff] = OP_EXPR;\
     }
 
 #define DEFINE_UNARY_OP_LAUNCH_FRW_DEC(OP_NAME)\

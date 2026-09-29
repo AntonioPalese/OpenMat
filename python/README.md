@@ -142,19 +142,45 @@ x += bias             # in place: the result must have x's shape
 bias.add_(x)          # RuntimeError: the [32, 128] result cannot fit in bias
 ```
 
+## Indexing and views
+
+Indexing follows NumPy. A full integer index returns an element; anything else
+returns a **view** that shares the tensor's memory, so a write through it shows
+up in the original:
+
+```python
+x = om.Tensor.zeros([4, 6])
+row = x[1]              # view of the second row, shape [6]
+cols = x[:, ::2]        # strided view, shape [4, 3]
+x[:, 0] = 1.0           # broadcast a scalar into a column
+x[2] = [1, 2, 3, 4, 5, 6]
+cols.add_(10.0)         # writes into x
+x.reshape(3, 8)         # a view too (x is contiguous)
+```
+
+Keys may mix ints (negative counts from the end), slices with a positive step,
+and one `...`. `reshape`/`flatten` return a view when the tensor is contiguous
+and a copy otherwise; `squeeze`/`unsqueeze` are always views; `transpose` and
+`permute` still copy. `clone()` gives an independent copy, `contiguous()` a
+contiguous tensor (a view if it already is one), and `shares_memory(other)`
+says whether two tensors share storage. An op whose destination partially
+overlaps an operand (e.g. `x[:-1].add_(x[1:])`) raises instead of computing
+a wrong result.
+
 ## API
 
 | group | members |
 |---|---|
 | factories | `Tensor(data)`, `zeros`, `ones`, `full`, `empty`, `arange`, `from_list`, `from_numpy` |
 | metadata | `shape`, `stride`, `rank`/`ndim`, `size`, `dtype`, `itemsize`, `nbytes`, `device`, `device_index`, `is_cuda`, `stream`, `data_ptr()` |
-| data | `numpy()`, `tolist()`, `flat()`, `item()`, `fill()`, `copy()`, `t[i, j]`, `t[i, j] = v` |
+| data | `numpy()`, `tolist()`, `flat()`, `item()`, `fill()`, `copy()`/`clone()`, `copy_(src)`, `t[i, j]`, `t[i, j] = v` |
 | device | `cpu()`, `cuda()`, `to(device)`, `astype()`, `synchronize()` |
 | arithmetic | `+ - * / @`, reflected and scalar forms, `add`/`sub`/`mul`/`div`/`matmul` |
 | in-place | `add_`, `sub_`, `mul_`, `div_`, `relu_`, `sigmoid_`, `fill_`, `+= -= *= /=` |
 | destination-provided | `add_out`, `sub_out`, `mul_out`, `div_out`, `relu_out`, `sigmoid_out`, `matmul_out`, `transpose_out`, `permute_out` |
 | reductions | `sum()`, `mean()`, `min()`, `max()` |
 | shape | `reshape`, `flatten`, `squeeze`, `unsqueeze`, `transpose`/`T`, `permute` |
+| views | `t[...]` with ints/slices/`...`, `slice`, `select`, `contiguous`, `is_contiguous()`, `storage_offset`, `shares_memory` |
 | fused | `relu`, `sigmoid`, `scale_shift`, `shift_scale`, `fused_add_mul`, `fused_sub_mul`, `fused_mul_add`, `fused_div_add` |
 | module | `om.cuda_is_available()`, `om.device_count()`, `om.synchronize()`, `om.dtype()` |
 
