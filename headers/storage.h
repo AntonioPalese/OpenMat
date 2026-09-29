@@ -1,5 +1,6 @@
 #pragma once
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <utility>
 
@@ -21,6 +22,11 @@ namespace om
     // the Storage keeps that stream and its destructor frees on it, no matter
     // which view happens to be the last one alive. A view never frees on its
     // own stream.
+    //
+    // A Storage can also wrap memory OpenMat did not allocate (a tensor
+    // imported through DLPack): it then holds a `release` callback instead of
+    // freeing through the allocator, and the owner decides how and when the
+    // memory goes. The allocator is still created, for the copy helpers.
     template <typename T>
     class Storage
     {
@@ -33,9 +39,19 @@ namespace om
             m_Data = m_Allocator->allocate_async(count, m_Stream.get());
         }
 
+        // Borrowed memory: `release` runs once, when the last view dies.
+        Storage(T* data, size_t count, const Device& device, std::function<void()> release)
+            : m_Data(data), m_Count(count), m_Device(device),
+              m_Stream(Stream::default_stream()),
+              m_Allocator(AllocatorFactory<T>::create(device.m_Dt)),
+              m_Release(std::move(release))
+        {}
+
         ~Storage()
         {
-            if (m_Data)
+            if (m_Release)
+                m_Release();
+            else if (m_Data)
                 m_Allocator->deallocate_async(m_Data, m_Stream.get());
         }
 
@@ -54,5 +70,6 @@ namespace om
         Device m_Device;
         Stream m_Stream;
         std::unique_ptr<Allocator<T>> m_Allocator;
+        std::function<void()> m_Release;
     };
 }

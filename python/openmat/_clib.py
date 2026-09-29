@@ -77,6 +77,9 @@ _declare("om_stream_retain", _v, [_p])
 _declare("om_stream_release", _v, [_p])
 _declare("om_stream_synchronize", _i, [_p, _cp, _i])
 _declare("om_stream_handle", _p, [_p])
+_ip = ctypes.POINTER(_i)
+_declare("om_dlpack_info", _v, [_p, _ip, _ip, _ip, _ip, _ip])
+_declare("om_dlpack_delete", _v, [_p])
 
 
 def _declare_dtype(dt):
@@ -179,6 +182,10 @@ def _declare_dtype(dt):
     d("shares_storage", _i, [_p, _p])
     d("copy_from", _i, [_p, _p, _cp, _i])
     d("copy_from_stream", _i, [_p, _p, _p, _cp, _i])
+
+    # DLPack
+    d("to_dlpack", _p, [_p, _p, _cp, _i])
+    d("from_dlpack", _p, [_p, _cp, _i])
 
     # fused ops
     for name in ("relu", "sigmoid"):

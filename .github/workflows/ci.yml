@@ -129,7 +129,7 @@ jobs:
         run: |
           # Not always on the runner's PATH; it ships next to nvcc.
           SANITIZER="$(command -v compute-sanitizer || echo /usr/local/cuda/bin/compute-sanitizer)"
-          for suite in test_stress test_allocator_stream test_streams; do
+          for suite in test_stress test_allocator_stream test_streams test_views test_dlpack; do
             echo "::group::memcheck $suite"
             "$SANITIZER" --tool memcheck --leak-check full \
               --error-exitcode 1 "build/tests/$suite"

@@ -167,6 +167,24 @@ says whether two tensors share storage. An op whose destination partially
 overlaps an operand (e.g. `x[:-1].add_(x[1:])`) raises instead of computing
 a wrong result.
 
+## PyTorch and NumPy interop (DLPack)
+
+Tensors cross to and from PyTorch, NumPy, CuPy and JAX without copying:
+
+```python
+import torch, openmat as om
+x = torch.randn(4096, 4096, device="cuda")
+b = torch.randn(4096, device="cuda")
+out = om.from_dlpack(x).fused_add_mul(om.from_dlpack(b), 2.5)   # one fused kernel
+y = torch.from_dlpack(out)                                      # back in torch
+```
+
+Both sides share memory, and either side can outlive the other. Only float32
+and int32 cross (other dtypes raise `TypeError`); negative strides (NumPy's
+`a[::-1]`) are refused. NumPy makes arrays it receives from OpenMat read-only,
+so write through the OpenMat tensor. For a CUDA consumer on a non-default
+stream the export synchronizes the device first, as OpenMat has no CUDA events.
+
 ## API
 
 | group | members |
@@ -181,8 +199,9 @@ a wrong result.
 | reductions | `sum()`, `mean()`, `min()`, `max()` |
 | shape | `reshape`, `flatten`, `squeeze`, `unsqueeze`, `transpose`/`T`, `permute` |
 | views | `t[...]` with ints/slices/`...`, `slice`, `select`, `contiguous`, `is_contiguous()`, `storage_offset`, `shares_memory` |
+| interop | `om.from_dlpack(x)`, `Tensor.from_dlpack`, `__dlpack__`, `__dlpack_device__` |
 | fused | `relu`, `sigmoid`, `scale_shift`, `shift_scale`, `fused_add_mul`, `fused_sub_mul`, `fused_mul_add`, `fused_div_add` |
-| module | `om.cuda_is_available()`, `om.device_count()`, `om.synchronize()`, `om.dtype()` |
+| module | `om.from_dlpack()`, `om.cuda_is_available()`, `om.device_count()`, `om.synchronize()`, `om.dtype()` |
 
 Host tensors expose `__array_interface__`, so `np.asarray(t)` is a zero-copy view
 that keeps the tensor alive; `t.numpy()` always copies.  CUDA tensors expose

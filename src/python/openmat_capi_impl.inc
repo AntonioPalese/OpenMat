@@ -639,6 +639,32 @@ int OM_FN(copy_from_stream)(void* dst, const void* src, void* stream, char* errb
     )
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// DLPack
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Exports a view of the tensor as a DLManagedTensor. `stream` is the handle
+// of the stream the tensor's storage frees on (nullptr for the default
+// stream); the export holds a reference on it until the consumer's deleter
+// runs. Ownership of the returned pointer passes to the caller.
+void* OM_FN(to_dlpack)(const void* handle, void* stream, char* errbuf, int errbuf_len)
+{
+    OM_GUARD_PTR(
+        auto* ctx = new DLPackExport<OM_T>(*static_cast<const OM_TT*>(handle), stream);
+        return &ctx->managed;
+    )
+}
+
+// Wraps a DLManagedTensor without copying. On success the new tensor owns
+// `managed` and runs its deleter when the last view dies; on failure nothing
+// is taken and the caller still owns it.
+void* OM_FN(from_dlpack)(void* managed, char* errbuf, int errbuf_len)
+{
+    OM_GUARD_PTR(
+        return new OM_TT(om_import_dlpack<OM_T>(static_cast<DLManagedTensor*>(managed)));
+    )
+}
+
 void* OM_FN(transpose)(const void* handle, char* errbuf, int errbuf_len)
 {
     OM_GUARD_PTR( return new OM_TT(static_cast<const OM_TT*>(handle)->transpose()); )

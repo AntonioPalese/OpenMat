@@ -381,6 +381,44 @@ class Tensor:
             "version": 3,
         }
 
+    # ── DLPack ────────────────────────────────────────────────────────────
+
+    def __dlpack_device__(self):
+        """(device type, device id) in DLPack's encoding: CPU is 1, CUDA 2."""
+        return (2, self.device_index) if self.is_cuda else (1, 0)
+
+    def __dlpack__(self, *, stream=None, max_version=None, dl_device=None, copy=None):
+        """Export this tensor as a DLPack capsule, without copying.
+
+        `torch.from_dlpack(t)` / `np.from_dlpack(t)` call this. The consumer
+        gets a view of this tensor's memory that keeps it alive on its own.
+        The capsule is the unversioned "dltensor" kind, which every consumer
+        accepts whatever `max_version` it asks for.
+
+        `stream` is the consumer's CUDA stream (None or 1: the legacy default
+        stream; -1: do not synchronize). OpenMat has no CUDA events, so when
+        the two sides are not both on the legacy default stream the device is
+        synchronized before the capsule is handed over — correct, and more
+        than strictly needed.
+        """
+        if dl_device is not None and tuple(dl_device) != self.__dlpack_device__():
+            raise BufferError(f"__dlpack__: tensor lives on {self.device}; "
+                              f"cross-device export is not supported")
+        src = self.clone() if copy else self
+        if src.is_cuda and stream != -1:
+            same_legacy_stream = stream in (None, 1) and src._stream_h is None
+            if not same_legacy_stream:
+                from .stream import synchronize
+                synchronize()
+        from ._dlpack import export_capsule
+        return export_capsule(src)
+
+    @staticmethod
+    def from_dlpack(obj) -> "Tensor":
+        """Wrap a PyTorch/NumPy/CuPy/JAX tensor without copying (see openmat.from_dlpack)."""
+        from ._dlpack import from_dlpack
+        return from_dlpack(obj)
+
     def _nest(self, flat, shape):
         if not shape:
             return flat[0]

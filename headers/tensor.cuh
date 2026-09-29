@@ -46,6 +46,17 @@ namespace om
                                               const std::vector<size_t>& shape,
                                               const Device& dv = Device(0, DEVICE_TYPE::CPU));
 
+        // A tensor over memory OpenMat did not allocate: `data` stays owned by
+        // the caller, and `release` runs once when the last view of the result
+        // is destroyed (DLPack import passes the producer's deleter here).
+        // Strides are in elements; the tensor is not copied or validated
+        // beyond its rank.
+        static Tensor<value_type> from_external(value_type* data,
+                                                const std::vector<size_t>& shape,
+                                                const std::vector<size_t>& stride,
+                                                const Device& dv,
+                                                std::function<void()> release);
+
         // A CPU tensor backed by page-locked (cudaHostAlloc) memory instead of
         // HostPool's ordinary pageable blocks. Use it for a host tensor you
         // know will repeatedly cross the bus as the *source* of an H2D
@@ -140,6 +151,10 @@ namespace om
         // Fixes `axis` at `index` and drops it. On a rank-1 tensor the result
         // has shape {1}, the same convention as squeeze.
         Tensor<value_type> select(size_t axis, size_t index) const;
+
+        // A second handle on exactly this view: same storage, offset, shape
+        // and strides.
+        Tensor<value_type> alias() const { return this->_alias(m_Shape, m_Stride); }
 
         // A view of this tensor when it is already contiguous, a contiguous
         // copy otherwise.

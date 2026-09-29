@@ -8,6 +8,7 @@ fused ops, device transfer, and the CUDA streams that all of them run on.
 from ._dtypes import DType, dtype, float32, int32
 from .stream import Stream, cuda_is_available, device_count, synchronize
 from .tensor import Tensor
+from ._dlpack import from_dlpack
 
 __all__ = [
     "Tensor",
@@ -26,6 +27,7 @@ __all__ = [
     "arange",
     "from_list",
     "from_numpy",
+    "from_dlpack",
 ]
 
 __version__ = "0.2.0"

@@ -116,6 +116,30 @@ om::Tensor<value_type> om::Tensor<value_type>::_alias(std::vector<size_t> shape,
 }
 
 template <typename value_type>
+om::Tensor<value_type> om::Tensor<value_type>::from_external(value_type* data,
+                                                             const std::vector<size_t>& shape,
+                                                             const std::vector<size_t>& stride,
+                                                             const Device& dv,
+                                                             std::function<void()> release)
+{
+    if (shape.empty() || shape.size() > MAX_RANK)
+        throw std::invalid_argument("from_external: rank must be between 1 and 8");
+    if (stride.size() != shape.size())
+        throw std::invalid_argument("from_external: shape and stride ranks differ");
+    // The extent of memory the view can reach, for the Storage's bookkeeping;
+    // nothing is allocated or freed through it.
+    size_t span = 0;
+    bool empty = false;
+    for (size_t i = 0; i < shape.size(); ++i) {
+        if (shape[i] == 0) empty = true;
+        else span += (shape[i] - 1) * stride[i];
+    }
+    auto storage = std::make_shared<Storage<value_type>>(data, empty ? 0 : span + 1, dv,
+                                                         std::move(release));
+    return Tensor<value_type>(std::move(storage), 0, shape, stride);
+}
+
+template <typename value_type>
 om::Tensor<value_type> om::Tensor<value_type>::zeros(const std::vector<size_t>& shape, const Device& dv)
 {
     Tensor<value_type> t(shape, dv);
